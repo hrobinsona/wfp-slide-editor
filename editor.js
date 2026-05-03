@@ -518,8 +518,11 @@
 
   function onKeyDown(e) {
     // While a text edit is open, only intercept Escape/Tab (commit) and
-    // Cmd/Ctrl+S (commit + export). All other keys flow through to the
-    // contenteditable element natively.
+    // Cmd/Ctrl+S (commit + export). Every other key flows to the
+    // contenteditable element for default behavior (typing, caret motion),
+    // BUT we still call stopPropagation so the fixture's bubble-phase
+    // keydown handler (which navigates slides on ArrowLeft/Right/Space)
+    // doesn't fire alongside the caret movement.
     if (state.editingText) {
       if (e.key === 'Escape' || e.key === 'Tab') {
         e.preventDefault();
@@ -534,6 +537,7 @@
         exportHTML();
         return;
       }
+      e.stopPropagation();
       return;
     }
 

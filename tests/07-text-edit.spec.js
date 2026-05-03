@@ -239,6 +239,32 @@ test.describe('Phase 7 — Inline text edit', () => {
     expect((await readEditState(page, sel)).contenteditable).toBeNull();
   });
 
+  test('Arrow keys during text edit do NOT navigate slides', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await setDeckScale(page, 1);
+    await page.keyboard.press('e');
+
+    await dblclickElement(page, '.slide.active h1');
+    expect((await readEditState(page, '.slide.active h1')).contenteditable).toBe('true');
+
+    const slideBefore = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains('active')),
+    );
+
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press(' ');
+    await page.waitForTimeout(150);
+
+    const slideAfter = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains('active')),
+    );
+    expect(slideAfter).toBe(slideBefore);
+
+    // Text edit is still active — Arrow keys are for caret, not for the editor.
+    expect((await readEditState(page, '.slide.active h1')).contenteditable).toBe('true');
+  });
+
   test('text edit does not leave editor in a stuck state when ring is hidden', async ({
     page,
   }) => {
