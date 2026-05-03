@@ -10,6 +10,7 @@
  * Phase 5: 8 resize handles on selected element + scale-aware resize.
  * Phase 6: undo/redo history (50-entry cap).
  * Phase 7: double-click → contenteditable; Escape/Tab/click-outside commits.
+ * Phase 8: Cmd+S export — clones the document, scrubs editor markers, downloads.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -17,7 +18,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.7.0-phase-7';
+  const VERSION = '0.8.0-phase-8';
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
@@ -41,6 +42,13 @@
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);
     return;
+  }
+
+  // Tag the script element that loaded us so the export scrubber can find
+  // it regardless of how it was injected (bookmarklet sets a `src`, but
+  // dev-server injection / Playwright addScriptTag uses inline content).
+  if (document.currentScript) {
+    document.currentScript.dataset.wfpEditScript = 'true';
   }
 
   // ===========================================================================
@@ -376,14 +384,22 @@
   }
 
   function onKeyDown(e) {
-    // While a text edit is open, only intercept Escape/Tab to commit. All
-    // other keys (typing, arrows for caret, etc.) flow through to the
+    // While a text edit is open, only intercept Escape/Tab (commit) and
+    // Cmd/Ctrl+S (commit + export). All other keys flow through to the
     // contenteditable element natively.
     if (state.editingText) {
       if (e.key === 'Escape' || e.key === 'Tab') {
         e.preventDefault();
         e.stopPropagation();
         endTextEdit();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        e.stopPropagation();
+        endTextEdit();
+        exportHTML();
+        return;
       }
       return;
     }
@@ -425,6 +441,14 @@
       e.preventDefault();
       e.stopPropagation();
       redo();
+      return;
+    }
+
+    // Export
+    if (isMod && (e.key === 's' || e.key === 'S') && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      exportHTML();
       return;
     }
   }
@@ -918,6 +942,76 @@
   }
 
   document.addEventListener('mousedown', onMouseDown, true);
+
+  // ===========================================================================
+  // Export
+  //
+  // Clone the live DOM, strip everything the editor injected (root + script
+  // + data-wfp-edit-* + contenteditable), serialize, and trigger a download
+  // named `<basename>-edited.html`.
+  // ===========================================================================
+  function deriveExportFilename() {
+    let path = location.pathname || '';
+    try {
+      path = decodeURIComponent(path);
+    } catch (_) {
+      /* leave as-is */
+    }
+    const lastSegment = path.split('/').pop() || '';
+    const m = lastSegment.match(/^(.+?)(\.html?)?$/i);
+    const base = (m && m[1]) || 'slide';
+    const ext = (m && m[2]) || '.html';
+    return `${base}-edited${ext}`;
+  }
+
+  function buildExportHtml() {
+    const clone = document.documentElement.cloneNode(true);
+
+    const editorRoot = clone.querySelector(`#${ROOT_ID}`);
+    if (editorRoot) editorRoot.remove();
+
+    // Two ways the editor script is injected:
+    //   - bookmarklet:   <script src="...editor.js?..."> → match by src
+    //   - inline tag:    addScriptTag({ path }) — no src → match by the
+    //     data-wfp-edit-script marker we set at load time
+    // Run BOTH selectors before the data-wfp-edit-* sweep so the marker
+    // hasn't been stripped from the script element yet.
+    clone.querySelectorAll('[data-wfp-edit-script]').forEach((s) => s.remove());
+    clone.querySelectorAll('script[src*="editor.js"]').forEach((s) => s.remove());
+
+    clone.querySelectorAll('*').forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('data-wfp-edit')) el.removeAttribute(attr.name);
+      }
+      if (el.hasAttribute('contenteditable')) el.removeAttribute('contenteditable');
+    });
+
+    return '<!DOCTYPE html>\n' + clone.outerHTML;
+  }
+
+  function triggerDownload(filename, html) {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportHTML() {
+    // If a text edit is open, commit it first so the latest content lands
+    // in the export.
+    if (state.editingText) endTextEdit();
+
+    const filename = deriveExportFilename();
+    const html = buildExportHtml();
+    triggerDownload(filename, html);
+    showToast(document.body, `Exported to ${filename}`);
+  }
 
   // ===========================================================================
   // Ready
