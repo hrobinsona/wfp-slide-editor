@@ -11,6 +11,7 @@
  * Phase 6: undo/redo history (50-entry cap).
  * Phase 7: double-click → contenteditable; Escape/Tab/click-outside commits.
  * Phase 8: Cmd+S export — clones the document, scrubs editor markers, downloads.
+ * Phase 9: liquid-glass toolbar + capture-phase suppression of slide nav keys.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -18,7 +19,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.8.0-phase-8';
+  const VERSION = '0.9.0-phase-9';
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
@@ -80,23 +81,100 @@
 
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    #${ROOT_ID} .wfpe-mode-badge {
+    #${ROOT_ID} .wfpe-toolbar {
       position: fixed;
-      top: 12px;
-      right: 12px;
+      top: 14px;
+      right: 14px;
       pointer-events: auto;
-      background: rgba(20, 20, 20, 0.85);
-      color: #fff;
-      font: 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      letter-spacing: 0.04em;
-      padding: 6px 10px;
-      border-radius: 4px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 5px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(22px) saturate(180%);
+      -webkit-backdrop-filter: blur(22px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      box-shadow:
+        0 2px 12px rgba(0, 0, 0, 0.10),
+        0 8px 28px rgba(0, 0, 0, 0.08),
+        inset 0 1px 1px rgba(255, 255, 255, 0.65),
+        inset 0 -1px 1px rgba(0, 0, 0, 0.04);
+      font: 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.01em;
       user-select: none;
-      cursor: default;
+      color: #1d1d1f;
+    }
+    #${ROOT_ID} .wfpe-toolbar[data-mode="off"] .wfpe-edit-only {
+      display: none;
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn,
+    #${ROOT_ID} .wfpe-mode-badge {
+      appearance: none;
+      -webkit-appearance: none;
+      background: transparent;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      letter-spacing: inherit;
+      padding: 7px 11px;
+      border-radius: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 120ms ease, transform 80ms ease, color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-mode-badge {
+      font-weight: 600;
+      padding: 7px 13px;
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn:hover,
+    #${ROOT_ID} .wfpe-mode-badge:hover {
+      background-color: rgba(0, 0, 0, 0.06);
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn:active,
+    #${ROOT_ID} .wfpe-mode-badge:active {
+      background-color: rgba(0, 0, 0, 0.10);
+      transform: scale(0.97);
     }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"] {
-      background: rgba(212, 114, 106, 0.95);
+      background: linear-gradient(180deg, rgba(244, 132, 123, 1) 0%, rgba(232, 110, 103, 1) 100%);
+      color: #fff;
+      box-shadow:
+        0 1px 2px rgba(168, 56, 48, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+    }
+    #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
+      filter: brightness(1.05);
+    }
+    #${ROOT_ID} .wfpe-toolbar-divider {
+      width: 1px;
+      height: 18px;
+      background-color: rgba(0, 0, 0, 0.12);
+      margin: 0 3px;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-toolbar {
+        background: rgba(28, 28, 30, 0.55);
+        border-color: rgba(255, 255, 255, 0.12);
+        color: #f5f5f7;
+        box-shadow:
+          0 2px 12px rgba(0, 0, 0, 0.4),
+          0 8px 28px rgba(0, 0, 0, 0.32),
+          inset 0 1px 0 rgba(255, 255, 255, 0.12),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+      }
+      #${ROOT_ID} .wfpe-toolbar-btn:hover,
+      #${ROOT_ID} .wfpe-mode-badge:hover {
+        background-color: rgba(255, 255, 255, 0.10);
+      }
+      #${ROOT_ID} .wfpe-toolbar-btn:active,
+      #${ROOT_ID} .wfpe-mode-badge:active {
+        background-color: rgba(255, 255, 255, 0.14);
+      }
+      #${ROOT_ID} .wfpe-toolbar-divider {
+        background-color: rgba(255, 255, 255, 0.14);
+      }
     }
     #${ROOT_ID} .wfpe-selection-ring {
       position: fixed;
@@ -140,11 +218,45 @@
   `;
   root.appendChild(styleEl);
 
-  const badge = document.createElement('div');
+  const toolbar = document.createElement('div');
+  toolbar.className = 'wfpe-toolbar';
+  toolbar.dataset.mode = 'off';
+
+  const badge = document.createElement('button');
+  badge.type = 'button';
   badge.className = 'wfpe-mode-badge';
   badge.dataset.mode = 'off';
   badge.textContent = 'Edit: OFF';
-  root.appendChild(badge);
+  badge.title = 'Toggle edit mode (E)';
+  toolbar.appendChild(badge);
+
+  function makeToolbarButton(action, label, hint) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wfpe-toolbar-btn wfpe-edit-only';
+    b.dataset.action = action;
+    b.textContent = label;
+    b.title = hint;
+    return b;
+  }
+
+  const dividerA = document.createElement('span');
+  dividerA.className = 'wfpe-toolbar-divider wfpe-edit-only';
+  toolbar.appendChild(dividerA);
+
+  const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)');
+  const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)');
+  toolbar.appendChild(undoBtn);
+  toolbar.appendChild(redoBtn);
+
+  const dividerB = document.createElement('span');
+  dividerB.className = 'wfpe-toolbar-divider wfpe-edit-only';
+  toolbar.appendChild(dividerB);
+
+  const exportBtn = makeToolbarButton('export', 'Export', 'Export (Cmd/Ctrl+S)');
+  toolbar.appendChild(exportBtn);
+
+  root.appendChild(toolbar);
 
   const ring = document.createElement('div');
   ring.className = 'wfpe-selection-ring';
@@ -163,6 +275,26 @@
   }
 
   document.body.appendChild(root);
+
+  // Toolbar button click handlers. These run in bubble phase after the
+  // capture-phase onClick short-circuits on editor-root targets, so they
+  // don't interfere with selection/deselection logic.
+  badge.addEventListener('click', (e) => {
+    e.preventDefault();
+    setEditMode(!state.editMode);
+  });
+  undoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    undo();
+  });
+  redoBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    redo();
+  });
+  exportBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    exportHTML();
+  });
 
   // ===========================================================================
   // Helpers
@@ -353,6 +485,7 @@
   function setEditMode(value) {
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
+    toolbar.dataset.mode = state.editMode ? 'on' : 'off';
     badge.textContent = state.editMode ? 'Edit: ON' : 'Edit: OFF';
     if (!state.editMode) {
       if (state.editingText) endTextEdit();
@@ -414,6 +547,18 @@
 
     if (!state.editMode) return;
 
+    // Suppress slide navigation keys while edit mode is on. The fixture's
+    // own keydown handler is registered in bubble phase, so by registering
+    // ours in capture phase + stopPropagation here, we pre-empt it cleanly.
+    if (
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Spacebar') &&
+      !e.metaKey && !e.ctrlKey && !e.altKey
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && noModifier) {
       if (!state.selected || !isTextBearing(state.selected)) return;
       e.preventDefault();
@@ -453,7 +598,7 @@
     }
   }
 
-  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keydown', onKeyDown, true);
 
   // ===========================================================================
   // Selection

@@ -78,14 +78,17 @@ test.describe('Phase 2 — Selection', () => {
     expect(second.left).not.toBeCloseTo(first.left, 0);
   });
 
-  test('clicking the editor badge does NOT change selection', async ({ page }) => {
+  test('clicking the editor toolbar (non-button area) does NOT change selection', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('e');
 
     await clickElement(page, '.slide.active h1');
     const before = await ringState(page);
 
-    await clickElement(page, '#wfp-editor-root .wfpe-mode-badge');
+    // Click the toolbar wrapper itself (not a button). The capture-phase
+    // onClick must short-circuit for any editor-root target so the H1
+    // selection isn't replaced by the toolbar.
+    await clickElement(page, '#wfp-editor-root .wfpe-toolbar');
     const after = await ringState(page);
 
     expect(after.display).toBe('block');
