@@ -6,6 +6,7 @@
  * Phase 1: bootstrap + edit-mode toggle.
  * Phase 2: click-to-select inside .slide.active + selection ring.
  * Phase 3: ArrowUp/Down (and Shift+) nudge font-size on selected text element.
+ * Phase 4: scale-aware drag, with unlock-on-flow conversion + toast.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -13,8 +14,11 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.3.0-phase-3';
+  const VERSION = '0.4.0-phase-4';
   const FONT_SIZE_MIN_PX = 8;
+  const DRAG_DEADZONE_PX = 5;
+  const TOAST_DURATION_MS = 2000;
+  const POST_DRAG_CLICK_GUARD_MS = 250;
   const ROOT_ID = 'wfp-editor-root';
 
   if (document.getElementById(ROOT_ID)) {
@@ -28,6 +32,8 @@
   const state = {
     editMode: false,
     selected: null,
+    drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
+    suppressClickUntil: 0,
   };
 
   // ===========================================================================
@@ -72,6 +78,22 @@
         0 0 0 1px rgba(0, 0, 0, 0.25);
       border-radius: 2px;
       display: none;
+    }
+    #${ROOT_ID} .wfpe-toast {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(20, 20, 20, 0.92);
+      color: #fff;
+      font: 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      padding: 5px 9px;
+      border-radius: 3px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      max-width: 280px;
+      transition: opacity 200ms ease;
+      opacity: 1;
+    }
+    #${ROOT_ID} .wfpe-toast[data-state="leaving"] {
+      opacity: 0;
     }
   `;
   root.appendChild(styleEl);
@@ -199,6 +221,15 @@
   // ===========================================================================
   function onClick(e) {
     if (!state.editMode) return;
+    if (Date.now() < state.suppressClickUntil) {
+      // The mouseup that ended a drag fired this synthetic click. Swallow it
+      // so the click handler doesn't deselect when the cursor released over
+      // a non-selectable area.
+      e.stopPropagation();
+      e.preventDefault();
+      state.suppressClickUntil = 0;
+      return;
+    }
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
     setSelected(target);
@@ -234,6 +265,119 @@
   document.querySelectorAll('.slide').forEach((slide) => {
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
   });
+
+  // ===========================================================================
+  // Drag (scale-aware, with unlock-on-flow)
+  // ===========================================================================
+  function getCanvasScale() {
+    const deck = document.querySelector('.deck');
+    if (!deck) return 1;
+    const t = getComputedStyle(deck).transform;
+    if (!t || t === 'none') return 1;
+    try {
+      return new DOMMatrixReadOnly(t).a || 1;
+    } catch (_) {
+      return 1;
+    }
+  }
+
+  function showToast(refEl, text) {
+    const toast = document.createElement('div');
+    toast.className = 'wfpe-toast';
+    toast.textContent = text;
+    root.appendChild(toast);
+    // Position above the reference element (or top-left of viewport as fallback).
+    const r = refEl.getBoundingClientRect();
+    const top = Math.max(8, r.top - 28);
+    const left = Math.max(8, Math.min(window.innerWidth - 290, r.left));
+    toast.style.top = `${top}px`;
+    toast.style.left = `${left}px`;
+    setTimeout(() => {
+      toast.dataset.state = 'leaving';
+      setTimeout(() => toast.remove(), 220);
+    }, TOAST_DURATION_MS);
+  }
+
+  function onMouseDown(e) {
+    if (!state.editMode) return;
+    if (e.button !== 0) return;
+    if (isInsideEditorRoot(e.target)) return;
+    const target = findSelectableTarget(e.target);
+    if (!target) return;
+
+    setSelected(target);
+
+    const cs = getComputedStyle(target);
+    state.drag = {
+      el: target,
+      startX: e.clientX,
+      startY: e.clientY,
+      anchorLeft: target.offsetLeft,
+      anchorTop: target.offsetTop,
+      width: target.offsetWidth,
+      height: target.offsetHeight,
+      wasAbsolute: cs.position === 'absolute',
+      started: false,
+    };
+
+    document.addEventListener('mousemove', onMouseMove, true);
+    document.addEventListener('mouseup', onMouseUp, true);
+  }
+
+  function commitUnlock(d) {
+    // Convert the element to inline absolute positioning, anchored at its
+    // current visual offset within its offsetParent.
+    d.el.style.position = 'absolute';
+    d.el.style.left = `${d.anchorLeft}px`;
+    d.el.style.top = `${d.anchorTop}px`;
+    d.el.style.width = `${d.width}px`;
+    d.el.style.height = `${d.height}px`;
+    showToast(d.el, 'Unlocked. Now positioned absolutely.');
+  }
+
+  function onMouseMove(e) {
+    const d = state.drag;
+    if (!d) return;
+    const dxView = e.clientX - d.startX;
+    const dyView = e.clientY - d.startY;
+
+    if (!d.started) {
+      const distSq = dxView * dxView + dyView * dyView;
+      if (distSq < DRAG_DEADZONE_PX * DRAG_DEADZONE_PX) return;
+      d.started = true;
+      if (!d.wasAbsolute) {
+        commitUnlock(d);
+      } else {
+        // Lock in the anchor as inline left/top so subsequent drags compose.
+        d.el.style.left = `${d.anchorLeft}px`;
+        d.el.style.top = `${d.anchorTop}px`;
+      }
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const scale = getCanvasScale();
+    const dx = dxView / scale;
+    const dy = dyView / scale;
+    d.el.style.left = `${d.anchorLeft + dx}px`;
+    d.el.style.top = `${d.anchorTop + dy}px`;
+    refreshSelection();
+  }
+
+  function onMouseUp(_e) {
+    document.removeEventListener('mousemove', onMouseMove, true);
+    document.removeEventListener('mouseup', onMouseUp, true);
+    const d = state.drag;
+    state.drag = null;
+    if (d && d.started) {
+      // The browser will fire a click after this mouseup. Swallow it so we
+      // don't accidentally re-select or deselect.
+      state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+    }
+  }
+
+  document.addEventListener('mousedown', onMouseDown, true);
 
   // ===========================================================================
   // Ready
