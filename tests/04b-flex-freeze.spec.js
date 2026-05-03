@@ -130,6 +130,97 @@ test.describe('Flex/grid sibling freeze on first grab', () => {
     expect(allChildrenStamped).toBe(true);
   });
 
+  test('block-layout siblings do not shift when one child is dragged', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'boilerplate.html');
+    await setDeckScale(page, 1);
+    await page.keyboard.press('e');
+
+    // boilerplate slide 3 has a block-flow container (.s3-header) holding a
+    // label, h2, and date. Dragging the h2 used to leave the label/date
+    // free to reflow and the h2 itself to shrink to content-width.
+    await page.evaluate(() => window.goTo && window.goTo(2));
+    await page.waitForTimeout(80);
+    await page.evaluate(() => window.goTo && window.goTo(3));
+    await page.waitForTimeout(80);
+
+    const targetSel = await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      // Find any block-layout container inside the active slide whose
+      // direct children are flow-positioned and there are at least 2.
+      const cs = (el) => getComputedStyle(el);
+      const cand = [...slide.querySelectorAll('*')].find((c) => {
+        if (c.children.length < 2) return false;
+        const display = cs(c).display;
+        if (display === 'flex' || display === 'grid' || display === 'inline-flex' || display === 'inline-grid') {
+          return false; // reserve flex/grid for the other tests
+        }
+        return [...c.children].every((ch) => {
+          const p = cs(ch).position;
+          return p !== 'absolute' && p !== 'fixed';
+        });
+      });
+      if (!cand) return null;
+      cand.dataset.testBlockParent = 'yes';
+      cand.children[0].dataset.testBlockChild = 'first';
+      return '[data-test-block-child="first"]';
+    });
+    if (!targetSel) {
+      test.skip(true, 'no block-flow parent with multiple flow children found');
+      return;
+    }
+
+    // Use offset* (layout-only, transform-free) so in-flight scaleIn
+    // animations don't taint the comparison. The freeze pins layout
+    // positions; transforms are a separate visual layer.
+    const beforeSiblings = await page.evaluate(() => {
+      const parent = document.querySelector('[data-test-block-parent="yes"]');
+      return [...parent.children].slice(1).map((c) => ({
+        offsetTop: c.offsetTop,
+        offsetLeft: c.offsetLeft,
+        offsetWidth: c.offsetWidth,
+        offsetHeight: c.offsetHeight,
+      }));
+    });
+    const beforeFirstWidth = await page.evaluate(
+      (s) => document.querySelector(s).offsetWidth,
+      targetSel,
+    );
+
+    const center = await page.evaluate((s) => {
+      const r = document.querySelector(s).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, targetSel);
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x + 30, center.y, { steps: 4 });
+    await page.mouse.move(center.x + 60, center.y, { steps: 4 });
+    await page.mouse.up();
+
+    // Bug B: siblings (children[1+]) must not have shifted in layout.
+    const afterSiblings = await page.evaluate(() => {
+      const parent = document.querySelector('[data-test-block-parent="yes"]');
+      return [...parent.children].slice(1).map((c) => ({
+        offsetTop: c.offsetTop,
+        offsetLeft: c.offsetLeft,
+        offsetWidth: c.offsetWidth,
+        offsetHeight: c.offsetHeight,
+      }));
+    });
+    for (let i = 0; i < beforeSiblings.length; i++) {
+      expect(afterSiblings[i].offsetTop).toBeCloseTo(beforeSiblings[i].offsetTop, 0);
+      expect(afterSiblings[i].offsetLeft).toBeCloseTo(beforeSiblings[i].offsetLeft, 0);
+      expect(afterSiblings[i].offsetWidth).toBeCloseTo(beforeSiblings[i].offsetWidth, 0);
+      expect(afterSiblings[i].offsetHeight).toBeCloseTo(beforeSiblings[i].offsetHeight, 0);
+    }
+
+    // Bug A: the dragged child's width must NOT have shrunk to content-fit.
+    const afterFirstWidth = await page.evaluate(
+      (s) => document.querySelector(s).offsetWidth,
+      targetSel,
+    );
+    expect(afterFirstWidth).toBeCloseTo(beforeFirstWidth, 0);
+  });
+
   test('a second drag inside the same already-frozen container does not re-pin its children', async ({
     page,
   }) => {

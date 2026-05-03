@@ -837,52 +837,20 @@
   // ---------------------------------------------------------------------------
   // Unlock helpers
   //
-  // Promoting a flex/grid child to position:absolute removes it from the
-  // parent's layout, so siblings reflow (e.g. gap/space-between redistributes
-  // among the remaining N-1 children). To prevent that, we freeze the entire
-  // container on first grab: snapshot every child's rect in slide-space, then
-  // pin all of them as position:absolute at those captured pixels. The
-  // dragged child is just one of N now-absolute children. Subsequent drags
-  // inside the same container skip the freeze.
+  // Promoting any element to position:absolute removes it from its parent's
+  // layout. The remaining siblings then reflow — flex/grid via gap or
+  // space-between, block via auto-height collapse, etc. To keep visuals
+  // pixel-stable on first grab, we pin the dragged element's IMMEDIATE
+  // PARENT: snapshot every child's offset in CSS pixels, then write each
+  // child as inline `position: absolute` at the captured rect, and lock the
+  // parent's own width/height so any outer flow doesn't shift either.
   //
-  // For non-flex/grid parents, the simpler unlock-just-this-one-element path
-  // still applies — sibling reflow isn't a concern there.
+  // Reading offsetLeft/Top/Width/Height is transform-free (unaffected by
+  // the WFP scaleIn entrance animation), and crucially is read for ALL
+  // children BEFORE any style mutations so the dragged element's offsetWidth
+  // doesn't collapse to shrink-to-fit during the snapshot.
   // ---------------------------------------------------------------------------
-  function isFlexOrGridContainer(el) {
-    if (!el) return false;
-    const display = getComputedStyle(el).display;
-    return (
-      display === 'flex' ||
-      display === 'inline-flex' ||
-      display === 'grid' ||
-      display === 'inline-grid'
-    );
-  }
-
-
-  function collectFlexAncestors(el) {
-    // Returns flex/grid containers above `el`, ordered OUTERMOST FIRST so the
-    // caller can freeze from the outside in. Outside-in matters: freezing the
-    // outermost container first pins its children's outer rects before we
-    // start mutating their internals, so each inner freeze still measures
-    // children at their correct flex-flow positions.
-    const slide = getActiveSlide();
-    const containers = [];
-    let cur = el;
-    while (cur && cur.parentElement && cur !== slide) {
-      if (isFlexOrGridContainer(cur.parentElement)) {
-        containers.push(cur.parentElement);
-      }
-      cur = cur.parentElement;
-    }
-    return containers.reverse();
-  }
-
   function snapshotChildOffsetsRelativeTo(container) {
-    // Use offsetLeft/Top/Width/Height (transform-free, CSS-pixel) instead of
-    // getBoundingClientRect (which includes any active CSS animation
-    // transforms — fatal during the WFP slides' scaleIn entrance animation).
-    //
     // For a static container, container and its children share the same
     // offsetParent, so child.offsetLeft - container.offsetLeft is the
     // child's position within the container in CSS pixels.
@@ -899,56 +867,88 @@
     }));
   }
 
-  function unlockToAbsolute(el) {
-    // Snapshot every ancestor flex/grid container BEFORE any writes, using
-    // transform-free offset measurements so in-flight animations don't taint
-    // the captured sizes. Then pin from outermost to innermost.
-    const containers = collectFlexAncestors(el);
-    const snapshots = containers.map((container) => {
-      if (container.dataset.wfpEditFlexFrozen === 'true') return null;
-      return {
-        container,
-        outerWidth: container.offsetWidth,
-        outerHeight: container.offsetHeight,
-        childRects: snapshotChildOffsetsRelativeTo(container),
-        wasStatic: getComputedStyle(container).position === 'static',
-      };
-    });
+  function pinContainerChildren(container) {
+    if (container.dataset.wfpEditFlexFrozen === 'true') return;
 
-    for (const snap of snapshots) {
-      if (!snap) continue;
-      const { container, outerWidth, outerHeight, childRects, wasStatic } = snap;
-      touchElement(container);
-      if (wasStatic) container.style.position = 'relative';
-      // Pin the container's outer box. Once its children are all absolute,
-      // its intrinsic content collapses and any outer block/flex flow would
-      // shift. Caveat: if the container itself is a flex item with `flex: 1`
-      // or stretch sizing in some non-flex outer context, this lock will
-      // freeze its size to the captured pixels even if the viewport later
-      // reflows. WFP slides are fixed 1920x1080 with one scale on .deck, so
-      // viewport reflow doesn't apply here, but worth knowing.
-      container.style.width = `${outerWidth}px`;
-      container.style.height = `${outerHeight}px`;
-      for (const m of childRects) {
-        touchElement(m.child);
-        m.child.style.position = 'absolute';
-        m.child.style.left = `${m.left}px`;
-        m.child.style.top = `${m.top}px`;
-        m.child.style.width = `${m.width}px`;
-        m.child.style.height = `${m.height}px`;
-        m.child.dataset.wfpEditFrozen = 'true';
+    // CRITICAL: read every offset BEFORE any writes. Once we set
+    // position:absolute on the first child, subsequent reads of OTHER
+    // children's offsets reflect the post-mutation flow (which may have
+    // collapsed). Snapshot first, write second.
+    const wasStatic = getComputedStyle(container).position === 'static';
+    const outerWidth = container.offsetWidth;
+    const outerHeight = container.offsetHeight;
+    const childRects = snapshotChildOffsetsRelativeTo(container);
+
+    touchElement(container);
+    if (wasStatic) container.style.position = 'relative';
+    // Pin the container's own outer box. Once its children are all absolute,
+    // its intrinsic content collapses and any outer block/flex flow would
+    // shift. WFP slides are 1920x1080 with one scale on .deck, so viewport
+    // reflow doesn't apply.
+    container.style.width = `${outerWidth}px`;
+    container.style.height = `${outerHeight}px`;
+
+    for (const m of childRects) {
+      touchElement(m.child);
+      m.child.style.position = 'absolute';
+      // Zero out margins. CSS margin-top/left etc. on a positioned element
+      // adds to the `top`/`left` distance from the containing block, so a
+      // child with `margin-top: 0.75rem` and pinned `top: 37px` would render
+      // at offsetTop 49. The captured offset already represents the child's
+      // visual position (margin-collapse and all), so margins must be
+      // neutralised for the pin to be authoritative.
+      m.child.style.margin = '0';
+      m.child.style.left = `${m.left}px`;
+      m.child.style.top = `${m.top}px`;
+      m.child.style.width = `${m.width}px`;
+      m.child.style.height = `${m.height}px`;
+      m.child.dataset.wfpEditFrozen = 'true';
+    }
+    container.dataset.wfpEditFlexFrozen = 'true';
+  }
+
+  function unlockToAbsolute(el) {
+    const slide = getActiveSlide();
+
+    // Walk every ancestor of `el` up to (but not including) the active slide
+    // and pin each one. Outermost first so inner snapshots don't see outer
+    // mutations. Pinning at every level keeps both immediate siblings
+    // (block-flow reflow) and outer siblings (flex/grid redistribution)
+    // stable in one pass. The slide itself is excluded — it has explicit
+    // 1920x1080 dimensions and its children in WFP fixtures are typically
+    // already position:absolute.
+    const ancestors = [];
+    {
+      let cur = el;
+      while (cur && cur.parentElement && cur.parentElement !== slide) {
+        ancestors.push(cur.parentElement);
+        cur = cur.parentElement;
       }
-      container.dataset.wfpEditFlexFrozen = 'true';
+    }
+    ancestors.reverse(); // outermost first
+
+    for (const container of ancestors) {
+      pinContainerChildren(container);
     }
 
-    // Then promote the actual dragged element if it isn't already absolute.
+    // After pinContainerChildren, `el` is one of the pinned children and
+    // already has inline position:absolute. The block below is a safety net
+    // for the rare case the pin didn't promote it (e.g., parent === slide).
+    // Capture all four dimensions BEFORE mutating position so offsetWidth
+    // doesn't collapse to shrink-to-fit between the position write and the
+    // width write.
     if (getComputedStyle(el).position !== 'absolute') {
       touchElement(el);
+      const left = el.offsetLeft;
+      const top = el.offsetTop;
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
       el.style.position = 'absolute';
-      el.style.left = `${el.offsetLeft}px`;
-      el.style.top = `${el.offsetTop}px`;
-      el.style.width = `${el.offsetWidth}px`;
-      el.style.height = `${el.offsetHeight}px`;
+      el.style.margin = '0';
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      el.style.width = `${width}px`;
+      el.style.height = `${height}px`;
       el.dataset.wfpEditFrozen = 'true';
     }
 
