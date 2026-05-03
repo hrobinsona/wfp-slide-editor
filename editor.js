@@ -5,6 +5,7 @@
  *
  * Phase 1: bootstrap + edit-mode toggle.
  * Phase 2: click-to-select inside .slide.active + selection ring.
+ * Phase 3: ArrowUp/Down (and Shift+) nudge font-size on selected text element.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -12,7 +13,8 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.2.0-phase-2';
+  const VERSION = '0.3.0-phase-3';
+  const FONT_SIZE_MIN_PX = 8;
   const ROOT_ID = 'wfp-editor-root';
 
   if (document.getElementById(ROOT_ID)) {
@@ -153,11 +155,41 @@
     return false;
   }
 
+  function isTextBearing(el) {
+    if (!el) return false;
+    for (const node of el.childNodes) {
+      if (node.nodeType === 3 && node.textContent.trim().length > 0) return true;
+    }
+    return false;
+  }
+
+  function nudgeFontSize(el, deltaPx) {
+    const current = parseFloat(getComputedStyle(el).fontSize);
+    if (!Number.isFinite(current)) return;
+    const next = Math.max(FONT_SIZE_MIN_PX, current + deltaPx);
+    el.style.fontSize = `${next}px`;
+  }
+
   function onKeyDown(e) {
-    if (e.key !== 'e' && e.key !== 'E') return;
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (isTypingTarget(e.target)) return;
-    setEditMode(!state.editMode);
+    const noModifier = !e.metaKey && !e.ctrlKey && !e.altKey;
+
+    if ((e.key === 'e' || e.key === 'E') && noModifier) {
+      setEditMode(!state.editMode);
+      return;
+    }
+
+    if (!state.editMode) return;
+
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && noModifier) {
+      if (!state.selected || !isTextBearing(state.selected)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const direction = e.key === 'ArrowUp' ? +1 : -1;
+      const step = e.shiftKey ? 5 : 1;
+      nudgeFontSize(state.selected, direction * step);
+      refreshSelection();
+    }
   }
 
   document.addEventListener('keydown', onKeyDown);
