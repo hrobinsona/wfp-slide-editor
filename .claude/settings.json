@@ -1,0 +1,22 @@
+{
+  "$schema": "https://claude.ai/schemas/settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Read(./**)",
+      "Write(./**)",
+      "Edit(./**)"
+    ],
+    "deny": [
+      "Write(./fixtures/**)",
+      "Edit(./fixtures/**)"
+    ]
+  }
+}

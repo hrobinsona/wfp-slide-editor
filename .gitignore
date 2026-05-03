@@ -1,0 +1,34 @@
+node_modules/
+tests/output/
+playwright-report/
+test-results/
+.DS_Store
+*.local
+.claude/settings.local.json
+bookmarklet.txt
+
+# ═══════════════════════════════════════════════════════════════
+# PRIVACY: fixtures are gitignored by default
+# ═══════════════════════════════════════════════════════════════
+# All HTML fixtures are excluded from git unless explicitly allow-listed
+# below. This protects WFP/Philips/presentation content from accidentally
+# being committed to a public repo.
+#
+# To allow a sanitized fixture into git: add `!fixtures/your-file.html`
+# below. Treat each addition as a deliberate decision — read the file
+# first and confirm there are no real names, brand references, or
+# internal content.
+fixtures/*.html
+
+# Allow-listed sanitized fixtures (none yet — add as needed):
+# !fixtures/sample-deck.html
+# !fixtures/boilerplate-sanitized.html
+
+# ═══════════════════════════════════════════════════════════════
+# PRIVACY: any file with these names is gitignored everywhere
+# ═══════════════════════════════════════════════════════════════
+# Defense in depth — even if accidentally placed outside fixtures/
+*-private.html
+*-internal.html
+*-confidential.*
+.private-notes.md
