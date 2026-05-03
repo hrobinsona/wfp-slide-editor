@@ -9,6 +9,7 @@
  * Phase 4: scale-aware drag, with unlock-on-flow conversion + toast.
  * Phase 5: 8 resize handles on selected element + scale-aware resize.
  * Phase 6: undo/redo history (50-entry cap).
+ * Phase 7: double-click → contenteditable; Escape/Tab/click-outside commits.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -16,7 +17,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.6.0-phase-6';
+  const VERSION = '0.7.0-phase-7';
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
@@ -50,6 +51,7 @@
     selected: null,
     drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
+    editingText: null, // { el, originalContenteditable } while a text edit is open
     suppressClickUntil: 0,
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
@@ -220,6 +222,13 @@
   }
 
   function refreshSelection() {
+    if (state.editingText) {
+      // The selection ring sitting over a contenteditable target steals
+      // visual attention from the caret. Hide it for the duration of the
+      // text edit; refreshSelection will re-show it once edit ends.
+      hideRing();
+      return;
+    }
     if (state.selected && state.selected.isConnected) {
       positionRing(state.selected);
     } else {
@@ -249,6 +258,7 @@
       style: el.getAttribute('style'),
       frozen: el.getAttribute('data-wfp-edit-frozen'),
       flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+      html: el.innerHTML,
     };
   }
 
@@ -264,10 +274,16 @@
     else el.setAttribute('data-wfp-edit-frozen', snap.frozen);
     if (snap.flexFrozen === null) el.removeAttribute('data-wfp-edit-flex-frozen');
     else el.setAttribute('data-wfp-edit-flex-frozen', snap.flexFrozen);
+    if (el.innerHTML !== snap.html) el.innerHTML = snap.html;
   }
 
   function snapshotsEqual(a, b) {
-    return a.style === b.style && a.frozen === b.frozen && a.flexFrozen === b.flexFrozen;
+    return (
+      a.style === b.style &&
+      a.frozen === b.frozen &&
+      a.flexFrozen === b.flexFrozen &&
+      a.html === b.html
+    );
   }
 
   function beginTxn() {
@@ -330,7 +346,10 @@
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
     badge.textContent = state.editMode ? 'Edit: ON' : 'Edit: OFF';
-    if (!state.editMode) setSelected(null);
+    if (!state.editMode) {
+      if (state.editingText) endTextEdit();
+      setSelected(null);
+    }
   }
 
   function isTypingTarget(el) {
@@ -357,6 +376,18 @@
   }
 
   function onKeyDown(e) {
+    // While a text edit is open, only intercept Escape/Tab to commit. All
+    // other keys (typing, arrows for caret, etc.) flow through to the
+    // contenteditable element natively.
+    if (state.editingText) {
+      if (e.key === 'Escape' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        endTextEdit();
+      }
+      return;
+    }
+
     if (isTypingTarget(e.target)) return;
     const noModifier = !e.metaKey && !e.ctrlKey && !e.altKey;
 
@@ -437,6 +468,10 @@
       }
     }
     if (!activeChanged) return;
+    if (state.editingText) {
+      const slide = getActiveSlide();
+      if (!slide || !slide.contains(state.editingText.el)) endTextEdit();
+    }
     if (state.selected) {
       const slide = getActiveSlide();
       if (!slide || !slide.contains(state.selected)) {
@@ -485,6 +520,15 @@
   function onMouseDown(e) {
     if (!state.editMode) return;
     if (e.button !== 0) return;
+
+    // While a text edit is open, mousedowns INSIDE the editing element are
+    // for caret/selection — let the browser handle them natively. Mousedowns
+    // OUTSIDE commit the edit and fall through to the rest of onMouseDown
+    // so the outside element can be selected normally.
+    if (state.editingText) {
+      if (state.editingText.el.contains(e.target)) return;
+      endTextEdit();
+    }
 
     // Resize-handle hit takes precedence over a fresh selection/drag.
     const handleDir = e.target && e.target.dataset && e.target.dataset.wfpeHandle;
@@ -751,6 +795,82 @@
     d.width = rect.width;
     d.height = rect.height;
   }
+
+  // ===========================================================================
+  // Inline text edit
+  //
+  // Double-click a text-bearing element → set contenteditable="true", focus
+  // it, and place the caret at the click point. Escape, Tab, or any
+  // mousedown outside the editing element commits the change (one history
+  // entry capturing the innerHTML diff via the existing snapshot system).
+  // ===========================================================================
+  function placeCaretAtPoint(x, y) {
+    let range = null;
+    if (typeof document.caretRangeFromPoint === 'function') {
+      range = document.caretRangeFromPoint(x, y);
+    } else if (typeof document.caretPositionFromPoint === 'function') {
+      const pos = document.caretPositionFromPoint(x, y);
+      if (pos) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range) return;
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function startTextEdit(el, clickX, clickY) {
+    if (state.editingText) return;
+    if (!isTextBearing(el)) return;
+
+    state.editingText = {
+      el,
+      originalContenteditable: el.getAttribute('contenteditable'),
+    };
+
+    beginTxn();
+    touchElement(el);
+
+    el.setAttribute('contenteditable', 'true');
+    el.focus();
+    if (clickX != null && clickY != null) placeCaretAtPoint(clickX, clickY);
+
+    refreshSelection(); // hides ring/handles via the editingText guard
+  }
+
+  function endTextEdit() {
+    const editing = state.editingText;
+    if (!editing) return;
+    const { el, originalContenteditable } = editing;
+    state.editingText = null;
+
+    if (originalContenteditable === null) el.removeAttribute('contenteditable');
+    else el.setAttribute('contenteditable', originalContenteditable);
+
+    if (typeof el.blur === 'function') el.blur();
+    const sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+
+    endTxn();
+    refreshSelection();
+  }
+
+  function onDoubleClick(e) {
+    if (!state.editMode) return;
+    if (isInsideEditorRoot(e.target)) return;
+    const target = findSelectableTarget(e.target);
+    if (!target || !isTextBearing(target)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSelected(target);
+    startTextEdit(target, e.clientX, e.clientY);
+  }
+
+  document.addEventListener('dblclick', onDoubleClick, true);
 
   function onMouseMove(e) {
     const d = state.drag;
