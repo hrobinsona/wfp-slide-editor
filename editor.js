@@ -8,6 +8,7 @@
  * Phase 3: ArrowUp/Down (and Shift+) nudge font-size on selected text element.
  * Phase 4: scale-aware drag, with unlock-on-flow conversion + toast.
  * Phase 5: 8 resize handles on selected element + scale-aware resize.
+ * Phase 6: undo/redo history (50-entry cap).
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -15,7 +16,8 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.5.0-phase-5';
+  const VERSION = '0.6.0-phase-6';
+  const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
   const TOAST_DURATION_MS = 2000;
@@ -49,6 +51,9 @@
     drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
     suppressClickUntil: 0,
+    history: [], // entries: [{ changes: [{element, before, after}, ...] }]
+    historyIndex: 0, // 0 = nothing applied; history.length = all applied
+    txn: null, // { snapshots: Map<Element, BeforeSnap> } when an op is in progress
   };
 
   // ===========================================================================
@@ -229,6 +234,96 @@
   }
 
   // ===========================================================================
+  // History (undo/redo)
+  //
+  // Each history entry is a list of (element, before, after) snapshots. A
+  // snapshot captures the element's inline `style` plus any `data-wfp-edit-*`
+  // markers that the editor adds during unlock/freeze. Undo restores every
+  // element's `before`; redo restores `after`. One drag = one entry, one
+  // resize = one entry, one font-size keystroke = one entry; the freeze that
+  // a drag performs on flex/grid siblings is bundled into the same entry as
+  // the drag itself.
+  // ===========================================================================
+  function snapshotElement(el) {
+    return {
+      style: el.getAttribute('style'),
+      frozen: el.getAttribute('data-wfp-edit-frozen'),
+      flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+    };
+  }
+
+  function applyElementSnapshot(el, snap) {
+    // Whole-attribute write is intentional here: the snapshot captured the
+    // element's complete `style` attribute at change time, so restoring it
+    // wholesale (or removing it entirely if it was absent) is the correct
+    // undo. Per-property merging would be wrong — undo must reverse all
+    // properties this change wrote, not preserve them.
+    if (snap.style === null) el.removeAttribute('style');
+    else el.setAttribute('style', snap.style);
+    if (snap.frozen === null) el.removeAttribute('data-wfp-edit-frozen');
+    else el.setAttribute('data-wfp-edit-frozen', snap.frozen);
+    if (snap.flexFrozen === null) el.removeAttribute('data-wfp-edit-flex-frozen');
+    else el.setAttribute('data-wfp-edit-flex-frozen', snap.flexFrozen);
+  }
+
+  function snapshotsEqual(a, b) {
+    return a.style === b.style && a.frozen === b.frozen && a.flexFrozen === b.flexFrozen;
+  }
+
+  function beginTxn() {
+    if (state.txn) return; // ignore re-entry; outermost owns the txn
+    state.txn = { snapshots: new Map() };
+  }
+
+  function touchElement(el) {
+    if (!state.txn || !el) return;
+    if (state.txn.snapshots.has(el)) return;
+    state.txn.snapshots.set(el, snapshotElement(el));
+  }
+
+  function endTxn() {
+    if (!state.txn) return;
+    const txn = state.txn;
+    state.txn = null;
+    const changes = [];
+    for (const [el, before] of txn.snapshots) {
+      const after = snapshotElement(el);
+      if (snapshotsEqual(before, after)) continue;
+      changes.push({ element: el, before, after });
+    }
+    if (changes.length === 0) return;
+    pushHistoryEntry(changes);
+  }
+
+  function pushHistoryEntry(changes) {
+    // Truncate any redo stack — a fresh change invalidates everything
+    // beyond the current cursor.
+    state.history.length = state.historyIndex;
+    state.history.push({ changes });
+    state.historyIndex = state.history.length;
+    while (state.history.length > HISTORY_MAX) {
+      state.history.shift();
+      state.historyIndex--;
+    }
+  }
+
+  function undo() {
+    if (state.historyIndex <= 0) return;
+    state.historyIndex--;
+    const entry = state.history[state.historyIndex];
+    for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
+    refreshSelection();
+  }
+
+  function redo() {
+    if (state.historyIndex >= state.history.length) return;
+    const entry = state.history[state.historyIndex];
+    for (const c of entry.changes) applyElementSnapshot(c.element, c.after);
+    state.historyIndex++;
+    refreshSelection();
+  }
+
+  // ===========================================================================
   // Edit mode
   // ===========================================================================
   function setEditMode(value) {
@@ -278,8 +373,28 @@
       e.stopPropagation();
       const direction = e.key === 'ArrowUp' ? +1 : -1;
       const step = e.shiftKey ? 5 : 1;
+      beginTxn();
+      touchElement(state.selected);
       nudgeFontSize(state.selected, direction * step);
+      endTxn();
       refreshSelection();
+      return;
+    }
+
+    // Undo / redo. Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Cmd/Ctrl+Y = redo.
+    const isMod = e.metaKey || e.ctrlKey;
+    if (isMod && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (isMod && (e.key === 'y' || e.key === 'Y') && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      redo();
+      return;
     }
   }
 
@@ -424,6 +539,9 @@
     };
     state.resize = r;
 
+    beginTxn();
+    touchElement(el);
+
     // Resize on a flow-positioned element runs the same unlock conversion as
     // a drag would (which now also freezes flex/grid siblings). After unlock,
     // refetch offsets so subsequent dimensional writes are well-defined.
@@ -495,6 +613,7 @@
     if (state.resize) {
       state.resize = null;
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+      endTxn();
     }
   }
 
@@ -582,6 +701,7 @@
     for (const snap of snapshots) {
       if (!snap) continue;
       const { container, outerWidth, outerHeight, childRects, wasStatic } = snap;
+      touchElement(container);
       if (wasStatic) container.style.position = 'relative';
       // Pin the container's outer box. Once its children are all absolute,
       // its intrinsic content collapses and any outer block/flex flow would
@@ -593,6 +713,7 @@
       container.style.width = `${outerWidth}px`;
       container.style.height = `${outerHeight}px`;
       for (const m of childRects) {
+        touchElement(m.child);
         m.child.style.position = 'absolute';
         m.child.style.left = `${m.left}px`;
         m.child.style.top = `${m.top}px`;
@@ -605,6 +726,7 @@
 
     // Then promote the actual dragged element if it isn't already absolute.
     if (getComputedStyle(el).position !== 'absolute') {
+      touchElement(el);
       el.style.position = 'absolute';
       el.style.left = `${el.offsetLeft}px`;
       el.style.top = `${el.offsetTop}px`;
@@ -640,6 +762,8 @@
       const distSq = dxView * dxView + dyView * dyView;
       if (distSq < DRAG_DEADZONE_PX * DRAG_DEADZONE_PX) return;
       d.started = true;
+      beginTxn();
+      touchElement(d.el);
       if (!d.wasAbsolute) {
         commitUnlock(d);
       } else {
@@ -669,6 +793,7 @@
       // The browser will fire a click after this mouseup. Swallow it so we
       // don't accidentally re-select or deselect.
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+      endTxn();
     }
   }
 
