@@ -424,16 +424,15 @@
     };
     state.resize = r;
 
-    // Resize on a flow-positioned element forces the same unlock conversion as
-    // a drag would: write the captured rect inline as absolute so subsequent
-    // dimensional writes are well-defined.
+    // Resize on a flow-positioned element runs the same unlock conversion as
+    // a drag would (which now also freezes flex/grid siblings). After unlock,
+    // refetch offsets so subsequent dimensional writes are well-defined.
     if (!wasAbsolute) {
-      el.style.position = 'absolute';
-      el.style.left = `${r.initLeft}px`;
-      el.style.top = `${r.initTop}px`;
-      el.style.width = `${r.initWidth}px`;
-      el.style.height = `${r.initHeight}px`;
-      showToast(el, 'Unlocked. Now positioned absolutely.');
+      const rect = unlockToAbsolute(el);
+      r.initLeft = rect.left;
+      r.initTop = rect.top;
+      r.initWidth = rect.width;
+      r.initHeight = rect.height;
     } else {
       // Lock in the current dimensions so deltas compose deterministically.
       el.style.left = `${r.initLeft}px`;
@@ -499,15 +498,136 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Unlock helpers
+  //
+  // Promoting a flex/grid child to position:absolute removes it from the
+  // parent's layout, so siblings reflow (e.g. gap/space-between redistributes
+  // among the remaining N-1 children). To prevent that, we freeze the entire
+  // container on first grab: snapshot every child's rect in slide-space, then
+  // pin all of them as position:absolute at those captured pixels. The
+  // dragged child is just one of N now-absolute children. Subsequent drags
+  // inside the same container skip the freeze.
+  //
+  // For non-flex/grid parents, the simpler unlock-just-this-one-element path
+  // still applies — sibling reflow isn't a concern there.
+  // ---------------------------------------------------------------------------
+  function isFlexOrGridContainer(el) {
+    if (!el) return false;
+    const display = getComputedStyle(el).display;
+    return (
+      display === 'flex' ||
+      display === 'inline-flex' ||
+      display === 'grid' ||
+      display === 'inline-grid'
+    );
+  }
+
+
+  function collectFlexAncestors(el) {
+    // Returns flex/grid containers above `el`, ordered OUTERMOST FIRST so the
+    // caller can freeze from the outside in. Outside-in matters: freezing the
+    // outermost container first pins its children's outer rects before we
+    // start mutating their internals, so each inner freeze still measures
+    // children at their correct flex-flow positions.
+    const slide = getActiveSlide();
+    const containers = [];
+    let cur = el;
+    while (cur && cur.parentElement && cur !== slide) {
+      if (isFlexOrGridContainer(cur.parentElement)) {
+        containers.push(cur.parentElement);
+      }
+      cur = cur.parentElement;
+    }
+    return containers.reverse();
+  }
+
+  function snapshotChildOffsetsRelativeTo(container) {
+    // Use offsetLeft/Top/Width/Height (transform-free, CSS-pixel) instead of
+    // getBoundingClientRect (which includes any active CSS animation
+    // transforms — fatal during the WFP slides' scaleIn entrance animation).
+    //
+    // For a static container, container and its children share the same
+    // offsetParent, so child.offsetLeft - container.offsetLeft is the
+    // child's position within the container in CSS pixels.
+    //
+    // For a positioned container, the children's offsetParent IS the
+    // container itself; child.offsetLeft is already the in-container offset.
+    const isStatic = getComputedStyle(container).position === 'static';
+    return [...container.children].map((child) => ({
+      child,
+      left: isStatic ? child.offsetLeft - container.offsetLeft : child.offsetLeft,
+      top: isStatic ? child.offsetTop - container.offsetTop : child.offsetTop,
+      width: child.offsetWidth,
+      height: child.offsetHeight,
+    }));
+  }
+
+  function unlockToAbsolute(el) {
+    // Snapshot every ancestor flex/grid container BEFORE any writes, using
+    // transform-free offset measurements so in-flight animations don't taint
+    // the captured sizes. Then pin from outermost to innermost.
+    const containers = collectFlexAncestors(el);
+    const snapshots = containers.map((container) => {
+      if (container.dataset.wfpEditFlexFrozen === 'true') return null;
+      return {
+        container,
+        outerWidth: container.offsetWidth,
+        outerHeight: container.offsetHeight,
+        childRects: snapshotChildOffsetsRelativeTo(container),
+        wasStatic: getComputedStyle(container).position === 'static',
+      };
+    });
+
+    for (const snap of snapshots) {
+      if (!snap) continue;
+      const { container, outerWidth, outerHeight, childRects, wasStatic } = snap;
+      if (wasStatic) container.style.position = 'relative';
+      // Pin the container's outer box. Once its children are all absolute,
+      // its intrinsic content collapses and any outer block/flex flow would
+      // shift. Caveat: if the container itself is a flex item with `flex: 1`
+      // or stretch sizing in some non-flex outer context, this lock will
+      // freeze its size to the captured pixels even if the viewport later
+      // reflows. WFP slides are fixed 1920x1080 with one scale on .deck, so
+      // viewport reflow doesn't apply here, but worth knowing.
+      container.style.width = `${outerWidth}px`;
+      container.style.height = `${outerHeight}px`;
+      for (const m of childRects) {
+        m.child.style.position = 'absolute';
+        m.child.style.left = `${m.left}px`;
+        m.child.style.top = `${m.top}px`;
+        m.child.style.width = `${m.width}px`;
+        m.child.style.height = `${m.height}px`;
+        m.child.dataset.wfpEditFrozen = 'true';
+      }
+      container.dataset.wfpEditFlexFrozen = 'true';
+    }
+
+    // Then promote the actual dragged element if it isn't already absolute.
+    if (getComputedStyle(el).position !== 'absolute') {
+      el.style.position = 'absolute';
+      el.style.left = `${el.offsetLeft}px`;
+      el.style.top = `${el.offsetTop}px`;
+      el.style.width = `${el.offsetWidth}px`;
+      el.style.height = `${el.offsetHeight}px`;
+      el.dataset.wfpEditFrozen = 'true';
+    }
+
+    showToast(el, 'Unlocked. Now positioned absolutely.');
+    return {
+      left: el.offsetLeft,
+      top: el.offsetTop,
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+    };
+  }
+
   function commitUnlock(d) {
-    // Convert the element to inline absolute positioning, anchored at its
-    // current visual offset within its offsetParent.
-    d.el.style.position = 'absolute';
-    d.el.style.left = `${d.anchorLeft}px`;
-    d.el.style.top = `${d.anchorTop}px`;
-    d.el.style.width = `${d.width}px`;
-    d.el.style.height = `${d.height}px`;
-    showToast(d.el, 'Unlocked. Now positioned absolutely.');
+    const rect = unlockToAbsolute(d.el);
+    d.anchorLeft = rect.left;
+    d.anchorTop = rect.top;
+    d.width = rect.width;
+    d.height = rect.height;
   }
 
   function onMouseMove(e) {
