@@ -1,0 +1,16 @@
+{
+  "name": "wfp-slide-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Bookmarklet-activated visual editor for WFP HTML presentations.",
+  "scripts": {
+    "test": "playwright test",
+    "dev": "http-server -p 8080 -c-1 .",
+    "build:bookmarklet": "node scripts/build-bookmarklet.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "http-server": "^14.1.1"
+  }
+}
