@@ -7,6 +7,7 @@
  * Phase 2: click-to-select inside .slide.active + selection ring.
  * Phase 3: ArrowUp/Down (and Shift+) nudge font-size on selected text element.
  * Phase 4: scale-aware drag, with unlock-on-flow conversion + toast.
+ * Phase 5: 8 resize handles on selected element + scale-aware resize.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -14,11 +15,24 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.4.0-phase-4';
+  const VERSION = '0.5.0-phase-5';
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
   const TOAST_DURATION_MS = 2000;
   const POST_DRAG_CLICK_GUARD_MS = 250;
+  const RESIZE_MIN_PX = 8;
+  const HANDLE_SIZE_PX = 10;
+  const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+  const HANDLE_CURSORS = {
+    nw: 'nwse-resize',
+    n: 'ns-resize',
+    ne: 'nesw-resize',
+    e: 'ew-resize',
+    se: 'nwse-resize',
+    s: 'ns-resize',
+    sw: 'nesw-resize',
+    w: 'ew-resize',
+  };
   const ROOT_ID = 'wfp-editor-root';
 
   if (document.getElementById(ROOT_ID)) {
@@ -33,6 +47,7 @@
     editMode: false,
     selected: null,
     drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
+    resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
     suppressClickUntil: 0,
   };
 
@@ -95,6 +110,18 @@
     #${ROOT_ID} .wfpe-toast[data-state="leaving"] {
       opacity: 0;
     }
+    #${ROOT_ID} .wfpe-handle {
+      position: fixed;
+      box-sizing: border-box;
+      width: ${HANDLE_SIZE_PX}px;
+      height: ${HANDLE_SIZE_PX}px;
+      background: #ffffff;
+      border: 1.5px solid #2a8bf2;
+      border-radius: 1px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      pointer-events: auto;
+      display: none;
+    }
   `;
   root.appendChild(styleEl);
 
@@ -108,6 +135,17 @@
   ring.className = 'wfpe-selection-ring';
   ring.style.display = 'none';
   root.appendChild(ring);
+
+  const handles = {};
+  for (const dir of HANDLE_DIRS) {
+    const h = document.createElement('div');
+    h.className = `wfpe-handle wfpe-handle-${dir}`;
+    h.dataset.wfpeHandle = dir;
+    h.style.cursor = HANDLE_CURSORS[dir];
+    h.style.display = 'none';
+    root.appendChild(h);
+    handles[dir] = h;
+  }
 
   document.body.appendChild(root);
 
@@ -139,10 +177,41 @@
     ring.style.left = `${rect.left}px`;
     ring.style.width = `${rect.width}px`;
     ring.style.height = `${rect.height}px`;
+    positionHandles(rect);
   }
 
   function hideRing() {
     ring.style.display = 'none';
+    hideHandles();
+  }
+
+  function handleAnchors(rect) {
+    return {
+      nw: { x: rect.left, y: rect.top },
+      n: { x: rect.left + rect.width / 2, y: rect.top },
+      ne: { x: rect.left + rect.width, y: rect.top },
+      e: { x: rect.left + rect.width, y: rect.top + rect.height / 2 },
+      se: { x: rect.left + rect.width, y: rect.top + rect.height },
+      s: { x: rect.left + rect.width / 2, y: rect.top + rect.height },
+      sw: { x: rect.left, y: rect.top + rect.height },
+      w: { x: rect.left, y: rect.top + rect.height / 2 },
+    };
+  }
+
+  function positionHandles(rect) {
+    const anchors = handleAnchors(rect);
+    const half = HANDLE_SIZE_PX / 2;
+    for (const dir of HANDLE_DIRS) {
+      const a = anchors[dir];
+      const h = handles[dir];
+      h.style.left = `${a.x - half}px`;
+      h.style.top = `${a.y - half}px`;
+      h.style.display = 'block';
+    }
+  }
+
+  function hideHandles() {
+    for (const dir of HANDLE_DIRS) handles[dir].style.display = 'none';
   }
 
   function refreshSelection() {
@@ -301,6 +370,14 @@
   function onMouseDown(e) {
     if (!state.editMode) return;
     if (e.button !== 0) return;
+
+    // Resize-handle hit takes precedence over a fresh selection/drag.
+    const handleDir = e.target && e.target.dataset && e.target.dataset.wfpeHandle;
+    if (handleDir && state.selected) {
+      startResize(e, handleDir);
+      return;
+    }
+
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
     if (!target) return;
@@ -322,6 +399,100 @@
 
     document.addEventListener('mousemove', onMouseMove, true);
     document.addEventListener('mouseup', onMouseUp, true);
+  }
+
+  function startResize(e, dir) {
+    const el = state.selected;
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const wasAbsolute = getComputedStyle(el).position === 'absolute';
+    const r = {
+      el,
+      dir,
+      startX: e.clientX,
+      startY: e.clientY,
+      initLeft: el.offsetLeft,
+      initTop: el.offsetTop,
+      initWidth: el.offsetWidth,
+      initHeight: el.offsetHeight,
+    };
+    state.resize = r;
+
+    // Resize on a flow-positioned element forces the same unlock conversion as
+    // a drag would: write the captured rect inline as absolute so subsequent
+    // dimensional writes are well-defined.
+    if (!wasAbsolute) {
+      el.style.position = 'absolute';
+      el.style.left = `${r.initLeft}px`;
+      el.style.top = `${r.initTop}px`;
+      el.style.width = `${r.initWidth}px`;
+      el.style.height = `${r.initHeight}px`;
+      showToast(el, 'Unlocked. Now positioned absolutely.');
+    } else {
+      // Lock in the current dimensions so deltas compose deterministically.
+      el.style.left = `${r.initLeft}px`;
+      el.style.top = `${r.initTop}px`;
+      el.style.width = `${r.initWidth}px`;
+      el.style.height = `${r.initHeight}px`;
+    }
+
+    document.addEventListener('mousemove', onResizeMove, true);
+    document.addEventListener('mouseup', onResizeUp, true);
+  }
+
+  function onResizeMove(e) {
+    const r = state.resize;
+    if (!r) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const scale = getCanvasScale();
+    const dx = (e.clientX - r.startX) / scale;
+    const dy = (e.clientY - r.startY) / scale;
+
+    let left = r.initLeft;
+    let top = r.initTop;
+    let width = r.initWidth;
+    let height = r.initHeight;
+
+    if (r.dir.includes('w')) {
+      left = r.initLeft + dx;
+      width = r.initWidth - dx;
+    } else if (r.dir.includes('e')) {
+      width = r.initWidth + dx;
+    }
+    if (r.dir.includes('n')) {
+      top = r.initTop + dy;
+      height = r.initHeight - dy;
+    } else if (r.dir.includes('s')) {
+      height = r.initHeight + dy;
+    }
+
+    if (width < RESIZE_MIN_PX) {
+      if (r.dir.includes('w')) left = r.initLeft + (r.initWidth - RESIZE_MIN_PX);
+      width = RESIZE_MIN_PX;
+    }
+    if (height < RESIZE_MIN_PX) {
+      if (r.dir.includes('n')) top = r.initTop + (r.initHeight - RESIZE_MIN_PX);
+      height = RESIZE_MIN_PX;
+    }
+
+    r.el.style.left = `${left}px`;
+    r.el.style.top = `${top}px`;
+    r.el.style.width = `${width}px`;
+    r.el.style.height = `${height}px`;
+    refreshSelection();
+  }
+
+  function onResizeUp(_e) {
+    document.removeEventListener('mousemove', onResizeMove, true);
+    document.removeEventListener('mouseup', onResizeUp, true);
+    if (state.resize) {
+      state.resize = null;
+      state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+    }
   }
 
   function commitUnlock(d) {
