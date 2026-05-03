@@ -2,6 +2,7 @@ node_modules/
 tests/output/
 playwright-report/
 test-results/
+.playwright-mcp/
 .DS_Store
 *.local
 .claude/settings.local.json

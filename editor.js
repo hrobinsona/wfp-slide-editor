@@ -4,6 +4,7 @@
  * See REQUIREMENTS.md, DESIGN.md, TASKS.md.
  *
  * Phase 1: bootstrap + edit-mode toggle.
+ * Phase 2: click-to-select inside .slide.active + selection ring.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -11,7 +12,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '0.1.0-phase-1';
+  const VERSION = '0.2.0-phase-2';
   const ROOT_ID = 'wfp-editor-root';
 
   if (document.getElementById(ROOT_ID)) {
@@ -24,6 +25,7 @@
   // ===========================================================================
   const state = {
     editMode: false,
+    selected: null,
   };
 
   // ===========================================================================
@@ -58,6 +60,17 @@
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"] {
       background: rgba(212, 114, 106, 0.95);
     }
+    #${ROOT_ID} .wfpe-selection-ring {
+      position: fixed;
+      pointer-events: none;
+      box-sizing: border-box;
+      border: 2px solid #2a8bf2;
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.85) inset,
+        0 0 0 1px rgba(0, 0, 0, 0.25);
+      border-radius: 2px;
+      display: none;
+    }
   `;
   root.appendChild(styleEl);
 
@@ -67,7 +80,60 @@
   badge.textContent = 'Edit: OFF';
   root.appendChild(badge);
 
+  const ring = document.createElement('div');
+  ring.className = 'wfpe-selection-ring';
+  ring.style.display = 'none';
+  root.appendChild(ring);
+
   document.body.appendChild(root);
+
+  // ===========================================================================
+  // Helpers
+  // ===========================================================================
+  function isInsideEditorRoot(el) {
+    return !!el && root.contains(el);
+  }
+
+  function getActiveSlide() {
+    return document.querySelector('.slide.active');
+  }
+
+  function findSelectableTarget(el) {
+    if (!el || isInsideEditorRoot(el)) return null;
+    const slide = getActiveSlide();
+    if (!slide) return null;
+    if (el === slide) return null;
+    if (el.classList && el.classList.contains('deck')) return null;
+    if (!slide.contains(el)) return null;
+    return el;
+  }
+
+  function positionRing(el) {
+    const rect = el.getBoundingClientRect();
+    ring.style.display = 'block';
+    ring.style.top = `${rect.top}px`;
+    ring.style.left = `${rect.left}px`;
+    ring.style.width = `${rect.width}px`;
+    ring.style.height = `${rect.height}px`;
+  }
+
+  function hideRing() {
+    ring.style.display = 'none';
+  }
+
+  function refreshSelection() {
+    if (state.selected && state.selected.isConnected) {
+      positionRing(state.selected);
+    } else {
+      hideRing();
+    }
+  }
+
+  function setSelected(el) {
+    state.selected = el || null;
+    if (state.selected) positionRing(state.selected);
+    else hideRing();
+  }
 
   // ===========================================================================
   // Edit mode
@@ -76,6 +142,7 @@
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
     badge.textContent = state.editMode ? 'Edit: ON' : 'Edit: OFF';
+    if (!state.editMode) setSelected(null);
   }
 
   function isTypingTarget(el) {
@@ -94,6 +161,47 @@
   }
 
   document.addEventListener('keydown', onKeyDown);
+
+  // ===========================================================================
+  // Selection
+  // ===========================================================================
+  function onClick(e) {
+    if (!state.editMode) return;
+    if (isInsideEditorRoot(e.target)) return;
+    const target = findSelectableTarget(e.target);
+    setSelected(target);
+  }
+
+  document.addEventListener('click', onClick, true);
+
+  // Reposition the ring on scroll, resize, and DOM changes that move the target.
+  window.addEventListener('scroll', refreshSelection, true);
+  window.addEventListener('resize', refreshSelection);
+
+  // Watch for slide transitions: when the .slide.active class moves to a
+  // different slide, clear the current selection (it belongs to the previous
+  // slide).
+  const slideObserver = new MutationObserver((mutations) => {
+    let activeChanged = false;
+    for (const m of mutations) {
+      if (m.type === 'attributes' && m.attributeName === 'class') {
+        activeChanged = true;
+        break;
+      }
+    }
+    if (!activeChanged) return;
+    if (state.selected) {
+      const slide = getActiveSlide();
+      if (!slide || !slide.contains(state.selected)) {
+        setSelected(null);
+      } else {
+        refreshSelection();
+      }
+    }
+  });
+  document.querySelectorAll('.slide').forEach((slide) => {
+    slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
+  });
 
   // ===========================================================================
   // Ready
