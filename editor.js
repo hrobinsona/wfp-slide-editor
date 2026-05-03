@@ -384,6 +384,10 @@
 
     setSelected(target);
 
+    // Suppress the browser's default mousedown-then-drag text selection so
+    // the user doesn't end up highlighting random copy while moving things.
+    e.preventDefault();
+
     const cs = getComputedStyle(target);
     state.drag = {
       el: target,
