@@ -280,11 +280,100 @@
     #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-body {
       display: none;
     }
+    /* Inspector form rows (v2.2+): label on the left, paired numeric
+       inputs on the right. Inputs commit on Enter/blur, not per keystroke. */
+    #${ROOT_ID} .wfpe-inspector-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    #${ROOT_ID} .wfpe-inspector-row-label {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.7;
+    }
+    #${ROOT_ID} .wfpe-inspector-pair {
+      display: flex;
+      gap: 6px;
+    }
+    #${ROOT_ID} .wfpe-inspector-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.30);
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      border-radius: 8px;
+      padding: 3px 6px 3px 8px;
+      font-size: 12px;
+    }
+    #${ROOT_ID} .wfpe-inspector-field-axis {
+      opacity: 0.6;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #${ROOT_ID} .wfpe-inspector-field input {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: textfield;
+      background: transparent;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      padding: 0;
+      margin: 0;
+      width: 48px;
+      text-align: right;
+      outline: none;
+    }
+    #${ROOT_ID} .wfpe-inspector-field input::-webkit-outer-spin-button,
+    #${ROOT_ID} .wfpe-inspector-field input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    #${ROOT_ID} .wfpe-inspector-field:focus-within {
+      border-color: rgba(42, 139, 242, 0.7);
+      background: rgba(255, 255, 255, 0.5);
+    }
+    /* Dimension bubble (v2.2): floating chip above the selection ring
+       showing W × H. Hidden alongside the ring during inline text edit. */
+    #${ROOT_ID} .wfpe-dim-bubble {
+      position: fixed;
+      pointer-events: none;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.85);
+      color: #fff;
+      font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 3px 7px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+      white-space: nowrap;
+      display: none;
+      /* Sits inside #wfp-editor-root which already pins the editor's
+         stacking context above the slide; no need to compete with the
+         ring's z-index since they're siblings under the same root. */
+    }
     @media (prefers-color-scheme: dark) {
       #${ROOT_ID} .wfpe-inspector {
         background: rgba(255, 255, 255, 0.12);
         border-color: rgba(255, 255, 255, 0.24);
         color: rgba(255, 255, 255, 0.9);
+      }
+      #${ROOT_ID} .wfpe-inspector-field {
+        background: rgba(255, 255, 255, 0.10);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-inspector-field:focus-within {
+        background: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-dim-bubble {
+        background: rgba(255, 255, 255, 0.92);
+        color: rgba(15, 23, 42, 0.95);
       }
       #${ROOT_ID} .wfpe-inspector-header {
         border-bottom-color: rgba(255, 255, 255, 0.12);
@@ -440,7 +529,57 @@
   inspectorBody.className = 'wfpe-inspector-body';
   inspector.appendChild(inspectorBody);
 
+  // Position + size rows (v2.2). Each input commits on Enter or blur and
+  // produces one history entry via the txn machinery; live drag/resize
+  // updates the readouts but does not commit (the drag itself owns the
+  // history entry).
+  function makeInspectorField(prop, axis) {
+    const wrap = document.createElement('label');
+    wrap.className = 'wfpe-inspector-field';
+    const ax = document.createElement('span');
+    ax.className = 'wfpe-inspector-field-axis';
+    ax.textContent = axis;
+    wrap.appendChild(ax);
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.dataset.wfpeProp = prop;
+    input.inputMode = 'numeric';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    wrap.appendChild(input);
+    return { wrap, input };
+  }
+
+  function makeInspectorRow(label, fields) {
+    const row = document.createElement('div');
+    row.className = 'wfpe-inspector-row';
+    const lab = document.createElement('span');
+    lab.className = 'wfpe-inspector-row-label';
+    lab.textContent = label;
+    row.appendChild(lab);
+    const pair = document.createElement('div');
+    pair.className = 'wfpe-inspector-pair';
+    for (const f of fields) pair.appendChild(f.wrap);
+    row.appendChild(pair);
+    return row;
+  }
+
+  const fieldX = makeInspectorField('x', 'X');
+  const fieldY = makeInspectorField('y', 'Y');
+  const fieldW = makeInspectorField('w', 'W');
+  const fieldH = makeInspectorField('h', 'H');
+  const inspectorInputs = { x: fieldX.input, y: fieldY.input, w: fieldW.input, h: fieldH.input };
+
+  inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
+  inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
+
   root.appendChild(inspector);
+
+  // Dimension bubble (v2.2): floating "W × H" chip above the selection
+  // ring. Tracks the same lifecycle as the ring.
+  const dimBubble = document.createElement('div');
+  dimBubble.className = 'wfpe-dim-bubble';
+  root.appendChild(dimBubble);
 
   const ring = document.createElement('div');
   ring.className = 'wfpe-selection-ring';
@@ -483,6 +622,49 @@
     e.preventDefault();
     setInspectorMinimised(!state.inspectorMinimised);
   });
+
+  // Input commit on Enter / blur. Per-keystroke updates are deliberately
+  // not wired — they would either flood the history or require batching
+  // on every change. Enter and blur are the natural commit points.
+  //
+  // Each input snapshots `state.selected` at focus-time on its own dataset
+  // so the deferred commit on blur targets the element the user was
+  // actually editing — not whichever element happens to be selected by
+  // the time blur fires (a mousedown on a different slide element runs
+  // setSelected before the prior input's blur dispatches).
+  let revertingInput = null;
+  for (const [prop, input] of Object.entries(inspectorInputs)) {
+    input.addEventListener('focus', () => {
+      input.__wfpeFocusTarget = state.selected || null;
+    });
+    input.addEventListener('keydown', (e) => {
+      // Stop propagation so editor-level shortcuts (E toggle, arrow nudge,
+      // Cmd+Z, etc.) don't fire while typing in the inspector.
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitInspectorInput(prop, input.value, input.__wfpeFocusTarget);
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        // Revert by repopulating from the live element, then blur. The
+        // revertingInput flag suppresses the blur's commit so the no-op
+        // path stays explicit rather than implicit-via-equality.
+        revertingInput = input;
+        populateInspector(state.selected);
+        input.blur();
+      }
+    });
+    input.addEventListener('blur', () => {
+      const target = input.__wfpeFocusTarget;
+      input.__wfpeFocusTarget = null;
+      if (revertingInput === input) {
+        revertingInput = null;
+        return;
+      }
+      commitInspectorInput(prop, input.value, target);
+    });
+  }
 
   // ===========================================================================
   // Helpers
@@ -551,23 +733,52 @@
 
   function refreshSelection() {
     if (state.editingText) {
-      // The selection ring sitting over a contenteditable target steals
-      // visual attention from the caret. Hide it for the duration of the
-      // text edit; refreshSelection will re-show it once edit ends.
+      // The selection ring (and the dimension bubble) sitting over a
+      // contenteditable target steals visual attention from the caret.
+      // Hide both for the duration of the text edit; refreshSelection
+      // will re-show them once edit ends.
       hideRing();
+      hideDimBubble();
       return;
     }
     if (state.selected && state.selected.isConnected) {
       positionRing(state.selected);
+      positionDimBubble(state.selected);
+      populateInspector(state.selected);
     } else {
       hideRing();
+      hideDimBubble();
     }
+  }
+
+  function positionDimBubble(el) {
+    const r = el.getBoundingClientRect();
+    dimBubble.textContent = `${Math.round(r.width)} × ${Math.round(r.height)}`;
+    dimBubble.style.display = 'block';
+    // Anchor the bubble centred above the ring with a small gutter; the
+    // chip's own height is small (~22px) so a 22px offset clears the
+    // ring's stroke without floating off the screen for top-edge selections.
+    const top = Math.max(2, r.top - 22);
+    const left = r.left + r.width / 2;
+    dimBubble.style.top = `${top}px`;
+    dimBubble.style.left = `${left}px`;
+  }
+
+  function hideDimBubble() {
+    dimBubble.style.display = 'none';
   }
 
   function setSelected(el) {
     state.selected = el || null;
-    if (state.selected) positionRing(state.selected);
-    else hideRing();
+    if (state.selected) {
+      positionRing(state.selected);
+      positionDimBubble(state.selected);
+      populateInspector(state.selected);
+    } else {
+      hideRing();
+      hideDimBubble();
+      populateInspector(null);
+    }
     // Inspector visibility is updated by the explicit call sites below
     // (onClick / onMouseUp / setEditMode / slideObserver) rather than from
     // here. If we toggled inspector display:flex synchronously inside a
@@ -577,6 +788,63 @@
     // and mouseup targets (== body), and onClick can't find the original
     // target. Updating inspector after the mouseup keeps the click cycle
     // against the original DOM.
+  }
+
+  function populateInspector(el) {
+    if (!el) {
+      for (const k of ['x', 'y', 'w', 'h']) {
+        if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+      }
+      return;
+    }
+    // Use offset* values so what the user reads matches the box model
+    // the editor writes back to (left/top/width/height in CSS px).
+    // Skip the focused input — overwriting it would clobber what the
+    // user is currently typing before they commit on Enter/blur.
+    const values = {
+      x: String(el.offsetLeft),
+      y: String(el.offsetTop),
+      w: String(el.offsetWidth),
+      h: String(el.offsetHeight),
+    };
+    for (const k of ['x', 'y', 'w', 'h']) {
+      if (document.activeElement === inspectorInputs[k]) continue;
+      inspectorInputs[k].value = values[k];
+    }
+  }
+
+  function commitInspectorInput(prop, raw, targetEl) {
+    // Prefer the target captured at focus-time so a mid-edit selection
+    // change doesn't redirect the commit to the new element.
+    const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
+    if (!el) return;
+    const next = parseFloat(raw);
+    if (!Number.isFinite(next)) {
+      // Garbage input — restore the readout from the live element.
+      populateInspector(el);
+      return;
+    }
+    // Compare against the live offset; abort no-op commits so blur
+    // cycling doesn't pollute history.
+    const offsetMap = { x: 'offsetLeft', y: 'offsetTop', w: 'offsetWidth', h: 'offsetHeight' };
+    const current = el[offsetMap[prop]];
+    if (Math.round(next) === current) return;
+
+    beginTxn();
+    touchElement(el);
+    // X/Y require absolute positioning; unlock-on-flow if needed (same
+    // path drag/resize use, which also pins flex/grid siblings so the
+    // sudden absolute promotion doesn't reflow the layout).
+    if (prop === 'x' || prop === 'y') {
+      if (getComputedStyle(el).position !== 'absolute') unlockToAbsolute(el);
+    }
+    const cssProp = { x: 'left', y: 'top', w: 'width', h: 'height' }[prop];
+    // Clamp width/height to the same minimum the resize handle enforces
+    // so inspector edits can't shrink an element below the resize floor.
+    const clamped = (prop === 'w' || prop === 'h') ? Math.max(RESIZE_MIN_PX, next) : next;
+    el.style[cssProp] = `${clamped}px`;
+    endTxn();
+    refreshSelection();
   }
 
   // ===========================================================================
