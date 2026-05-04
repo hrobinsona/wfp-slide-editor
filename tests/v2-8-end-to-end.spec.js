@@ -66,8 +66,9 @@ for (const fixture of FIXTURES_TO_RUN) {
         };
       });
       expect(out.buttons).toEqual(['edit', 'export', 'undo', 'redo']);
-      // Light recipe (default headless colour-scheme).
-      expect(out.bg).toBe('rgba(255, 255, 255, 0.2)');
+      // White-text liquid-glass recipe: tint trimmed to 0.12 with the
+      // brightness drop carrying the contrast (see toolbar CSS).
+      expect(out.bg).toBe('rgba(255, 255, 255, 0.12)');
     });
 
     test('inspector renders the v2 control set when an element is selected', async ({ page }) => {

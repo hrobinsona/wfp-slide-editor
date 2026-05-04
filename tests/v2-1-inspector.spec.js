@@ -187,13 +187,16 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
         color: cs.color,
       };
     });
-    expect(recipe.bg).toBe('rgba(255, 255, 255, 0.2)');
+    // Inspector now uses the same white-text liquid-glass recipe as the
+    // toolbar — tint trimmed and brightness(0.78) doing the contrast lift.
+    expect(recipe.bg).toBe('rgba(255, 255, 255, 0.12)');
     expect(recipe.border).toBe('rgba(255, 255, 255, 0.24)');
-    expect(recipe.backdrop).toMatch(/blur\(24px\)/);
+    expect(recipe.backdrop).toMatch(/blur\(20px\)/);
     expect(recipe.backdrop).toMatch(/saturate\((1\.8|180%)\)/);
+    expect(recipe.backdrop).toMatch(/brightness\(0\.78\)/);
     expect(recipe.shadow).toContain('rgba(0, 0, 0, 0.25)');
     expect(recipe.shadow).toContain('8px 24px');
-    expect(recipe.color).toBe('rgba(15, 23, 42, 0.85)');
+    expect(recipe.color).toBe('rgb(255, 255, 255)');
   });
 
   test('inspector switches to dark glass under prefers-color-scheme: dark', async ({ page }) => {
@@ -207,8 +210,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
       const cs = getComputedStyle(document.querySelector('.wfpe-inspector'));
       return { bg: cs.backgroundColor, color: cs.color };
     });
+    // Same dark-glass recipe in both schemes (white text needs the
+    // brightness drop regardless of host preference).
     expect(recipe.bg).toBe('rgba(255, 255, 255, 0.12)');
-    expect(recipe.color).toBe('rgba(255, 255, 255, 0.9)');
+    expect(recipe.color).toBe('rgb(255, 255, 255)');
   });
 
   test('inspector hides when slide changes (selection clears with the slide)', async ({ page }) => {

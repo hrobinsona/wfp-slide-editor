@@ -99,20 +99,27 @@
       right: 16px;
       pointer-events: auto;
       display: flex;
-      align-items: center;
+      align-items: stretch;
       gap: 2px;
-      padding: 6px;
-      border-radius: 22px;
-      background: rgba(255, 255, 255, 0.20);
-      backdrop-filter: blur(24px) saturate(180%);
-      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      padding: 5px;
+      border-radius: 18px;
+      /* Liquid-glass luminance rule: white text needs the surface to drop
+         brightness, not just blur. White tint kept for the aesthetic, but
+         brightness(0.78) ensures contrast on pale backgrounds (e.g. coral
+         slides). saturate(180%) restores chroma after the brightness drop. */
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
+      -webkit-backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
       border: 1px solid rgba(255, 255, 255, 0.24);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-      font: 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.005em;
       user-select: none;
-      color: rgba(15, 23, 42, 0.85);
+      color: #fff;
       isolation: isolate;
+      /* Always paint above the selection ring + resize handles, which
+         live as later DOM siblings under the same root. */
+      z-index: 2;
     }
     /* Inner highlight overlay — renders the bright top-edge sheen called
        out in the recipe. Pointer-events: none so it doesn't eat clicks. */
@@ -131,17 +138,20 @@
       -webkit-appearance: none;
       background: transparent;
       border: 0;
-      color: inherit;
+      color: #fff;
       font: inherit;
       letter-spacing: inherit;
       display: inline-flex;
+      flex-direction: column;
       align-items: center;
-      gap: 6px;
-      padding: 8px 12px;
-      border-radius: 16px;
+      justify-content: center;
+      gap: 3px;
+      padding: 6px 10px 5px;
+      min-width: 56px;
+      border-radius: 13px;
       cursor: pointer;
       white-space: nowrap;
-      transition: background-color 120ms ease;
+      transition: background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
     }
     #${ROOT_ID} .wfpe-toolbar-btn .wfpe-icon,
     #${ROOT_ID} .wfpe-mode-badge .wfpe-icon {
@@ -159,34 +169,43 @@
     }
     #${ROOT_ID} .wfpe-toolbar-btn:hover,
     #${ROOT_ID} .wfpe-mode-badge:hover {
-      background-color: rgba(255, 255, 255, 0.22);
+      background-color: rgba(255, 255, 255, 0.18);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
     }
     #${ROOT_ID} .wfpe-toolbar-btn:active,
     #${ROOT_ID} .wfpe-mode-badge:active {
-      background-color: rgba(255, 255, 255, 0.32);
+      background-color: rgba(255, 255, 255, 0.28);
+      transform: translateY(0);
+      box-shadow: none;
     }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"] {
-      background: linear-gradient(180deg, rgba(244, 132, 123, 1) 0%, rgba(232, 110, 103, 1) 100%);
+      background:
+        radial-gradient(120% 120% at 50% 0%, rgba(255, 200, 175, 0.55) 0%, rgba(244, 132, 123, 0.85) 60%, rgba(232, 110, 103, 0.95) 100%);
       color: #fff;
       box-shadow:
-        0 1px 2px rgba(168, 56, 48, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        0 6px 18px rgba(232, 110, 103, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.45),
         inset 0 -1px 0 rgba(0, 0, 0, 0.10);
     }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
-      filter: brightness(1.05);
+      filter: brightness(1.06);
       background-color: transparent;
+      transform: translateY(-1px);
+      box-shadow:
+        0 8px 22px rgba(232, 110, 103, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.10);
     }
     @media (prefers-color-scheme: dark) {
       #${ROOT_ID} .wfpe-toolbar {
         background: rgba(255, 255, 255, 0.12);
         border-color: rgba(255, 255, 255, 0.24);
-        color: rgba(255, 255, 255, 0.9);
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
       }
       #${ROOT_ID} .wfpe-toolbar-btn:hover,
       #${ROOT_ID} .wfpe-mode-badge:hover {
-        background-color: rgba(255, 255, 255, 0.16);
+        background-color: rgba(255, 255, 255, 0.14);
       }
       #${ROOT_ID} .wfpe-toolbar-btn:active,
       #${ROOT_ID} .wfpe-mode-badge:active {
@@ -201,23 +220,31 @@
        state.inspectorMinimised but resets on page reload. ----- */
     #${ROOT_ID} .wfpe-inspector {
       position: fixed;
-      top: 76px;
+      /* 16 (top offset) + ~58 (toolbar height: 5+18+3+10+5 + 5×2 padding +
+         2px buffer) + 8 gap = 82. Keeps a clean 8px gutter under the
+         toolbar regardless of slide content. */
+      top: 82px;
       right: 16px;
       width: 280px;
       pointer-events: auto;
       display: none;
+      /* Same z-index stratum as the toolbar so neither selection ring
+         nor resize handles can paint over the inspector. */
+      z-index: 2;
       flex-direction: column;
       border-radius: 18px;
       padding: 0;
-      background: rgba(255, 255, 255, 0.20);
-      backdrop-filter: blur(24px) saturate(180%);
-      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      /* Same liquid-glass luminance recipe as the toolbar — white text
+         needs the surface to drop brightness, not just blur. */
+      background: rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
+      -webkit-backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
       border: 1px solid rgba(255, 255, 255, 0.24);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
       font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.005em;
       user-select: none;
-      color: rgba(15, 23, 42, 0.85);
+      color: #fff;
       isolation: isolate;
     }
     #${ROOT_ID} .wfpe-inspector::before {
@@ -238,7 +265,7 @@
       justify-content: space-between;
       gap: 8px;
       padding: 10px 12px 10px 14px;
-      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
     }
     #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-header {
       border-bottom: 0;
@@ -308,14 +335,15 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      background: rgba(255, 255, 255, 0.30);
-      border: 1px solid rgba(255, 255, 255, 0.32);
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
       border-radius: 8px;
       padding: 3px 6px 3px 8px;
       font-size: 12px;
+      color: #fff;
     }
     #${ROOT_ID} .wfpe-inspector-field-axis {
-      opacity: 0.6;
+      opacity: 0.65;
       font-size: 10px;
       font-weight: 600;
       letter-spacing: 0.04em;
@@ -341,48 +369,65 @@
       margin: 0;
     }
     #${ROOT_ID} .wfpe-inspector-field:focus-within {
-      border-color: rgba(42, 139, 242, 0.7);
-      background: rgba(255, 255, 255, 0.5);
+      border-color: rgba(255, 255, 255, 0.55);
+      background: rgba(255, 255, 255, 0.22);
     }
-    /* Font-size triplet (v2.3): horizontal slider + −/+ buttons + px input,
-       all three bound to the selected element's font-size. Renders only
+    /* Font-size row (v2.3): the label sits on its own line above the
+       controls so the sub-row [input · px][−][slider][+] gets the full
+       panel width without the parent label squeezing it. Renders only
        for text-bearing elements. */
     #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] {
       flex-direction: column;
       align-items: stretch;
-      gap: 6px;
+      gap: 8px;
     }
     #${ROOT_ID} .wfpe-font-control {
       display: flex;
       align-items: center;
       gap: 6px;
     }
+    #${ROOT_ID} .wfpe-font-control .wfpe-inspector-field {
+      flex: 0 0 auto;
+      justify-content: flex-end;
+      padding: 4px 8px;
+    }
+    #${ROOT_ID} .wfpe-font-control .wfpe-inspector-field input {
+      width: 38px;
+      text-align: right;
+    }
+    #${ROOT_ID} .wfpe-font-unit {
+      opacity: 0.65;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
     #${ROOT_ID} .wfpe-font-btn {
       appearance: none;
       -webkit-appearance: none;
-      background: rgba(255, 255, 255, 0.30);
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      color: inherit;
-      width: 22px;
-      height: 22px;
-      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #fff;
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
       cursor: pointer;
       font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      flex: 0 0 22px;
+      flex: 0 0 24px;
       transition: background-color 120ms ease;
     }
     #${ROOT_ID} .wfpe-font-btn:hover {
-      background-color: rgba(255, 255, 255, 0.45);
+      background-color: rgba(255, 255, 255, 0.22);
     }
     #${ROOT_ID} .wfpe-font-slider {
       appearance: none;
       -webkit-appearance: none;
       flex: 1;
+      min-width: 0;
       height: 4px;
-      background: rgba(15, 23, 42, 0.18);
+      background: rgba(255, 255, 255, 0.22);
       border-radius: 2px;
       outline: none;
       margin: 0;
@@ -393,8 +438,8 @@
       width: 14px;
       height: 14px;
       border-radius: 50%;
-      background: rgba(15, 23, 42, 0.85);
-      border: 2px solid rgba(255, 255, 255, 0.92);
+      background: #fff;
+      border: 2px solid rgba(15, 23, 42, 0.85);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
       cursor: grab;
     }
@@ -402,27 +447,10 @@
       width: 14px;
       height: 14px;
       border-radius: 50%;
-      background: rgba(15, 23, 42, 0.85);
-      border: 2px solid rgba(255, 255, 255, 0.92);
+      background: #fff;
+      border: 2px solid rgba(15, 23, 42, 0.85);
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
       cursor: grab;
-    }
-    @media (prefers-color-scheme: dark) {
-      #${ROOT_ID} .wfpe-font-btn {
-        background: rgba(255, 255, 255, 0.10);
-        border-color: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-font-btn:hover {
-        background-color: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-font-slider {
-        background: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-font-slider::-webkit-slider-thumb,
-      #${ROOT_ID} .wfpe-font-slider::-moz-range-thumb {
-        background: rgba(255, 255, 255, 0.92);
-        border-color: rgba(15, 23, 42, 0.85);
-      }
     }
     /* Colour controls (v2.4): row label, then a swatch (showing the
        current colour), a hex text input, and — for background only —
@@ -438,7 +466,7 @@
       width: 22px;
       height: 22px;
       border-radius: 6px;
-      border: 1px solid rgba(15, 23, 42, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.32);
       background-color: #ffffff;
       cursor: pointer;
       flex: 0 0 22px;
@@ -458,19 +486,62 @@
     }
     #${ROOT_ID} .wfpe-color-swatch input[type="color"] {
       position: absolute;
-      inset: -2px;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       opacity: 0;
       cursor: pointer;
       border: 0;
       padding: 0;
-      pointer-events: none; /* swatch's own click triggers the picker */
+      /* The native input is the click target — clicking it opens the OS
+         colour picker directly. Programmatic .click() on a hidden input
+         was unreliable across Chromium versions. */
+      pointer-events: auto;
+    }
+    /* Opacity row (v2.9): label on its own line, then a sub-row with
+       a value field (whole percent + "%" suffix) and a slider that
+       takes the remaining width. Mirrors the font-size row layout. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="opacity"] {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+    }
+    #${ROOT_ID} .wfpe-opacity-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field {
+      flex: 0 0 auto;
+      justify-content: flex-end;
+      padding: 4px 8px;
+    }
+    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field input {
+      width: 38px;
+      text-align: right;
+    }
+    #${ROOT_ID} .wfpe-opacity-unit {
+      opacity: 0.65;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    /* Element has a background-image (e.g. gradient): show a diagonal
+       stripe so it's obvious why the hex picker can't represent it. */
+    #${ROOT_ID} .wfpe-color-swatch[data-image="true"] {
+      background:
+        repeating-linear-gradient(
+          45deg,
+          rgba(255, 255, 255, 0.55) 0 4px,
+          rgba(15, 23, 42, 0.35) 4px 8px
+        );
     }
     #${ROOT_ID} .wfpe-color-clear {
       appearance: none;
       -webkit-appearance: none;
-      background: rgba(255, 255, 255, 0.30);
-      border: 1px solid rgba(255, 255, 255, 0.32);
-      color: inherit;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #fff;
       width: 22px;
       height: 22px;
       border-radius: 6px;
@@ -483,50 +554,46 @@
       transition: background-color 120ms ease;
     }
     #${ROOT_ID} .wfpe-color-clear:hover {
-      background-color: rgba(255, 255, 255, 0.45);
+      background-color: rgba(255, 255, 255, 0.22);
     }
-    @media (prefers-color-scheme: dark) {
-      #${ROOT_ID} .wfpe-color-swatch {
-        border-color: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-color-clear {
-        background: rgba(255, 255, 255, 0.10);
-        border-color: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-color-clear:hover {
-        background-color: rgba(255, 255, 255, 0.18);
-      }
-    }
-    /* Reset-styles row (v2.5): full-width subdued button that clears
-       the selected element's entire inline style attribute. */
+    /* Reset-styles row (v2.5 redesign): inline icon + label, left-aligned,
+       reading as a quiet text link rather than a full-width pill. The
+       refresh icon signals the destructive nature without leaning on
+       colour. The whole row is the click target via the button itself. */
     #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="reset"] {
-      flex-direction: column;
-      align-items: stretch;
+      justify-content: flex-start;
       gap: 0;
+      padding-top: 4px;
     }
     #${ROOT_ID} .wfpe-reset-btn {
       appearance: none;
       -webkit-appearance: none;
       background: transparent;
-      border: 1px solid rgba(15, 23, 42, 0.18);
-      color: inherit;
-      padding: 7px 10px;
-      border-radius: 10px;
+      border: 0;
+      color: rgba(255, 255, 255, 0.78);
+      padding: 4px 6px;
+      margin-left: -6px;
+      border-radius: 6px;
       cursor: pointer;
-      font: inherit;
+      font: 500 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.01em;
-      transition: background-color 120ms ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: color 120ms ease, background-color 120ms ease;
     }
     #${ROOT_ID} .wfpe-reset-btn:hover {
-      background-color: rgba(255, 255, 255, 0.30);
+      color: #fff;
+      background-color: rgba(255, 255, 255, 0.10);
     }
-    @media (prefers-color-scheme: dark) {
-      #${ROOT_ID} .wfpe-reset-btn {
-        border-color: rgba(255, 255, 255, 0.22);
-      }
-      #${ROOT_ID} .wfpe-reset-btn:hover {
-        background-color: rgba(255, 255, 255, 0.12);
-      }
+    #${ROOT_ID} .wfpe-reset-btn .wfpe-icon {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
     /* Dimension bubble (v2.2): floating chip above the selection ring
        showing W × H. Hidden alongside the ring during inline text edit. */
@@ -548,27 +615,13 @@
          ring's z-index since they're siblings under the same root. */
     }
     @media (prefers-color-scheme: dark) {
-      #${ROOT_ID} .wfpe-inspector {
-        background: rgba(255, 255, 255, 0.12);
-        border-color: rgba(255, 255, 255, 0.24);
-        color: rgba(255, 255, 255, 0.9);
-      }
-      #${ROOT_ID} .wfpe-inspector-field {
-        background: rgba(255, 255, 255, 0.10);
-        border-color: rgba(255, 255, 255, 0.18);
-      }
-      #${ROOT_ID} .wfpe-inspector-field:focus-within {
-        background: rgba(255, 255, 255, 0.18);
-      }
+      /* The inspector now uses the same dark-glass recipe in both
+         schemes (white text needs the brightness drop regardless of
+         host preference). The dim bubble flips its tones in dark mode
+         since it sits over slide content, not over the editor surface. */
       #${ROOT_ID} .wfpe-dim-bubble {
         background: rgba(255, 255, 255, 0.92);
         color: rgba(15, 23, 42, 0.95);
-      }
-      #${ROOT_ID} .wfpe-inspector-header {
-        border-bottom-color: rgba(255, 255, 255, 0.12);
-      }
-      #${ROOT_ID} .wfpe-inspector-minimise:hover {
-        background-color: rgba(255, 255, 255, 0.16);
       }
     }
     /* Selection ring + handle stratum (v2.7 polish). The brief calls for
@@ -609,6 +662,10 @@
       background: #ffffff;
       border: 1.5px solid #5b9bd9;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      /* Sit above the toolbar/inspector (z-index: 2) so resize stays
+         possible when the selected element happens to live behind them
+         (e.g. an item in the slide's top-right corner). */
+      z-index: 3;
     }
     /* Corners are the visual anchors — solid white circle at full
        handle size with a crisp blue ring. */
@@ -679,23 +736,28 @@
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="6 9 12 15 18 9" />' +
       '</svg>',
+    // Counter-clockwise refresh — paired with "Reset styles" in the inspector.
+    refresh:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="1 4 1 10 7 10" />' +
+      '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
   toolbar.className = 'wfpe-toolbar';
   toolbar.dataset.mode = 'off';
 
-  // The mode badge IS the Edit toggle. Its text label preserves the v1
-  // "Edit: OFF" / "Edit: ON" format (relied on by the bootstrap test
-  // suite); v2 adds an icon to the left of the label.
+  // The mode badge IS the Edit toggle. Label is the constant "Edit"; the
+  // active state is signalled by data-mode (peach fill) rather than by
+  // text mutation.
   const badge = document.createElement('button');
   badge.type = 'button';
   badge.className = 'wfpe-mode-badge';
   badge.dataset.mode = 'off';
   badge.dataset.action = 'edit';
   badge.title = 'Toggle edit mode (E)';
-  badge.innerHTML = ICONS.edit + '<span class="wfpe-mode-label">Edit: OFF</span>';
-  const badgeLabel = badge.querySelector('.wfpe-mode-label');
+  badge.innerHTML = ICONS.edit + '<span class="wfpe-mode-label">Edit</span>';
   toolbar.appendChild(badge);
 
   function makeToolbarButton(action, label, hint, iconKey) {
@@ -793,11 +855,13 @@
     w: fieldW.input,
     h: fieldH.input,
     fontSize: null, // assigned after the font-size row is built below
+    opacity: null, // assigned after the opacity row is built below
   };
 
-  // Font-size triplet (v2.3): renders only for text-bearing elements.
-  // The slider drives a single history entry per drag (mousedown→mouseup),
-  // ± buttons one entry per click, the input one entry per Enter/blur.
+  // Font-size row (v2.3): label on its own line, then a single control
+  // sub-row [input·px][−][slider][+]. Renders only for text-bearing
+  // elements. History contract: input commit (Enter/blur) = one entry,
+  // ± click = one entry, slider drag (mousedown→mouseup) = one entry.
   const fontSizeRow = document.createElement('div');
   fontSizeRow.className = 'wfpe-inspector-row';
   fontSizeRow.dataset.wfpeRow = 'font-size';
@@ -809,6 +873,16 @@
 
   const fontControl = document.createElement('div');
   fontControl.className = 'wfpe-font-control';
+
+  const fieldFontSize = makeInspectorField('fontSize', '');
+  // The font-size input has no axis label — the row label says "Font size".
+  fieldFontSize.wrap.querySelector('.wfpe-inspector-field-axis').remove();
+  fieldFontSize.input.min = String(FONT_SIZE_MIN_PX);
+  const fontUnit = document.createElement('span');
+  fontUnit.className = 'wfpe-font-unit';
+  fontUnit.textContent = 'px';
+  fieldFontSize.wrap.appendChild(fontUnit);
+  fontControl.appendChild(fieldFontSize.wrap);
 
   const fontMinusBtn = document.createElement('button');
   fontMinusBtn.type = 'button';
@@ -839,12 +913,6 @@
   fontPlusBtn.setAttribute('aria-label', 'Increase font size');
   fontPlusBtn.textContent = '+';
   fontControl.appendChild(fontPlusBtn);
-
-  const fieldFontSize = makeInspectorField('fontSize', '');
-  // The font-size input has no axis label — the row label says "Font size".
-  fieldFontSize.wrap.querySelector('.wfpe-inspector-field-axis').remove();
-  fieldFontSize.input.min = String(FONT_SIZE_MIN_PX);
-  fontControl.appendChild(fieldFontSize.wrap);
 
   fontSizeRow.appendChild(fontControl);
   inspectorBody.appendChild(fontSizeRow);
@@ -927,6 +995,47 @@
   inspectorBody.appendChild(textColourRow.row);
   inspectorBody.appendChild(bgColourRow.row);
 
+  // Opacity row (v2.9). Renders for every selection. Layout matches the
+  // font-size row: label on its own line, then [input·%][slider]. No
+  // ± stepper buttons — opacity has a bounded 0–100 range so the slider
+  // is the primary control, with the input for keyboard precision.
+  // History contract: input commit (Enter/blur) = one entry, slider
+  // drag (mousedown→mouseup) = one entry.
+  const opacityRow = document.createElement('div');
+  opacityRow.className = 'wfpe-inspector-row';
+  opacityRow.dataset.wfpeRow = 'opacity';
+
+  const opacityRowLabel = document.createElement('span');
+  opacityRowLabel.className = 'wfpe-inspector-row-label';
+  opacityRowLabel.textContent = 'Opacity';
+  opacityRow.appendChild(opacityRowLabel);
+
+  const opacityControl = document.createElement('div');
+  opacityControl.className = 'wfpe-opacity-control';
+
+  const fieldOpacity = makeInspectorField('opacity', '');
+  fieldOpacity.wrap.querySelector('.wfpe-inspector-field-axis').remove();
+  fieldOpacity.input.min = '0';
+  fieldOpacity.input.max = '100';
+  const opacityUnit = document.createElement('span');
+  opacityUnit.className = 'wfpe-opacity-unit';
+  opacityUnit.textContent = '%';
+  fieldOpacity.wrap.appendChild(opacityUnit);
+  opacityControl.appendChild(fieldOpacity.wrap);
+
+  const opacitySlider = document.createElement('input');
+  opacitySlider.type = 'range';
+  opacitySlider.className = 'wfpe-font-slider';
+  opacitySlider.dataset.wfpeProp = 'opacitySlider';
+  opacitySlider.min = '0';
+  opacitySlider.max = '100';
+  opacitySlider.step = '1';
+  opacityControl.appendChild(opacitySlider);
+
+  opacityRow.appendChild(opacityControl);
+  inspectorBody.appendChild(opacityRow);
+  inspectorInputs.opacity = fieldOpacity.input;
+
   // Reset row (v2.5). Clears the selected element's entire inline style
   // attribute as one history entry, returning it to its stylesheet-
   // defined rendering. No-op (no history entry) if the element has no
@@ -938,7 +1047,7 @@
   resetBtn.type = 'button';
   resetBtn.className = 'wfpe-reset-btn';
   resetBtn.dataset.action = 'reset-styles';
-  resetBtn.textContent = 'Reset styles';
+  resetBtn.innerHTML = ICONS.refresh + '<span>Reset styles</span>';
   resetBtn.title = 'Clear all inline style overrides on the selected element';
   resetRow.appendChild(resetBtn);
   inspectorBody.appendChild(resetRow);
@@ -1074,6 +1183,34 @@
   fontSlider.addEventListener('change', endSliderDrag);
   fontSlider.addEventListener('keydown', (e) => e.stopPropagation());
 
+  // Opacity slider — same one-entry-per-drag contract as font-size.
+  let opacitySliderTarget = null;
+  let opacitySliderRestoreCtx = null;
+  opacitySlider.addEventListener('mousedown', () => {
+    const el = state.selected;
+    if (!el) return;
+    opacitySliderTarget = el;
+    opacitySliderRestoreCtx = startInspectorTxn();
+    touchElement(el);
+  });
+  opacitySlider.addEventListener('input', () => {
+    if (!opacitySliderTarget) return;
+    const el = opacitySliderTarget;
+    const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
+    el.style.opacity = String(pct / 100);
+    populateOpacity(el);
+  });
+  const endOpacityDrag = () => {
+    if (!opacitySliderTarget) return;
+    opacitySliderTarget = null;
+    const ctx = opacitySliderRestoreCtx;
+    opacitySliderRestoreCtx = null;
+    endInspectorTxn(ctx);
+  };
+  opacitySlider.addEventListener('mouseup', endOpacityDrag);
+  opacitySlider.addEventListener('change', endOpacityDrag);
+  opacitySlider.addEventListener('keydown', (e) => e.stopPropagation());
+
   // ± buttons — one history entry per click.
   fontMinusBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1097,10 +1234,10 @@
     bg: { open: false, restoreCtx: null },
   };
   function wireColourRow({ swatch, colorInput, hexInput, clearBtn }, target) {
-    swatch.addEventListener('click', (e) => {
-      e.preventDefault();
-      colorInput.click();
-    });
+    // The native colour input sits over the swatch as the actual click
+    // target (pointer-events: auto, opacity: 0). No swatch-level click
+    // handler — letting the browser open the picker on a real user click
+    // is more reliable than calling .click() programmatically.
     colorInput.addEventListener('input', () => {
       const el = state.selected;
       if (!el) return;
@@ -1266,7 +1403,10 @@
 
   function positionDimBubble(el) {
     const r = el.getBoundingClientRect();
-    dimBubble.textContent = `${Math.round(r.width)} × ${Math.round(r.height)}`;
+    // Use offsetWidth/Height (unscaled slide coords) so the bubble matches
+    // the inspector's W/H readout. r.width/height are post-`transform: scale()`
+    // viewport pixels and would diverge from the inline-style values.
+    dimBubble.textContent = `${el.offsetWidth} × ${el.offsetHeight}`;
     dimBubble.style.display = 'block';
     // Anchor the bubble centred above the ring with a small gutter; the
     // chip's own height is small (~22px) so a 22px offset clears the
@@ -1310,7 +1450,7 @@
 
   function populateInspector(el) {
     if (!el) {
-      for (const k of ['x', 'y', 'w', 'h', 'fontSize']) {
+      for (const k of ['x', 'y', 'w', 'h', 'fontSize', 'opacity']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
       }
       fontSizeRow.style.display = 'none';
@@ -1344,6 +1484,7 @@
       textColourRow.row.style.display = 'none';
     }
     populateColours(el);
+    populateOpacity(el);
   }
 
   // ---------------------------------------------------------------------------
@@ -1416,20 +1557,31 @@
     }
     // Background colour. computed background-color of "rgba(0,0,0,0)"
     // means transparent — show the checkerboard hint and a sensible
-    // default in the picker.
+    // default in the picker. If the element has a background-image
+    // (e.g. a gradient) the swatch flags that with a stripe pattern,
+    // since a single hex can't represent it.
     const bgRgb = getComputedStyle(el).backgroundColor;
+    const bgImage = getComputedStyle(el).backgroundImage;
+    const hasImage = bgImage && bgImage !== 'none';
     const isTransparent = bgRgb === 'rgba(0, 0, 0, 0)' || bgRgb === 'transparent';
     const bgHex = isTransparent ? '#ffffff' : (rgbStringToHex(bgRgb) || '#ffffff');
     if (document.activeElement !== bgColourRow.hexInput) {
       bgColourRow.hexInput.value = isTransparent ? '' : bgHex;
     }
     bgColourRow.colorInput.value = bgHex;
-    if (isTransparent) {
+    bgColourRow.hexInput.placeholder = hasImage ? 'image / gradient' : '';
+    if (hasImage) {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.image = 'true';
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (isTransparent) {
       bgColourRow.swatch.style.backgroundColor = '';
       bgColourRow.swatch.dataset.transparent = 'true';
+      delete bgColourRow.swatch.dataset.image;
     } else {
       bgColourRow.swatch.style.backgroundColor = bgHex;
       delete bgColourRow.swatch.dataset.transparent;
+      delete bgColourRow.swatch.dataset.image;
     }
   }
 
@@ -1441,8 +1593,16 @@
     // Slider snaps to its [min, max] range — clamp the displayed value.
     const sliderMax = Number(fontSlider.max) || 200;
     const sliderMin = Number(fontSlider.min) || FONT_SIZE_MIN_PX;
-    const clamped = Math.max(sliderMin, Math.min(sliderMax, px));
-    fontSlider.value = String(clamped);
+    fontSlider.value = String(Math.max(sliderMin, Math.min(sliderMax, px)));
+  }
+
+  function populateOpacity(el) {
+    const raw = parseFloat(getComputedStyle(el).opacity);
+    const pct = Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+    if (document.activeElement !== inspectorInputs.opacity) {
+      inspectorInputs.opacity.value = String(pct);
+    }
+    opacitySlider.value = String(Math.max(0, Math.min(100, pct)));
   }
 
   function commitInspectorInput(prop, raw, targetEl) {
@@ -1464,6 +1624,20 @@
       const ctx = startInspectorTxn();
       touchElement(el);
       el.style.fontSize = `${clamped}px`;
+      endInspectorTxn(ctx);
+      refreshSelection();
+      return;
+    }
+    if (prop === 'opacity') {
+      const pct = Math.max(0, Math.min(100, next));
+      // `|| 1` would treat a legitimate 0 as falsy and default to 100,
+      // breaking the no-op guard after a clamp-to-zero. Use isFinite.
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      const currentPct = Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+      if (Math.round(pct) === currentPct) return;
+      const ctx = startInspectorTxn();
+      touchElement(el);
+      el.style.opacity = String(pct / 100);
       endInspectorTxn(ctx);
       refreshSelection();
       return;
@@ -1664,7 +1838,6 @@
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
     toolbar.dataset.mode = state.editMode ? 'on' : 'off';
-    badgeLabel.textContent = state.editMode ? 'Edit: ON' : 'Edit: OFF';
     if (!state.editMode) {
       if (state.editingText) endTextEdit();
       setSelected(null);

@@ -21,7 +21,7 @@ test.describe('v2.0 — toolbar refresh', () => {
 
     expect(buttons.map((b) => b.action)).toEqual(['edit', 'export', 'undo', 'redo']);
     for (const b of buttons) expect(b.hasIcon).toBe(true);
-    expect(buttons[0].text).toMatch(/^Edit:\s*OFF$/);
+    expect(buttons[0].text).toBe('Edit');
     expect(buttons[1].text).toBe('Export');
     expect(buttons[2].text).toBe('Undo');
     expect(buttons[3].text).toBe('Redo');
@@ -47,14 +47,18 @@ test.describe('v2.0 — toolbar refresh', () => {
       };
     });
 
-    expect(recipe.background).toBe('rgba(255, 255, 255, 0.2)');
+    // Liquid-glass luminance rule: white-text surfaces drop brightness so
+    // contrast survives over pale backgrounds. The white tint is kept for
+    // aesthetic, but brightness(0.78) does the heavy lifting.
+    expect(recipe.background).toBe('rgba(255, 255, 255, 0.12)');
     expect(recipe.borderColor).toBe('rgba(255, 255, 255, 0.24)');
     expect(recipe.borderWidth).toBe('1px');
-    expect(recipe.backdropFilter).toMatch(/blur\(24px\)/);
+    expect(recipe.backdropFilter).toMatch(/blur\(20px\)/);
     expect(recipe.backdropFilter).toMatch(/saturate\((1\.8|180%)\)/);
+    expect(recipe.backdropFilter).toMatch(/brightness\(0\.78\)/);
     expect(recipe.boxShadow).toContain('rgba(0, 0, 0, 0.25)');
     expect(recipe.boxShadow).toContain('8px 24px');
-    expect(recipe.color).toBe('rgba(15, 23, 42, 0.85)');
+    expect(recipe.color).toBe('rgb(255, 255, 255)');
   });
 
   test('toolbar liquid-glass recipe switches to dark variant under prefers-color-scheme: dark', async ({ page }) => {
@@ -71,7 +75,7 @@ test.describe('v2.0 — toolbar refresh', () => {
     });
 
     expect(recipe.background).toBe('rgba(255, 255, 255, 0.12)');
-    expect(recipe.color).toBe('rgba(255, 255, 255, 0.9)');
+    expect(recipe.color).toBe('rgb(255, 255, 255)');
   });
 
   test('Edit pill renders the coral active state when edit mode is on', async ({ page }) => {
@@ -89,8 +93,8 @@ test.describe('v2.0 — toolbar refresh', () => {
     });
 
     expect(pill.mode).toBe('on');
-    // Coral gradient is the visual signal for the active state.
-    expect(pill.backgroundImage).toMatch(/linear-gradient/);
+    // Peach radial-gradient is the visual signal for the active state.
+    expect(pill.backgroundImage).toMatch(/radial-gradient/);
     expect(pill.backgroundImage).toMatch(/244,\s*132,\s*123/);
     expect(pill.color).toBe('rgb(255, 255, 255)');
   });
@@ -116,7 +120,7 @@ test.describe('v2.0 — toolbar refresh', () => {
     expect(visibilityOn.map((b) => b.action)).toEqual(['edit', 'export', 'undo', 'redo']);
   });
 
-  test('icons are single-stroke (fill: none, stroke: currentColor) and ~18px', async ({ page }) => {
+  test('icons are single-stroke (fill: none, stroke: currentColor) and 18px in the stacked layout', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
 
     const iconStats = await page.evaluate(() => {
