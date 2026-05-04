@@ -1002,14 +1002,15 @@
   }
 
   // Font-size slider — one history entry per drag (mousedown→mouseup).
-  // The intermediate `input` events apply the live value but don't open
-  // a fresh txn; the txn opened by mousedown bundles the whole drag.
+  // Uses the inspector-txn isolation helpers so a slider drag during
+  // an open text-edit produces its own entry, separate from the typing.
   let fontSliderTarget = null;
+  let fontSliderRestoreCtx = null;
   fontSlider.addEventListener('mousedown', () => {
     const el = state.selected;
     if (!el || !isTextBearing(el)) return;
     fontSliderTarget = el;
-    beginTxn();
+    fontSliderRestoreCtx = startInspectorTxn();
     touchElement(el);
   });
   fontSlider.addEventListener('input', () => {
@@ -1025,12 +1026,14 @@
     populateFontSize(el);
   });
   // Both mouseup (mouse drag) and change (keyboard / touch end) can end
-  // the drag; both close the open txn. Idempotent because endTxn no-ops
-  // when state.txn is null.
+  // the drag; both close the inspector txn (which restores the text-
+  // edit txn if one was active). Idempotent on a no-op drag.
   const endSliderDrag = () => {
     if (!fontSliderTarget) return;
     fontSliderTarget = null;
-    endTxn();
+    const ctx = fontSliderRestoreCtx;
+    fontSliderRestoreCtx = null;
+    endInspectorTxn(ctx);
   };
   fontSlider.addEventListener('mouseup', endSliderDrag);
   fontSlider.addEventListener('change', endSliderDrag);
@@ -1048,8 +1051,16 @@
 
   // ----- Colour controls (v2.4) -----
   // Swatch click programmatically opens the hidden native picker.
-  // Picker `input` events apply live within an open txn; the `change`
-  // event closes the txn so a full pick session = one history entry.
+  // Picker `input` events apply live within an open isolation context;
+  // `change` closes it so a full pick session = one history entry.
+  // The isolation context also keeps the entry distinct from any
+  // open text-edit (v2.6). The `open` flag is the session sentinel —
+  // `restoreCtx` itself can legitimately be null (no text-edit to
+  // restore), so we can't reuse null as "no session in progress".
+  const pickerSession = {
+    text: { open: false, restoreCtx: null },
+    bg: { open: false, restoreCtx: null },
+  };
   function wireColourRow({ swatch, colorInput, hexInput, clearBtn }, target) {
     swatch.addEventListener('click', (e) => {
       e.preventDefault();
@@ -1059,17 +1070,20 @@
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
-      if (!state.txn || !state.txn.snapshots.has(el)) {
-        beginTxn();
+      if (!pickerSession[target].open) {
+        pickerSession[target].open = true;
+        pickerSession[target].restoreCtx = startInspectorTxn();
         touchElement(el);
       }
       applyColorToElement(el, target, colorInput.value);
       populateColours(el);
     });
     colorInput.addEventListener('change', () => {
-      // Closing the picker commits the txn opened on the first input
-      // event. endTxn no-ops if no element was touched.
-      endTxn();
+      if (!pickerSession[target].open) return;
+      const ctx = pickerSession[target].restoreCtx;
+      pickerSession[target].open = false;
+      pickerSession[target].restoreCtx = null;
+      endInspectorTxn(ctx);
     });
     hexInput.addEventListener('focus', () => {
       hexInput.__wfpeFocusTarget = state.selected || null;
@@ -1101,10 +1115,10 @@
         // Only meaningful if there's an inline colour to clear.
         const cssProp = target === 'text' ? 'color' : 'backgroundColor';
         if (!el.style[cssProp]) return;
-        beginTxn();
+        const ctx = startInspectorTxn();
         touchElement(el);
         el.style[cssProp] = '';
-        endTxn();
+        endInspectorTxn(ctx);
         populateColours(el);
       });
     }
@@ -1121,10 +1135,10 @@
     const el = state.selected;
     if (!el) return;
     if (!el.hasAttribute('style')) return; // nothing to reset
-    beginTxn();
+    const ctx = startInspectorTxn();
     touchElement(el);
     el.removeAttribute('style');
-    endTxn();
+    endInspectorTxn(ctx);
     refreshSelection();
   });
 
@@ -1338,10 +1352,10 @@
     const cssProp = target === 'text' ? 'color' : 'backgroundColor';
     const currentHex = rgbStringToHex(el.style[cssProp] || '');
     if (currentHex === norm) return; // no-op; suppress duplicate history entry
-    beginTxn();
+    const ctx = startInspectorTxn();
     touchElement(el);
     el.style[cssProp] = norm;
-    endTxn();
+    endInspectorTxn(ctx);
     populateColours(el);
   }
 
@@ -1410,10 +1424,10 @@
       const current = parseFloat(getComputedStyle(el).fontSize);
       const clamped = Math.max(FONT_SIZE_MIN_PX, next);
       if (Math.round(clamped) === Math.round(current)) return;
-      beginTxn();
+      const ctx = startInspectorTxn();
       touchElement(el);
       el.style.fontSize = `${clamped}px`;
-      endTxn();
+      endInspectorTxn(ctx);
       refreshSelection();
       return;
     }
@@ -1423,7 +1437,7 @@
     const current = el[offsetMap[prop]];
     if (Math.round(next) === current) return;
 
-    beginTxn();
+    const ctx = startInspectorTxn();
     touchElement(el);
     // X/Y require absolute positioning; unlock-on-flow if needed (same
     // path drag/resize use, which also pins flex/grid siblings so the
@@ -1436,7 +1450,7 @@
     // so inspector edits can't shrink an element below the resize floor.
     const clamped = (prop === 'w' || prop === 'h') ? Math.max(RESIZE_MIN_PX, next) : next;
     el.style[cssProp] = `${clamped}px`;
-    endTxn();
+    endInspectorTxn(ctx);
     refreshSelection();
   }
 
@@ -1535,6 +1549,49 @@
     pushHistoryEntry(changes);
   }
 
+  // ---------------------------------------------------------------------------
+  // Inspector-during-text-edit isolation (v2.6).
+  //
+  // When the user runs an inspector commit (font/colour/position/size/
+  // reset) while a text edit is open, the brief calls for *exactly one*
+  // history entry per adjustment, separate from the text-edit's typing
+  // entry. The single-slot txn machinery would otherwise fold an
+  // inspector commit into the open text-edit txn (re-entry no-ops
+  // beginTxn) and the next typing batch would have no open txn.
+  //
+  // Pattern used at every inspector commit site:
+  //   const ctx = startInspectorTxn();
+  //   touchElement(el);  // (or whatever the commit needs)
+  //   ...mutations...
+  //   endInspectorTxn(ctx);
+  //
+  // If text-edit is not open, this is just begin/end. If text-edit is
+  // open, it commits the typing-so-far as one entry, isolates the
+  // inspector op as another, then re-opens a fresh text-edit txn so
+  // subsequent typing accumulates into a new entry on commit.
+  // ---------------------------------------------------------------------------
+  function startInspectorTxn() {
+    let restoreEditingEl = null;
+    if (state.editingText) {
+      restoreEditingEl = state.editingText.el;
+      if (state.txn) endTxn(); // commits typing-so-far
+    }
+    if (!state.txn) beginTxn();
+    return restoreEditingEl;
+  }
+
+  function endInspectorTxn(restoreEditingEl) {
+    if (state.txn) endTxn();
+    if (
+      restoreEditingEl &&
+      state.editingText &&
+      state.editingText.el === restoreEditingEl
+    ) {
+      beginTxn();
+      touchElement(restoreEditingEl);
+    }
+  }
+
   function pushHistoryEntry(changes) {
     // Truncate any redo stack — a fresh change invalidates everything
     // beyond the current cursor.
@@ -1603,14 +1660,15 @@
 
   // Inspector ± buttons — same primitive as the keyboard arrow nudge,
   // but bracketed with a fresh txn so each click is exactly one history
-  // entry rather than being elided by an upstream open txn.
+  // entry. Uses the inspector-txn isolation helpers so a click during
+  // a text-edit produces its own entry separate from the typing.
   function nudgeFontSizeWithHistory(deltaPx) {
     const el = state.selected;
     if (!el || !isTextBearing(el)) return;
-    beginTxn();
+    const ctx = startInspectorTxn();
     touchElement(el);
     nudgeFontSize(el, deltaPx);
-    endTxn();
+    endInspectorTxn(ctx);
     refreshSelection();
   }
 
@@ -1621,7 +1679,14 @@
     // BUT we still call stopPropagation so the fixture's bubble-phase
     // keydown handler (which navigates slides on ArrowLeft/Right/Space)
     // doesn't fire alongside the caret movement.
+    //
+    // Exception (v2.6): keystrokes targeted at the inspector (its inputs,
+    // sliders, buttons) must reach their own listeners — Enter to commit
+    // a hex value, Escape to revert, etc. Capture-phase stopPropagation
+    // would kill those bubble-phase handlers. So when the target lives
+    // under the inspector, drop the suppression entirely.
     if (state.editingText) {
+      if (inspector.contains(e.target)) return;
       if (e.key === 'Escape' || e.key === 'Tab') {
         e.preventDefault();
         e.stopPropagation();
@@ -1795,11 +1860,14 @@
     if (e.button !== 0) return;
 
     // While a text edit is open, mousedowns INSIDE the editing element are
-    // for caret/selection — let the browser handle them natively. Mousedowns
-    // OUTSIDE commit the edit and fall through to the rest of onMouseDown
-    // so the outside element can be selected normally.
+    // for caret/selection — let the browser handle them natively.
+    // Mousedowns INSIDE the inspector panel apply font/colour/position
+    // controls to the element being edited (BRIEF v2.6); they must not
+    // tear down contenteditable. Mousedowns elsewhere commit the edit
+    // and fall through so the outside element can be selected normally.
     if (state.editingText) {
       if (state.editingText.el.contains(e.target)) return;
+      if (inspector.contains(e.target)) return;
       endTextEdit();
     }
 
