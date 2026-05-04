@@ -339,6 +339,86 @@
       border-color: rgba(42, 139, 242, 0.7);
       background: rgba(255, 255, 255, 0.5);
     }
+    /* Font-size triplet (v2.3): horizontal slider + −/+ buttons + px input,
+       all three bound to the selected element's font-size. Renders only
+       for text-bearing elements. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+    }
+    #${ROOT_ID} .wfpe-font-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #${ROOT_ID} .wfpe-font-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(255, 255, 255, 0.30);
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      color: inherit;
+      width: 22px;
+      height: 22px;
+      border-radius: 8px;
+      cursor: pointer;
+      font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 22px;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-font-btn:hover {
+      background-color: rgba(255, 255, 255, 0.45);
+    }
+    #${ROOT_ID} .wfpe-font-slider {
+      appearance: none;
+      -webkit-appearance: none;
+      flex: 1;
+      height: 4px;
+      background: rgba(15, 23, 42, 0.18);
+      border-radius: 2px;
+      outline: none;
+      margin: 0;
+    }
+    #${ROOT_ID} .wfpe-font-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.85);
+      border: 2px solid rgba(255, 255, 255, 0.92);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+    }
+    #${ROOT_ID} .wfpe-font-slider::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.85);
+      border: 2px solid rgba(255, 255, 255, 0.92);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      cursor: grab;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-font-btn {
+        background: rgba(255, 255, 255, 0.10);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-font-btn:hover {
+        background-color: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-font-slider {
+        background: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-font-slider::-webkit-slider-thumb,
+      #${ROOT_ID} .wfpe-font-slider::-moz-range-thumb {
+        background: rgba(255, 255, 255, 0.92);
+        border-color: rgba(15, 23, 42, 0.85);
+      }
+    }
     /* Dimension bubble (v2.2): floating chip above the selection ring
        showing W × H. Hidden alongside the ring during inline text edit. */
     #${ROOT_ID} .wfpe-dim-bubble {
@@ -568,7 +648,68 @@
   const fieldY = makeInspectorField('y', 'Y');
   const fieldW = makeInspectorField('w', 'W');
   const fieldH = makeInspectorField('h', 'H');
-  const inspectorInputs = { x: fieldX.input, y: fieldY.input, w: fieldW.input, h: fieldH.input };
+  const inspectorInputs = {
+    x: fieldX.input,
+    y: fieldY.input,
+    w: fieldW.input,
+    h: fieldH.input,
+    fontSize: null, // assigned after the font-size row is built below
+  };
+
+  // Font-size triplet (v2.3): renders only for text-bearing elements.
+  // The slider drives a single history entry per drag (mousedown→mouseup),
+  // ± buttons one entry per click, the input one entry per Enter/blur.
+  const fontSizeRow = document.createElement('div');
+  fontSizeRow.className = 'wfpe-inspector-row';
+  fontSizeRow.dataset.wfpeRow = 'font-size';
+
+  const fontSizeRowLabel = document.createElement('span');
+  fontSizeRowLabel.className = 'wfpe-inspector-row-label';
+  fontSizeRowLabel.textContent = 'Font size';
+  fontSizeRow.appendChild(fontSizeRowLabel);
+
+  const fontControl = document.createElement('div');
+  fontControl.className = 'wfpe-font-control';
+
+  const fontMinusBtn = document.createElement('button');
+  fontMinusBtn.type = 'button';
+  fontMinusBtn.className = 'wfpe-font-btn';
+  fontMinusBtn.dataset.action = 'font-minus';
+  fontMinusBtn.title = 'Decrease font size';
+  fontMinusBtn.setAttribute('aria-label', 'Decrease font size');
+  fontMinusBtn.textContent = '−';
+  fontControl.appendChild(fontMinusBtn);
+
+  const fontSlider = document.createElement('input');
+  fontSlider.type = 'range';
+  fontSlider.className = 'wfpe-font-slider';
+  fontSlider.dataset.wfpeProp = 'fontSizeSlider';
+  fontSlider.min = String(FONT_SIZE_MIN_PX);
+  // Cap somewhere generous but bounded — v1 has no max for the keyboard
+  // nudge, but the slider needs a finite range. 200px covers any
+  // realistic display heading size.
+  fontSlider.max = '200';
+  fontSlider.step = '1';
+  fontControl.appendChild(fontSlider);
+
+  const fontPlusBtn = document.createElement('button');
+  fontPlusBtn.type = 'button';
+  fontPlusBtn.className = 'wfpe-font-btn';
+  fontPlusBtn.dataset.action = 'font-plus';
+  fontPlusBtn.title = 'Increase font size';
+  fontPlusBtn.setAttribute('aria-label', 'Increase font size');
+  fontPlusBtn.textContent = '+';
+  fontControl.appendChild(fontPlusBtn);
+
+  const fieldFontSize = makeInspectorField('fontSize', '');
+  // The font-size input has no axis label — the row label says "Font size".
+  fieldFontSize.wrap.querySelector('.wfpe-inspector-field-axis').remove();
+  fieldFontSize.input.min = String(FONT_SIZE_MIN_PX);
+  fontControl.appendChild(fieldFontSize.wrap);
+
+  fontSizeRow.appendChild(fontControl);
+  inspectorBody.appendChild(fontSizeRow);
+  inspectorInputs.fontSize = fieldFontSize.input;
 
   inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
   inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
@@ -665,6 +806,51 @@
       commitInspectorInput(prop, input.value, target);
     });
   }
+
+  // Font-size slider — one history entry per drag (mousedown→mouseup).
+  // The intermediate `input` events apply the live value but don't open
+  // a fresh txn; the txn opened by mousedown bundles the whole drag.
+  let fontSliderTarget = null;
+  fontSlider.addEventListener('mousedown', () => {
+    const el = state.selected;
+    if (!el || !isTextBearing(el)) return;
+    fontSliderTarget = el;
+    beginTxn();
+    touchElement(el);
+  });
+  fontSlider.addEventListener('input', () => {
+    // Bail if the slider is being driven without an open drag (e.g. by
+    // assistive tech keyboard navigation that didn't fire mousedown).
+    // The mousedown→mouseup bracket owns the txn; firing input outside
+    // it would create a per-tick history entry instead of one-per-drag.
+    if (!fontSliderTarget) return;
+    const el = fontSliderTarget;
+    if (!isTextBearing(el)) return;
+    const v = Math.max(FONT_SIZE_MIN_PX, parseFloat(fontSlider.value) || FONT_SIZE_MIN_PX);
+    el.style.fontSize = `${v}px`;
+    populateFontSize(el);
+  });
+  // Both mouseup (mouse drag) and change (keyboard / touch end) can end
+  // the drag; both close the open txn. Idempotent because endTxn no-ops
+  // when state.txn is null.
+  const endSliderDrag = () => {
+    if (!fontSliderTarget) return;
+    fontSliderTarget = null;
+    endTxn();
+  };
+  fontSlider.addEventListener('mouseup', endSliderDrag);
+  fontSlider.addEventListener('change', endSliderDrag);
+  fontSlider.addEventListener('keydown', (e) => e.stopPropagation());
+
+  // ± buttons — one history entry per click.
+  fontMinusBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    nudgeFontSizeWithHistory(-1);
+  });
+  fontPlusBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    nudgeFontSizeWithHistory(+1);
+  });
 
   // ===========================================================================
   // Helpers
@@ -792,9 +978,11 @@
 
   function populateInspector(el) {
     if (!el) {
-      for (const k of ['x', 'y', 'w', 'h']) {
+      for (const k of ['x', 'y', 'w', 'h', 'fontSize']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
       }
+      // Hide font-size row when nothing is selected.
+      fontSizeRow.style.display = 'none';
       return;
     }
     // Use offset* values so what the user reads matches the box model
@@ -811,6 +999,26 @@
       if (document.activeElement === inspectorInputs[k]) continue;
       inspectorInputs[k].value = values[k];
     }
+    // Font-size row visibility + sync — only for text-bearing elements,
+    // matching the brief's "Conditional content by selection type".
+    if (isTextBearing(el)) {
+      fontSizeRow.style.display = '';
+      populateFontSize(el);
+    } else {
+      fontSizeRow.style.display = 'none';
+    }
+  }
+
+  function populateFontSize(el) {
+    const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
+    if (document.activeElement !== inspectorInputs.fontSize) {
+      inspectorInputs.fontSize.value = String(px);
+    }
+    // Slider snaps to its [min, max] range — clamp the displayed value.
+    const sliderMax = Number(fontSlider.max) || 200;
+    const sliderMin = Number(fontSlider.min) || FONT_SIZE_MIN_PX;
+    const clamped = Math.max(sliderMin, Math.min(sliderMax, px));
+    fontSlider.value = String(clamped);
   }
 
   function commitInspectorInput(prop, raw, targetEl) {
@@ -822,6 +1030,18 @@
     if (!Number.isFinite(next)) {
       // Garbage input — restore the readout from the live element.
       populateInspector(el);
+      return;
+    }
+    if (prop === 'fontSize') {
+      if (!isTextBearing(el)) return;
+      const current = parseFloat(getComputedStyle(el).fontSize);
+      const clamped = Math.max(FONT_SIZE_MIN_PX, next);
+      if (Math.round(clamped) === Math.round(current)) return;
+      beginTxn();
+      touchElement(el);
+      el.style.fontSize = `${clamped}px`;
+      endTxn();
+      refreshSelection();
       return;
     }
     // Compare against the live offset; abort no-op commits so blur
@@ -1006,6 +1226,19 @@
     if (!Number.isFinite(current)) return;
     const next = Math.max(FONT_SIZE_MIN_PX, current + deltaPx);
     el.style.fontSize = `${next}px`;
+  }
+
+  // Inspector ± buttons — same primitive as the keyboard arrow nudge,
+  // but bracketed with a fresh txn so each click is exactly one history
+  // entry rather than being elided by an upstream open txn.
+  function nudgeFontSizeWithHistory(deltaPx) {
+    const el = state.selected;
+    if (!el || !isTextBearing(el)) return;
+    beginTxn();
+    touchElement(el);
+    nudgeFontSize(el, deltaPx);
+    endTxn();
+    refreshSelection();
   }
 
   function onKeyDown(e) {

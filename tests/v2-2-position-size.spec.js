@@ -50,10 +50,12 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   test('inspector body shows X/Y and W/H inputs when an element is selected', async ({ page }) => {
     await selectByMouse(page, '.slide.active .wfp-badge');
     const ids = await page.evaluate(() => {
-      const inputs = [...document.querySelectorAll('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop]')];
-      return inputs.map((i) => i.dataset.wfpeProp);
+      // Filter to position/size props only — phases v2.3+ add other
+      // inputs (font-size, colour) to the same panel.
+      return [...document.querySelectorAll('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop]')]
+        .map((i) => i.dataset.wfpeProp)
+        .filter((p) => ['x', 'y', 'w', 'h'].includes(p));
     });
-    // Order asserts the rendered grouping: position row first, size row second.
     expect(ids).toEqual(['x', 'y', 'w', 'h']);
   });
 
