@@ -68,6 +68,7 @@
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
     txn: null, // { snapshots: Map<Element, BeforeSnap> } when an op is in progress
+    inspectorMinimised: false, // persists across selections within session; resets on reload
   };
 
   // ===========================================================================
@@ -187,6 +188,111 @@
         background-color: rgba(255, 255, 255, 0.22);
       }
     }
+    /* ----- Inspector panel (v2.1+). Same liquid-glass surface as the
+       toolbar, parked top-right beneath it. Empty body in v2.1; subsequent
+       phases populate font-size, position/size, colour, and reset controls.
+       Minimised state collapses to a slim re-open chevron rendered in place
+       of the full panel; the preference persists across selections via
+       state.inspectorMinimised but resets on page reload. ----- */
+    #${ROOT_ID} .wfpe-inspector {
+      position: fixed;
+      top: 76px;
+      right: 16px;
+      width: 280px;
+      pointer-events: auto;
+      display: none;
+      flex-direction: column;
+      border-radius: 18px;
+      padding: 0;
+      background: rgba(255, 255, 255, 0.20);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.005em;
+      user-select: none;
+      color: rgba(15, 23, 42, 0.85);
+      isolation: isolate;
+    }
+    #${ROOT_ID} .wfpe-inspector::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 40%);
+      pointer-events: none;
+      z-index: -1;
+    }
+    #${ROOT_ID} .wfpe-inspector[data-visible="true"] {
+      display: flex;
+    }
+    #${ROOT_ID} .wfpe-inspector-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px 10px 14px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-header {
+      border-bottom: 0;
+    }
+    #${ROOT_ID} .wfpe-inspector-title {
+      font-weight: 600;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      opacity: 0.8;
+    }
+    #${ROOT_ID} .wfpe-inspector-minimise {
+      appearance: none;
+      -webkit-appearance: none;
+      background: transparent;
+      border: 0;
+      color: inherit;
+      padding: 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-inspector-minimise:hover {
+      background-color: rgba(255, 255, 255, 0.22);
+    }
+    #${ROOT_ID} .wfpe-inspector-minimise .wfpe-icon {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    #${ROOT_ID} .wfpe-inspector-body {
+      padding: 12px 14px 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-body {
+      display: none;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-inspector {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.24);
+        color: rgba(255, 255, 255, 0.9);
+      }
+      #${ROOT_ID} .wfpe-inspector-header {
+        border-bottom-color: rgba(255, 255, 255, 0.12);
+      }
+      #${ROOT_ID} .wfpe-inspector-minimise:hover {
+        background-color: rgba(255, 255, 255, 0.16);
+      }
+    }
     #${ROOT_ID} .wfpe-selection-ring {
       position: fixed;
       pointer-events: none;
@@ -255,6 +361,16 @@
       '<path d="m15 14 5-5-5-5" />' +
       '<path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13" />' +
       '</svg>',
+    // Chevron-up: shown on the inspector header when expanded (click → minimise)
+    chevronUp:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="18 15 12 9 6 15" />' +
+      '</svg>',
+    // Chevron-down: shown on the inspector header when minimised (click → expand)
+    chevronDown:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="6 9 12 15 18 9" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -293,6 +409,39 @@
 
   root.appendChild(toolbar);
 
+  // Inspector panel (v2.1 scaffold). Hidden by default; shown when an
+  // element is selected. The body is intentionally empty in v2.1 — phases
+  // v2.2-v2.6 plug in the position/size/font/colour/reset controls.
+  const inspector = document.createElement('div');
+  inspector.className = 'wfpe-inspector';
+  inspector.dataset.visible = 'false';
+  inspector.dataset.state = 'expanded';
+
+  const inspectorHeader = document.createElement('div');
+  inspectorHeader.className = 'wfpe-inspector-header';
+
+  const inspectorTitle = document.createElement('span');
+  inspectorTitle.className = 'wfpe-inspector-title';
+  inspectorTitle.textContent = 'Inspector';
+  inspectorHeader.appendChild(inspectorTitle);
+
+  const inspectorMinimiseBtn = document.createElement('button');
+  inspectorMinimiseBtn.type = 'button';
+  inspectorMinimiseBtn.className = 'wfpe-inspector-minimise';
+  inspectorMinimiseBtn.dataset.action = 'minimise';
+  inspectorMinimiseBtn.title = 'Minimise';
+  inspectorMinimiseBtn.setAttribute('aria-label', 'Minimise inspector');
+  inspectorMinimiseBtn.innerHTML = ICONS.chevronUp;
+  inspectorHeader.appendChild(inspectorMinimiseBtn);
+
+  inspector.appendChild(inspectorHeader);
+
+  const inspectorBody = document.createElement('div');
+  inspectorBody.className = 'wfpe-inspector-body';
+  inspector.appendChild(inspectorBody);
+
+  root.appendChild(inspector);
+
   const ring = document.createElement('div');
   ring.className = 'wfpe-selection-ring';
   ring.style.display = 'none';
@@ -329,6 +478,10 @@
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
     exportHTML();
+  });
+  inspectorMinimiseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    setInspectorMinimised(!state.inspectorMinimised);
   });
 
   // ===========================================================================
@@ -415,6 +568,41 @@
     state.selected = el || null;
     if (state.selected) positionRing(state.selected);
     else hideRing();
+    // Inspector visibility is updated by the explicit call sites below
+    // (onClick / onMouseUp / setEditMode / slideObserver) rather than from
+    // here. If we toggled inspector display:flex synchronously inside a
+    // mousedown handler that swaps from "no selection" to "selected", the
+    // newly-shown inspector at top-right would intercept the matching
+    // mouseup — the browser then fires `click` on the LCA of mousedown
+    // and mouseup targets (== body), and onClick can't find the original
+    // target. Updating inspector after the mouseup keeps the click cycle
+    // against the original DOM.
+  }
+
+  // ===========================================================================
+  // Inspector visibility + minimise/expand
+  //
+  // The inspector appears whenever an element is selected and hides on
+  // deselect or slide change. Minimised/expanded preference persists
+  // across selections within the session via state.inspectorMinimised;
+  // reload resets to expanded (in-memory only — localStorage persistence
+  // is a v2.x ROADMAP item).
+  // ===========================================================================
+  function refreshInspector() {
+    const visible = !!state.selected;
+    inspector.dataset.visible = visible ? 'true' : 'false';
+    inspector.dataset.state = state.inspectorMinimised ? 'minimised' : 'expanded';
+    inspectorMinimiseBtn.innerHTML = state.inspectorMinimised ? ICONS.chevronDown : ICONS.chevronUp;
+    inspectorMinimiseBtn.title = state.inspectorMinimised ? 'Expand' : 'Minimise';
+    inspectorMinimiseBtn.setAttribute(
+      'aria-label',
+      state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
+    );
+  }
+
+  function setInspectorMinimised(value) {
+    state.inspectorMinimised = !!value;
+    refreshInspector();
   }
 
   // ===========================================================================
@@ -525,6 +713,7 @@
     if (!state.editMode) {
       if (state.editingText) endTextEdit();
       setSelected(null);
+      refreshInspector();
     }
   }
 
@@ -656,6 +845,7 @@
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
     setSelected(target);
+    refreshInspector();
   }
 
   document.addEventListener('click', onClick, true);
@@ -684,6 +874,7 @@
       const slide = getActiveSlide();
       if (!slide || !slide.contains(state.selected)) {
         setSelected(null);
+        refreshInspector();
       } else {
         refreshSelection();
       }
@@ -1123,6 +1314,10 @@
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
       endTxn();
     }
+    // After a drag (or a no-op mousedown that didn't lead to drag), the
+    // post-click suppress fires; refresh the inspector so the panel
+    // reflects the resulting selection state.
+    refreshInspector();
   }
 
   document.addEventListener('mousedown', onMouseDown, true);
