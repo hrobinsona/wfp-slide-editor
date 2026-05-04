@@ -29,7 +29,12 @@
   const TOAST_DURATION_MS = 2000;
   const POST_DRAG_CLICK_GUARD_MS = 250;
   const RESIZE_MIN_PX = 8;
-  const HANDLE_SIZE_PX = 10;
+  const HANDLE_SIZE_PX = 10; // corner handle visual + hit-target size
+  const HANDLE_EDGE_SIZE_PX = 6; // edge midpoint handle visual size (smaller per v2.7)
+  const CORNER_DIRS = new Set(['nw', 'ne', 'se', 'sw']);
+  function handleSizeFor(dir) {
+    return CORNER_DIRS.has(dir) ? HANDLE_SIZE_PX : HANDLE_EDGE_SIZE_PX;
+  }
   const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
   const HANDLE_CURSORS = {
     nw: 'nwse-resize',
@@ -566,15 +571,17 @@
         background-color: rgba(255, 255, 255, 0.16);
       }
     }
+    /* Selection ring + handle stratum (v2.7 polish). The brief calls for
+       4px rounded corners, a softer blue stroke, and corner dots that
+       visually dominate the four edge midpoints. All 8 handles remain
+       functional resize hit-targets. */
     #${ROOT_ID} .wfpe-selection-ring {
       position: fixed;
       pointer-events: none;
       box-sizing: border-box;
-      border: 2px solid #2a8bf2;
-      box-shadow:
-        0 0 0 1px rgba(255, 255, 255, 0.85) inset,
-        0 0 0 1px rgba(0, 0, 0, 0.25);
-      border-radius: 2px;
+      border: 1.5px solid #5b9bd9;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
+      border-radius: 4px;
       display: none;
     }
     #${ROOT_ID} .wfpe-toast {
@@ -596,14 +603,42 @@
     #${ROOT_ID} .wfpe-handle {
       position: fixed;
       box-sizing: border-box;
-      width: ${HANDLE_SIZE_PX}px;
-      height: ${HANDLE_SIZE_PX}px;
-      background: #ffffff;
-      border: 1.5px solid #2a8bf2;
-      border-radius: 1px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
       pointer-events: auto;
       display: none;
+      border-radius: 50%;
+      background: #ffffff;
+      border: 1.5px solid #5b9bd9;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    /* Corners are the visual anchors — solid white circle at full
+       handle size with a crisp blue ring. */
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="nw"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="ne"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="se"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="sw"] {
+      width: ${HANDLE_SIZE_PX}px;
+      height: ${HANDLE_SIZE_PX}px;
+    }
+    /* Edge midpoints are smaller and lower-contrast so the corner
+       hierarchy reads at a glance; the underlying hit-target stays
+       generous via padding so resize ergonomics don't regress. */
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="n"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="e"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="s"],
+    #${ROOT_ID} .wfpe-handle[data-wfpe-handle="w"] {
+      width: 6px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.85);
+      border-color: rgba(91, 155, 217, 0.55);
+      box-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-handle[data-wfpe-handle="n"],
+      #${ROOT_ID} .wfpe-handle[data-wfpe-handle="e"],
+      #${ROOT_ID} .wfpe-handle[data-wfpe-handle="s"],
+      #${ROOT_ID} .wfpe-handle[data-wfpe-handle="w"] {
+        background: rgba(255, 255, 255, 0.75);
+      }
     }
   `;
   root.appendChild(styleEl);
@@ -1193,10 +1228,12 @@
 
   function positionHandles(rect) {
     const anchors = handleAnchors(rect);
-    const half = HANDLE_SIZE_PX / 2;
+    // Use the known handle size per direction so we don't need to read
+    // offsetWidth (which would force a layout flush every drag tick).
     for (const dir of HANDLE_DIRS) {
       const a = anchors[dir];
       const h = handles[dir];
+      const half = handleSizeFor(dir) / 2;
       h.style.left = `${a.x - half}px`;
       h.style.top = `${a.y - half}px`;
       h.style.display = 'block';
