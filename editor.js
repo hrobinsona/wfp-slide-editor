@@ -492,6 +492,37 @@
         background-color: rgba(255, 255, 255, 0.18);
       }
     }
+    /* Reset-styles row (v2.5): full-width subdued button that clears
+       the selected element's entire inline style attribute. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="reset"] {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0;
+    }
+    #${ROOT_ID} .wfpe-reset-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      background: transparent;
+      border: 1px solid rgba(15, 23, 42, 0.18);
+      color: inherit;
+      padding: 7px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      font: inherit;
+      letter-spacing: 0.01em;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-reset-btn:hover {
+      background-color: rgba(255, 255, 255, 0.30);
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-reset-btn {
+        border-color: rgba(255, 255, 255, 0.22);
+      }
+      #${ROOT_ID} .wfpe-reset-btn:hover {
+        background-color: rgba(255, 255, 255, 0.12);
+      }
+    }
     /* Dimension bubble (v2.2): floating chip above the selection ring
        showing W × H. Hidden alongside the ring during inline text edit. */
     #${ROOT_ID} .wfpe-dim-bubble {
@@ -861,6 +892,22 @@
   inspectorBody.appendChild(textColourRow.row);
   inspectorBody.appendChild(bgColourRow.row);
 
+  // Reset row (v2.5). Clears the selected element's entire inline style
+  // attribute as one history entry, returning it to its stylesheet-
+  // defined rendering. No-op (no history entry) if the element has no
+  // inline style to clear.
+  const resetRow = document.createElement('div');
+  resetRow.className = 'wfpe-inspector-row';
+  resetRow.dataset.wfpeRow = 'reset';
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'wfpe-reset-btn';
+  resetBtn.dataset.action = 'reset-styles';
+  resetBtn.textContent = 'Reset styles';
+  resetBtn.title = 'Clear all inline style overrides on the selected element';
+  resetRow.appendChild(resetBtn);
+  inspectorBody.appendChild(resetRow);
+
   root.appendChild(inspector);
 
   // Dimension bubble (v2.2): floating "W × H" chip above the selection
@@ -1064,6 +1111,22 @@
   }
   wireColourRow(textColourRow, 'text');
   wireColourRow(bgColourRow, 'bg');
+
+  // Reset clears the entire inline style attribute as one history entry.
+  // Bail when there's nothing to clear so an idle click can't push a
+  // no-op entry. The snapshot/endTxn pair captures and restores the
+  // attribute via the existing snapshot machinery.
+  resetBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const el = state.selected;
+    if (!el) return;
+    if (!el.hasAttribute('style')) return; // nothing to reset
+    beginTxn();
+    touchElement(el);
+    el.removeAttribute('style');
+    endTxn();
+    refreshSelection();
+  });
 
   // ===========================================================================
   // Helpers
