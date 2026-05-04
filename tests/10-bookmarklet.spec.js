@@ -73,8 +73,8 @@ test.describe('Phase 10 — Bookmarklet generator', () => {
     // Pressing E should toggle the badge — i.e. the editor is fully
     // interactive after bookmarklet injection.
     const badge = page.locator('#wfp-editor-root .wfpe-mode-badge');
-    await expect(badge).toHaveText(/Edit:\s*OFF/);
+    await expect(badge).toHaveAttribute('data-mode', 'off');
     await page.keyboard.press('e');
-    await expect(badge).toHaveText(/Edit:\s*ON/);
+    await expect(badge).toHaveAttribute('data-mode', 'on');
   });
 });

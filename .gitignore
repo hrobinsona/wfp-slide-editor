@@ -7,6 +7,7 @@ test-results/
 *.local
 .claude/settings.local.json
 bookmarklet.txt
+.worktrees/
 
 # ═══════════════════════════════════════════════════════════════
 # PRIVACY: fixtures are gitignored by default
@@ -24,6 +25,16 @@ fixtures/*.html
 # Allow-listed sanitized fixtures (none yet — add as needed):
 # !fixtures/sample-deck.html
 # !fixtures/boilerplate-sanitized.html
+
+# ═══════════════════════════════════════════════════════════════
+# PRIVACY: references folder (design mockups, brand assets)
+# ═══════════════════════════════════════════════════════════════
+# Treated like fixtures — gitignored by default. Visual references
+# may include placeholder content that resembles real WFP/Philips
+# layouts, or be derived from internal product screens. Default to
+# local-only. Allow-list individual files explicitly if a sanitized
+# reference needs to ship.
+references/
 
 # ═══════════════════════════════════════════════════════════════
 # PRIVACY: any file with these names is gitignored everywhere

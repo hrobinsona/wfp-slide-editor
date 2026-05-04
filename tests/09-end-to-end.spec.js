@@ -78,11 +78,11 @@ for (const fixture of FIXTURES_TO_TEST) {
     test('2. Pressing E toggles edit mode on/off', async ({ page }) => {
       await loadFixtureWithEditor(page, fixture);
       const badge = page.locator('#wfp-editor-root .wfpe-mode-badge');
-      await expect(badge).toHaveText(/Edit:\s*OFF/);
+      await expect(badge).toHaveAttribute('data-mode', 'off');
       await page.keyboard.press('e');
-      await expect(badge).toHaveText(/Edit:\s*ON/);
+      await expect(badge).toHaveAttribute('data-mode', 'on');
       await page.keyboard.press('e');
-      await expect(badge).toHaveText(/Edit:\s*OFF/);
+      await expect(badge).toHaveAttribute('data-mode', 'off');
     });
 
     test('3. Click on heading selects with visible ring', async ({ page }) => {

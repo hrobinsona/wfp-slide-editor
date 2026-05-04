@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { loadFixtureWithEditor } from './_helpers.js';
 
 test.describe('Phase 1 — Editor bootstrap', () => {
-  test('mounts the editor root and shows an "Edit: OFF" badge', async ({ page }) => {
+  test('mounts the editor root and shows an "Edit" badge in the off state', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
 
     const root = page.locator('#wfp-editor-root');
@@ -10,7 +10,8 @@ test.describe('Phase 1 — Editor bootstrap', () => {
 
     const badge = page.locator('#wfp-editor-root .wfpe-mode-badge');
     await expect(badge).toBeVisible();
-    await expect(badge).toHaveText(/Edit:\s*OFF/);
+    await expect(badge).toHaveText(/^\s*Edit\s*$/);
+    await expect(badge).toHaveAttribute('data-mode', 'off');
   });
 
   test('logs a ready message on load', async ({ page }) => {
@@ -24,13 +25,13 @@ test.describe('Phase 1 — Editor bootstrap', () => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     const badge = page.locator('#wfp-editor-root .wfpe-mode-badge');
 
-    await expect(badge).toHaveText(/Edit:\s*OFF/);
+    await expect(badge).toHaveAttribute('data-mode', 'off');
 
     await page.keyboard.press('e');
-    await expect(badge).toHaveText(/Edit:\s*ON/);
+    await expect(badge).toHaveAttribute('data-mode', 'on');
 
     await page.keyboard.press('e');
-    await expect(badge).toHaveText(/Edit:\s*OFF/);
+    await expect(badge).toHaveAttribute('data-mode', 'off');
   });
 
   test('does not toggle edit mode when typing in an input', async ({ page }) => {
@@ -45,7 +46,7 @@ test.describe('Phase 1 — Editor bootstrap', () => {
     });
 
     await page.keyboard.type('e');
-    await expect(badge).toHaveText(/Edit:\s*OFF/);
+    await expect(badge).toHaveAttribute('data-mode', 'off');
   });
 
   test('does not break slide navigation when edit mode is off', async ({ page }) => {
