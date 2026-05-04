@@ -419,6 +419,79 @@
         border-color: rgba(15, 23, 42, 0.85);
       }
     }
+    /* Colour controls (v2.4): row label, then a swatch (showing the
+       current colour), a hex text input, and — for background only —
+       a "transparent" clear button. The native <input type="color">
+       sits behind the swatch as a click-trigger. */
+    #${ROOT_ID} .wfpe-color-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #${ROOT_ID} .wfpe-color-swatch {
+      position: relative;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid rgba(15, 23, 42, 0.18);
+      background-color: #ffffff;
+      cursor: pointer;
+      flex: 0 0 22px;
+      padding: 0;
+      overflow: hidden;
+      isolation: isolate;
+    }
+    /* Checkerboard for transparent backgrounds — only painted when the
+       swatch carries data-transparent="true". */
+    #${ROOT_ID} .wfpe-color-swatch[data-transparent="true"] {
+      background:
+        linear-gradient(45deg, #ccc 25%, transparent 25%) 0 0 / 8px 8px,
+        linear-gradient(-45deg, #ccc 25%, transparent 25%) 0 4px / 8px 8px,
+        linear-gradient(45deg, transparent 75%, #ccc 75%) 4px -4px / 8px 8px,
+        linear-gradient(-45deg, transparent 75%, #ccc 75%) 4px 0 / 8px 8px,
+        #fff;
+    }
+    #${ROOT_ID} .wfpe-color-swatch input[type="color"] {
+      position: absolute;
+      inset: -2px;
+      opacity: 0;
+      cursor: pointer;
+      border: 0;
+      padding: 0;
+      pointer-events: none; /* swatch's own click triggers the picker */
+    }
+    #${ROOT_ID} .wfpe-color-clear {
+      appearance: none;
+      -webkit-appearance: none;
+      background: rgba(255, 255, 255, 0.30);
+      border: 1px solid rgba(255, 255, 255, 0.32);
+      color: inherit;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 22px;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-color-clear:hover {
+      background-color: rgba(255, 255, 255, 0.45);
+    }
+    @media (prefers-color-scheme: dark) {
+      #${ROOT_ID} .wfpe-color-swatch {
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-color-clear {
+        background: rgba(255, 255, 255, 0.10);
+        border-color: rgba(255, 255, 255, 0.18);
+      }
+      #${ROOT_ID} .wfpe-color-clear:hover {
+        background-color: rgba(255, 255, 255, 0.18);
+      }
+    }
     /* Dimension bubble (v2.2): floating chip above the selection ring
        showing W × H. Hidden alongside the ring during inline text edit. */
     #${ROOT_ID} .wfpe-dim-bubble {
@@ -714,6 +787,80 @@
   inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
   inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
 
+  // Colour rows (v2.4). Text colour for text-bearing only; background
+  // colour for any selection. Each row composes a swatch (clickable
+  // trigger for the hidden native picker), a hex text input, and — for
+  // background only — a "transparent" clear button.
+  function makeColourRow({ label, target, prop, includeClear }) {
+    const row = document.createElement('div');
+    row.className = 'wfpe-inspector-row';
+    row.dataset.wfpeRow = target === 'text' ? 'text-color' : 'bg-color';
+
+    const lab = document.createElement('span');
+    lab.className = 'wfpe-inspector-row-label';
+    lab.textContent = label;
+    row.appendChild(lab);
+
+    const control = document.createElement('div');
+    control.className = 'wfpe-color-control';
+
+    const swatch = document.createElement('button');
+    swatch.type = 'button';
+    swatch.className = 'wfpe-color-swatch';
+    swatch.dataset.wfpeTarget = target;
+    swatch.title = `${label} — pick`;
+
+    // Native colour picker behind the swatch. The swatch's own click
+    // triggers the picker programmatically; the picker itself is
+    // pointer-events: none so the swatch wins the click.
+    const colorInput = document.createElement('input');
+    colorInput.type = 'color';
+    colorInput.dataset.wfpeTarget = target;
+    swatch.appendChild(colorInput);
+    control.appendChild(swatch);
+
+    const hexField = document.createElement('label');
+    hexField.className = 'wfpe-inspector-field';
+    const hexInput = document.createElement('input');
+    hexInput.type = 'text';
+    hexInput.dataset.wfpeProp = prop;
+    hexInput.spellcheck = false;
+    hexInput.autocomplete = 'off';
+    hexInput.style.width = '64px';
+    hexField.appendChild(hexInput);
+    control.appendChild(hexField);
+
+    let clearBtn = null;
+    if (includeClear) {
+      clearBtn = document.createElement('button');
+      clearBtn.type = 'button';
+      clearBtn.className = 'wfpe-color-clear';
+      clearBtn.dataset.wfpeTarget = target;
+      clearBtn.title = 'Clear (transparent)';
+      clearBtn.setAttribute('aria-label', 'Clear background colour');
+      clearBtn.textContent = '×';
+      control.appendChild(clearBtn);
+    }
+
+    row.appendChild(control);
+    return { row, swatch, colorInput, hexInput, clearBtn };
+  }
+
+  const textColourRow = makeColourRow({
+    label: 'Text colour',
+    target: 'text',
+    prop: 'textColorHex',
+    includeClear: false,
+  });
+  const bgColourRow = makeColourRow({
+    label: 'Background',
+    target: 'bg',
+    prop: 'bgColorHex',
+    includeClear: true,
+  });
+  inspectorBody.appendChild(textColourRow.row);
+  inspectorBody.appendChild(bgColourRow.row);
+
   root.appendChild(inspector);
 
   // Dimension bubble (v2.2): floating "W × H" chip above the selection
@@ -852,6 +999,72 @@
     nudgeFontSizeWithHistory(+1);
   });
 
+  // ----- Colour controls (v2.4) -----
+  // Swatch click programmatically opens the hidden native picker.
+  // Picker `input` events apply live within an open txn; the `change`
+  // event closes the txn so a full pick session = one history entry.
+  function wireColourRow({ swatch, colorInput, hexInput, clearBtn }, target) {
+    swatch.addEventListener('click', (e) => {
+      e.preventDefault();
+      colorInput.click();
+    });
+    colorInput.addEventListener('input', () => {
+      const el = state.selected;
+      if (!el) return;
+      if (target === 'text' && !isTextBearing(el)) return;
+      if (!state.txn || !state.txn.snapshots.has(el)) {
+        beginTxn();
+        touchElement(el);
+      }
+      applyColorToElement(el, target, colorInput.value);
+      populateColours(el);
+    });
+    colorInput.addEventListener('change', () => {
+      // Closing the picker commits the txn opened on the first input
+      // event. endTxn no-ops if no element was touched.
+      endTxn();
+    });
+    hexInput.addEventListener('focus', () => {
+      hexInput.__wfpeFocusTarget = state.selected || null;
+    });
+    hexInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitColourHex(target, hexInput.value, hexInput.__wfpeFocusTarget);
+        hexInput.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        revertingInput = hexInput;
+        populateColours(state.selected);
+        hexInput.blur();
+      }
+    });
+    hexInput.addEventListener('blur', () => {
+      const targetEl = hexInput.__wfpeFocusTarget;
+      hexInput.__wfpeFocusTarget = null;
+      if (revertingInput === hexInput) { revertingInput = null; return; }
+      commitColourHex(target, hexInput.value, targetEl);
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const el = state.selected;
+        if (!el) return;
+        // Only meaningful if there's an inline colour to clear.
+        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+        if (!el.style[cssProp]) return;
+        beginTxn();
+        touchElement(el);
+        el.style[cssProp] = '';
+        endTxn();
+        populateColours(el);
+      });
+    }
+  }
+  wireColourRow(textColourRow, 'text');
+  wireColourRow(bgColourRow, 'bg');
+
   // ===========================================================================
   // Helpers
   // ===========================================================================
@@ -955,6 +1168,11 @@
   }
 
   function setSelected(el) {
+    // Close any open txn before swapping selection — defends against
+    // an orphaned colour-picker txn (input fired without change) being
+    // silently bundled with subsequent unrelated edits on the new
+    // selection. endTxn no-ops if no element was touched.
+    if (state.selected !== el && state.txn) endTxn();
     state.selected = el || null;
     if (state.selected) {
       positionRing(state.selected);
@@ -981,8 +1199,9 @@
       for (const k of ['x', 'y', 'w', 'h', 'fontSize']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
       }
-      // Hide font-size row when nothing is selected.
       fontSizeRow.style.display = 'none';
+      textColourRow.row.style.display = 'none';
+      populateColours(null);
       return;
     }
     // Use offset* values so what the user reads matches the box model
@@ -999,13 +1218,104 @@
       if (document.activeElement === inspectorInputs[k]) continue;
       inspectorInputs[k].value = values[k];
     }
-    // Font-size row visibility + sync — only for text-bearing elements,
-    // matching the brief's "Conditional content by selection type".
+    // Font-size + text-colour rows render only for text-bearing elements
+    // (matching BRIEF "Conditional content by selection type").
+    // Background colour and position/size render for any selection.
     if (isTextBearing(el)) {
       fontSizeRow.style.display = '';
+      textColourRow.row.style.display = '';
       populateFontSize(el);
     } else {
       fontSizeRow.style.display = 'none';
+      textColourRow.row.style.display = 'none';
+    }
+    populateColours(el);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Colour helpers (v2.4). Parse #rgb / #rrggbb (with or without leading #)
+  // into normalized "#rrggbb" strings so apply/populate stay deterministic
+  // across browser colour serialisations.
+  // ---------------------------------------------------------------------------
+  function parseHexInput(raw) {
+    if (typeof raw !== 'string') return null;
+    let h = raw.trim().replace(/^#/, '');
+    if (/^[0-9a-fA-F]{3}$/.test(h)) {
+      h = h.split('').map((c) => c + c).join('');
+    }
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+    return '#' + h.toLowerCase();
+  }
+
+  function rgbStringToHex(rgb) {
+    if (!rgb || rgb === 'transparent') return null;
+    const m = rgb.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (!m) return null;
+    const toHex = (n) => Number(n).toString(16).padStart(2, '0');
+    return ('#' + toHex(m[1]) + toHex(m[2]) + toHex(m[3])).toLowerCase();
+  }
+
+  function applyColorToElement(el, target, hex) {
+    const norm = parseHexInput(hex);
+    if (!norm) return false;
+    el.style[target === 'text' ? 'color' : 'backgroundColor'] = norm;
+    return true;
+  }
+
+  function commitColourHex(target, raw, targetEl) {
+    const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
+    if (!el) return;
+    if (target === 'text' && !isTextBearing(el)) return;
+    const norm = parseHexInput(raw);
+    if (!norm) {
+      // Garbage input — restore from the live element.
+      populateColours(el);
+      return;
+    }
+    const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+    const currentHex = rgbStringToHex(el.style[cssProp] || '');
+    if (currentHex === norm) return; // no-op; suppress duplicate history entry
+    beginTxn();
+    touchElement(el);
+    el.style[cssProp] = norm;
+    endTxn();
+    populateColours(el);
+  }
+
+  function populateColours(el) {
+    if (!el) {
+      for (const r of [textColourRow, bgColourRow]) {
+        if (document.activeElement !== r.hexInput) r.hexInput.value = '';
+        r.swatch.style.backgroundColor = '';
+        r.swatch.dataset.transparent = 'true';
+      }
+      return;
+    }
+    // Text colour
+    if (isTextBearing(el)) {
+      const colorRgb = getComputedStyle(el).color;
+      const hex = rgbStringToHex(colorRgb) || '#000000';
+      if (document.activeElement !== textColourRow.hexInput) textColourRow.hexInput.value = hex;
+      textColourRow.colorInput.value = hex;
+      textColourRow.swatch.style.backgroundColor = hex;
+      delete textColourRow.swatch.dataset.transparent;
+    }
+    // Background colour. computed background-color of "rgba(0,0,0,0)"
+    // means transparent — show the checkerboard hint and a sensible
+    // default in the picker.
+    const bgRgb = getComputedStyle(el).backgroundColor;
+    const isTransparent = bgRgb === 'rgba(0, 0, 0, 0)' || bgRgb === 'transparent';
+    const bgHex = isTransparent ? '#ffffff' : (rgbStringToHex(bgRgb) || '#ffffff');
+    if (document.activeElement !== bgColourRow.hexInput) {
+      bgColourRow.hexInput.value = isTransparent ? '' : bgHex;
+    }
+    bgColourRow.colorInput.value = bgHex;
+    if (isTransparent) {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.transparent = 'true';
+    } else {
+      bgColourRow.swatch.style.backgroundColor = bgHex;
+      delete bgColourRow.swatch.dataset.transparent;
     }
   }
 
