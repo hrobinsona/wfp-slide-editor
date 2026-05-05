@@ -655,6 +655,234 @@ test.describe('v2.1.3 — Drag to reorder', () => {
   });
 });
 
+// v2.1.4 — Delete slide. Strict TDD for logic; build-first for the
+// hover-revealed × button visual. Each thumb carries a Liquid-Glass
+// styled × button in its top-right corner. Clicking × deletes the
+// corresponding slide; Backspace / Delete while a thumb is hovered
+// (or focused) does the same. Last-slide guard with a toast. Active
+// fallback per BRIEF. One delete = one history entry, undoable via
+// the existing slideOps machinery (extends with type 'delete').
+
+const deleteBtnSel = '#wfp-editor-root .wfpe-overview-delete';
+
+// Default Playwright viewport (1280x720) is narrower than the overview
+// grid (~1828px wide at 4-per-row × 0.22 scale). Thumbs past column 2
+// can be horizontally off-screen, so test interactions need to scroll
+// them into view before hover/click.
+async function hoverThumb(page, idx) {
+  const thumb = page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(idx);
+  await thumb.scrollIntoViewIfNeeded();
+  await thumb.hover();
+  return thumb;
+}
+
+async function deleteThumbViaButton(page, idx) {
+  const thumb = await hoverThumb(page, idx);
+  const btn = thumb.locator('.wfpe-overview-delete');
+  await btn.waitFor({ state: 'visible' });
+  await btn.click();
+}
+
+test.describe('v2.1.4 — Delete slide', () => {
+  // The overview grid at 4-per-row × 0.22 scale is ~1828px wide. The
+  // × delete button sits at the right edge of each thumb (top:6, right:6).
+  // Default Playwright viewport (1280px) cannot reach the × of any
+  // thumb past column 1. Widen for this describe so real hover/click
+  // can land on every thumb in the deck. Production UX at narrow
+  // viewports is documented in v2.1.1 (horizontal scroll).
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  test('each thumb has a × button (hidden by default, revealed on hover)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const slideCount = await page.locator('.deck > .slide').count();
+    const buttonCount = await page.locator(deleteBtnSel).count();
+    expect(buttonCount).toBe(slideCount);
+
+    // Default state: hidden.
+    const firstBtnDisplay = await page.locator(deleteBtnSel).first().evaluate((el) => getComputedStyle(el).display);
+    expect(firstBtnDisplay).toBe('none');
+
+    // Hover a thumb → its × becomes visible.
+    const hovered = await hoverThumb(page, 2);
+    const hoveredBtnDisplay = await hovered
+      .locator('.wfpe-overview-delete')
+      .evaluate((el) => getComputedStyle(el).display);
+    expect(hoveredBtnDisplay).not.toBe('none');
+  });
+
+  test('clicking × deletes the slide and rebuilds the overlay', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const beforeCount = await page.locator('.deck > .slide').count();
+    const beforeIds = await getSlideOrder(page);
+
+    await deleteThumbViaButton(page, 2);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const afterCount = await page.locator('.deck > .slide').count();
+    const afterIds = await getSlideOrder(page);
+    const overlayCount = await page.locator('#wfp-editor-root .wfpe-overview-thumb').count();
+
+    expect(afterCount).toBe(beforeCount - 1);
+    expect(beforeIds).toContain('s2');
+    expect(afterIds).not.toContain('s2');
+    expect(overlayCount).toBe(afterCount);
+  });
+
+  test('Backspace while hovering a thumb deletes that slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await hoverThumb(page, 4);
+    await page.keyboard.press('Backspace');
+
+    const ids = await getSlideOrder(page);
+    expect(ids).not.toContain('s4');
+  });
+
+  test('Delete key while hovering a thumb deletes that slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await hoverThumb(page, 1);
+    await page.keyboard.press('Delete');
+
+    const ids = await getSlideOrder(page);
+    expect(ids).not.toContain('s1');
+  });
+
+  test('last-slide guard: deleting when only one slide remains is a no-op + toast appears', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+
+    // Trim the deck to exactly one slide before entering overview.
+    await page.evaluate(() => {
+      const deck = document.querySelector('.deck');
+      const slides = [...deck.querySelectorAll(':scope > .slide')];
+      for (let i = 1; i < slides.length; i++) deck.removeChild(slides[i]);
+      slides[0].classList.add('active');
+    });
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const beforeCount = await page.locator('.deck > .slide').count();
+    expect(beforeCount).toBe(1);
+
+    await deleteThumbViaButton(page, 0);
+
+    const afterCount = await page.locator('.deck > .slide').count();
+    expect(afterCount).toBe(1);
+
+    const toastText = await page.locator('#wfp-editor-root .wfpe-toast').textContent();
+    expect(toastText).toBe("Can't delete the last slide.");
+  });
+
+  test('active-slide fallback (mid-deck): deleting the active slide promotes the next slide to active', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    // Slide s2 active, then delete it → s3 (which now occupies index 2) becomes active.
+    await page.evaluate(() => {
+      document.querySelectorAll('.slide').forEach((s, i) => s.classList.toggle('active', i === 2));
+    });
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await deleteThumbViaButton(page, 2);
+
+    const activeIds = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide.active')].map((s) => s.id)
+    );
+    expect(activeIds).toEqual(['s3']);
+  });
+
+  test('active-slide fallback (last in deck): falls back to the new last slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const slideCount = await page.locator('.deck > .slide').count();
+    await page.evaluate((n) => {
+      document.querySelectorAll('.slide').forEach((s, i) => s.classList.toggle('active', i === n - 1));
+    }, slideCount);
+    const expectedFallbackId = `s${slideCount - 2}`;
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await deleteThumbViaButton(page, slideCount - 1);
+
+    const activeIds = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide.active')].map((s) => s.id)
+    );
+    expect(activeIds).toEqual([expectedFallbackId]);
+  });
+
+  test('one delete = one history entry; Cmd+Z restores the slide at its original position', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const original = await getSlideOrder(page);
+    // Use nth(2) instead of nth(3) — slide 4's thumb sits in the
+    // top-right corner where the toolbar physically overlaps the ×.
+    await deleteThumbViaButton(page, 2);
+    const afterDelete = await getSlideOrder(page);
+    expect(afterDelete).not.toEqual(original);
+    expect(afterDelete).not.toContain('s2');
+
+    await page.keyboard.press('Meta+z');
+
+    const restored = await getSlideOrder(page);
+    expect(restored).toEqual(original);
+  });
+
+  test('Cmd+Shift+Z re-deletes the slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await deleteThumbViaButton(page, 2);
+    const afterDelete = await getSlideOrder(page);
+
+    await page.keyboard.press('Meta+z');
+    await page.keyboard.press('Meta+Shift+z');
+
+    expect(await getSlideOrder(page)).toEqual(afterDelete);
+  });
+
+  test('overview stays on after a delete (only thumb click exits)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    await deleteThumbViaButton(page, 2);
+
+    const stillOn = await page.evaluate(() => document.body.dataset.wfpEditOverview === 'on');
+    expect(stillOn).toBe(true);
+  });
+});
+
 test.describe('v2.1.1 — Overview grid layout (no-editor baseline)', () => {
   test('without the editor loaded, the fixture renders identically to baseline', async ({ page }) => {
     // Load the fixture WITHOUT injecting editor.js. Confirm the deck

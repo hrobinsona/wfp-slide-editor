@@ -77,6 +77,7 @@
     inspectorMinimised: false, // persists across selections within session; resets on reload
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
+    overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
   };
 
   // ===========================================================================
@@ -813,6 +814,51 @@
       opacity: 0.4;
       cursor: grabbing;
     }
+    /* × delete button (v2.1.4) — Liquid Glass pill, top-right of each
+       thumb, revealed on thumb hover or focus. Same dark-glass tint as
+       the slide-number badge so they read as a matched pair (badge =
+       passive label, × = active affordance). */
+    #${ROOT_ID} .wfpe-overview-delete {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      color: #fff;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+      transition: background-color 120ms ease, transform 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb:hover .wfpe-overview-delete,
+    #${ROOT_ID} .wfpe-overview-thumb:focus-within .wfpe-overview-delete,
+    #${ROOT_ID} .wfpe-overview-delete:focus {
+      display: inline-flex;
+    }
+    #${ROOT_ID} .wfpe-overview-delete:hover {
+      background: rgba(15, 23, 42, 0.92);
+      transform: scale(1.06);
+    }
+    #${ROOT_ID} .wfpe-overview-delete svg {
+      width: 10px;
+      height: 10px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
     /* Drop indicator — thin vertical bar drawn between the target thumb
        and its neighbour to mark the snap insertion point during drag.
        Pure white at 0.55 (the inspector focus stroke alpha already
@@ -921,6 +967,14 @@
       '<rect x="14" y="3" width="7" height="7" rx="1" />' +
       '<rect x="3" y="14" width="7" height="7" rx="1" />' +
       '<rect x="14" y="14" width="7" height="7" rx="1" />' +
+      '</svg>',
+    // Small × — overview thumbnail delete button (v2.1.4). No wfpe-icon
+    // class here because the delete button stamps its own size via CSS
+    // (10px) rather than the toolbar's 18px.
+    closeSmall:
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M18 6 6 18" />' +
+      '<path d="m6 6 12 12" />' +
       '</svg>',
   };
 
@@ -2022,17 +2076,35 @@
     }
   }
 
-  // Slide-level history op handlers (v2.1.3 reorder; v2.1.4 will add
-  // a 'delete' type). These run alongside the per-element `changes`
-  // array — they EXTEND the entry shape rather than replacing it.
+  // Slide-level history op handlers. These run alongside the per-element
+  // `changes` array — they EXTEND the entry shape rather than replacing
+  // it. Op types: 'reorder' (v2.1.3), 'delete' (v2.1.4).
   function undoSlideOp(op) {
     if (op.type === 'reorder') {
       applySlideOrder(op.deck, op.beforeOrder);
+    } else if (op.type === 'delete') {
+      // Re-attach the deleted slide at its original position. Using
+      // node refs (slide + nextSibling) means undo lands the slide in
+      // the correct spot even if intervening reorder ops have shuffled
+      // its neighbours — node refs follow nodes through reorders.
+      // Defensive fallback: if a later op has DELETED the captured
+      // nextSibling (orphaning the ref), insertBefore would throw —
+      // append to the end instead so the undo still succeeds, just at
+      // a less-precise position.
+      const ref = (op.nextSibling && op.nextSibling.parentElement === op.deck) ? op.nextSibling : null;
+      op.deck.insertBefore(op.slide, ref);
+      if (op.wasActive) {
+        if (op.fallbackSlide) op.fallbackSlide.classList.remove('active');
+        op.slide.classList.add('active');
+      }
     }
   }
   function redoSlideOp(op) {
     if (op.type === 'reorder') {
       applySlideOrder(op.deck, op.afterOrder);
+    } else if (op.type === 'delete') {
+      op.deck.removeChild(op.slide);
+      if (op.wasActive && op.fallbackSlide) op.fallbackSlide.classList.add('active');
     }
   }
 
@@ -2154,11 +2226,26 @@
       // Native HTML5 DnD source (v2.1.3). The thumb is editor-owned —
       // setting draggable here keeps slide DOM untouched.
       thumb.draggable = true;
+      // Make the thumb focusable (v2.1.4) so the × button reveals via
+      // :focus-within for keyboard users; arrow-key navigation between
+      // thumbs is an explicit non-goal (BRIEF), but Tab focus is fine.
+      thumb.tabIndex = 0;
       if (slide.classList.contains('active')) thumb.dataset.active = 'true';
       const badge = document.createElement('span');
       badge.className = 'wfpe-overview-badge';
       badge.textContent = String(i + 1);
       thumb.appendChild(badge);
+      // Delete button (v2.1.4). Carries the slide index so the click
+      // handler can resolve the live .deck child without walking the
+      // DOM up from event.target.
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'wfpe-overview-delete';
+      del.dataset.wfpEditSlideIndex = String(i);
+      del.title = 'Delete slide';
+      del.setAttribute('aria-label', `Delete slide ${i + 1}`);
+      del.innerHTML = ICONS.closeSmall;
+      thumb.appendChild(del);
       overviewOverlay.appendChild(thumb);
     }
     positionOverviewOverlay();
@@ -2211,6 +2298,11 @@
     overviewOverlay.addEventListener('dragleave', onOverviewDragLeave);
     overviewOverlay.addEventListener('drop', onOverviewDrop);
     overviewOverlay.addEventListener('dragend', onOverviewDragEnd);
+    // Hover tracking + delete (v2.1.4). Mouseenter/leave are listened
+    // via mouseover/out for delegation efficiency.
+    overviewOverlay.addEventListener('mouseover', onOverviewMouseOver);
+    overviewOverlay.addEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.addEventListener('click', onOverviewDeleteClick);
   }
 
   function exitOverview() {
@@ -2227,6 +2319,10 @@
     overviewOverlay.removeEventListener('dragleave', onOverviewDragLeave);
     overviewOverlay.removeEventListener('drop', onOverviewDrop);
     overviewOverlay.removeEventListener('dragend', onOverviewDragEnd);
+    overviewOverlay.removeEventListener('mouseover', onOverviewMouseOver);
+    overviewOverlay.removeEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.removeEventListener('click', onOverviewDeleteClick);
+    state.overviewHoveredSlide = null;
     if (overviewRafId) {
       cancelAnimationFrame(overviewRafId);
       overviewRafId = 0;
@@ -2274,6 +2370,12 @@
   }
 
   function onOverviewClick(e) {
+    // Delete-button clicks must NOT navigate — short-circuit before the
+    // navigate path so the bubble-phase onOverviewDeleteClick can do
+    // its job (capture-phase stopPropagation here would otherwise kill
+    // it). v2.1.4 added the × button inside each thumb; the navigate
+    // path's editor-root + thumb-walk would otherwise intercept it.
+    if (e.target.closest('.wfpe-overview-delete')) return;
     // Editor-root clicks normally flow to their own bubble handlers
     // (toolbar Edit / Export / etc.), but the overview thumbs ALSO live
     // under #wfp-editor-root in v2.1.3 — they need to navigate. Filter
@@ -2458,6 +2560,98 @@
     state.overviewDrag = null;
   }
 
+  // ---------------------------------------------------------------------------
+  // Delete (v2.1.4)
+  //
+  // UX: hover-revealed × button per thumb (CSS-driven via :hover and
+  // :focus-within), Backspace/Delete keyboard shortcut on the hovered or
+  // focused thumb. Last-slide guard with a one-line toast. Active-slide
+  // fallback per BRIEF: if the deleted slide was active, promote the
+  // slide that now occupies its position; if it was last, fall back to
+  // the new last.
+  //
+  // History contract: one delete = one history entry. Slide-level op
+  // type 'delete' carries enough info to re-insert the exact node at
+  // its exact prior position (using nextSibling node ref so re-inserts
+  // remain correct across intervening reorder/delete ops).
+  // ---------------------------------------------------------------------------
+  function deleteSlideFromOverview(slide) {
+    const deck = slide && slide.parentElement;
+    if (!deck || !deck.classList.contains('deck')) return;
+    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    if (slides.length <= 1) {
+      showToast(slide, "Can't delete the last slide.");
+      return;
+    }
+    const wasActive = slide.classList.contains('active');
+    const idx = slides.indexOf(slide);
+    const nextSibling = slide.nextElementSibling; // may be null if last
+    // Per BRIEF: if deleted slide was active and not the last, promote
+    // the slide that now occupies its position (was at idx + 1). If it
+    // was the last, fall back to the new last (was at idx - 1).
+    let fallbackSlide = null;
+    if (wasActive) {
+      fallbackSlide = slides[idx + 1] || slides[idx - 1] || null;
+    }
+    deck.removeChild(slide);
+    if (wasActive && fallbackSlide) fallbackSlide.classList.add('active');
+    pushSlideOpEntry({
+      type: 'delete',
+      deck,
+      slide,
+      nextSibling,
+      wasActive,
+      fallbackSlide,
+    });
+    // If the just-deleted slide was the hovered target, drop the
+    // reference — the next mouseover will re-hydrate.
+    if (state.overviewHoveredSlide === slide) state.overviewHoveredSlide = null;
+    buildOverviewOverlay();
+  }
+
+  function getOverviewDeleteTarget() {
+    // Keyboard focus wins over mouse hover so a user with both
+    // (e.g. tabbed to a thumb while the cursor is over a different
+    // one) operates on the focused thumb. Falls back to hover.
+    const active = document.activeElement;
+    if (active && overviewOverlay.contains(active)) {
+      const thumb = active.closest('.wfpe-overview-thumb');
+      if (thumb) {
+        const i = Number(thumb.dataset.wfpEditSlideIndex);
+        return document.querySelectorAll('.deck > .slide')[i] || null;
+      }
+    }
+    return state.overviewHoveredSlide;
+  }
+
+  function onOverviewMouseOver(e) {
+    const thumb = e.target.closest('.wfpe-overview-thumb');
+    if (!thumb) return;
+    const idx = Number(thumb.dataset.wfpEditSlideIndex);
+    state.overviewHoveredSlide = document.querySelectorAll('.deck > .slide')[idx] || null;
+  }
+
+  function onOverviewMouseOut(e) {
+    // Only clear when leaving the overlay entirely or moving to a non-thumb
+    // ancestor. Moving between thumbs fires mouseout on the previous
+    // thumb followed by mouseover on the next; the mouseover above
+    // re-hydrates state.overviewHoveredSlide.
+    const related = e.relatedTarget;
+    if (related && overviewOverlay.contains(related) && related.closest('.wfpe-overview-thumb')) return;
+    state.overviewHoveredSlide = null;
+  }
+
+  function onOverviewDeleteClick(e) {
+    const btn = e.target.closest('.wfpe-overview-delete');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const idx = Number(btn.dataset.wfpEditSlideIndex);
+    const slide = document.querySelectorAll('.deck > .slide')[idx];
+    if (!slide) return;
+    deleteSlideFromOverview(slide);
+  }
+
   function isTypingTarget(el) {
     if (!el) return false;
     const tag = el.tagName;
@@ -2556,6 +2750,23 @@
     // delete / undo); requiring edit-mode-on to undo a reorder while in
     // overview would be surprising UX.
     if (!state.editMode && !state.overviewMode) return;
+
+    // Backspace / Delete in overview deletes the hovered (or focused)
+    // thumbnail's slide (v2.1.4). Routes through the same path as the
+    // × button click so history + last-slide guard behave identically.
+    if (
+      state.overviewMode &&
+      noModifier &&
+      (e.key === 'Backspace' || e.key === 'Delete')
+    ) {
+      const target = getOverviewDeleteTarget();
+      if (target) {
+        e.preventDefault();
+        e.stopPropagation();
+        deleteSlideFromOverview(target);
+      }
+      return;
+    }
 
     // Suppress slide navigation keys while edit mode is on. The fixture's
     // own keydown handler is registered in bubble phase, so by registering
