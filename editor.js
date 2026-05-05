@@ -22,7 +22,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.0.0-v2.0';
+  const VERSION = '2.1.0-v2.1.0';
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
@@ -74,6 +74,7 @@
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
     txn: null, // { snapshots: Map<Element, BeforeSnap> } when an op is in progress
     inspectorMinimised: false, // persists across selections within session; resets on reload
+    overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
   };
 
   // ===========================================================================
@@ -187,6 +188,16 @@
         0 6px 18px rgba(232, 110, 103, 0.45),
         inset 0 1px 0 rgba(255, 255, 255, 0.45),
         inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+    }
+    /* Overview button active state (v2.1.0). A persistent white-tint
+       highlight in the Liquid Glass dialect — distinct from Edit's coral
+       pill (Edit signals editability; Overview signals a view mode). */
+    #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"] {
+      background-color: rgba(255, 255, 255, 0.22);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"]:hover {
+      background-color: rgba(255, 255, 255, 0.28);
     }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
       filter: brightness(1.06);
@@ -742,6 +753,14 @@
       '<polyline points="1 4 1 10 7 10" />' +
       '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />' +
       '</svg>',
+    // 2x2 grid — Overview toolbar button (v2.1.0).
+    overview:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect x="3" y="3" width="7" height="7" rx="1" />' +
+      '<rect x="14" y="3" width="7" height="7" rx="1" />' +
+      '<rect x="3" y="14" width="7" height="7" rx="1" />' +
+      '<rect x="14" y="14" width="7" height="7" rx="1" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -770,9 +789,15 @@
     return b;
   }
 
+  // v2.1.0 — Overview button sits between Edit and the action triplet.
+  // Edit + Overview are mode toggles; Export/Undo/Redo are actions. Keeping
+  // the two mode controls adjacent reads cleanly in the toolbar.
+  const overviewBtn = makeToolbarButton('overview', 'Overview', 'Overview (O)', 'overview');
+  overviewBtn.dataset.mode = 'off';
   const exportBtn = makeToolbarButton('export', 'Export', 'Export (Cmd/Ctrl+S)', 'export');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
+  toolbar.appendChild(overviewBtn);
   toolbar.appendChild(exportBtn);
   toolbar.appendChild(undoBtn);
   toolbar.appendChild(redoBtn);
@@ -1096,6 +1121,10 @@
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
     exportHTML();
+  });
+  overviewBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    setOverviewMode(!state.overviewMode);
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -1845,6 +1874,46 @@
     }
   }
 
+  // ===========================================================================
+  // Overview mode (v2.1.0)
+  //
+  // A bird's-eye grid view of all slides — entered by hotkey `O`, the
+  // Overview toolbar button, or (later v2.1.x phases) clicking outside the
+  // grid; exited by `O`, Escape, or clicking a thumbnail (which both
+  // navigates and exits).
+  //
+  // Mutual exclusion with element selection: entering overview clears
+  // state.selected so the inspector and selection ring drop out (they
+  // refer to slide-level content that's about to relocate). state.editMode
+  // is deliberately untouched — overview can be toggled regardless of
+  // edit mode, and exiting overview returns you to whatever edit-mode
+  // state you were in.
+  //
+  // v2.1.0 wires the activation flag and the toolbar button only.
+  // Subsequent phases (v2.1.1+) attach the grid DOM, click-to-navigate,
+  // drag-to-reorder, and delete affordances on top of this state flag.
+  // ===========================================================================
+  function setOverviewMode(value) {
+    const next = !!value;
+    if (next === state.overviewMode) return;
+    state.overviewMode = next;
+    if (next) {
+      // Closing any open text edit before entering overview: the edited
+      // element's contenteditable lifecycle assumes the slide stays in
+      // its normal layout. Future phases relocate / restyle slides for
+      // the grid; an open contenteditable across that transition would
+      // strand the caret.
+      if (state.editingText) endTextEdit();
+      setSelected(null);
+      refreshInspector();
+    }
+    overviewBtn.dataset.mode = state.overviewMode ? 'on' : 'off';
+    // Forward hook for v2.1.1 — the grid CSS will key off this on the
+    // toolbar's data attribute so the editor root can style itself
+    // overview-active without a separate global flag.
+    toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
+  }
+
   function isTypingTarget(el) {
     if (!el) return false;
     const tag = el.tagName;
@@ -1919,6 +1988,22 @@
 
     if ((e.key === 'e' || e.key === 'E') && noModifier) {
       setEditMode(!state.editMode);
+      return;
+    }
+
+    // Overview mode toggle (v2.1.0). `O` works regardless of edit mode
+    // (matches the `E` precedent). Escape exits when overview is on,
+    // no-op otherwise — text-edit Escape is already handled above.
+    if ((e.key === 'o' || e.key === 'O') && noModifier) {
+      e.preventDefault();
+      e.stopPropagation();
+      setOverviewMode(!state.overviewMode);
+      return;
+    }
+    if (e.key === 'Escape' && state.overviewMode && noModifier) {
+      e.preventDefault();
+      e.stopPropagation();
+      setOverviewMode(false);
       return;
     }
 
