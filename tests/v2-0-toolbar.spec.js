@@ -2,12 +2,14 @@ import { test, expect } from '@playwright/test';
 import { loadFixtureWithEditor } from './_helpers.js';
 
 // v2.0 — toolbar refresh: liquid-glass recipe values, inline SVG icons,
-// button order Edit · Export · Undo · Redo. Behavioural parity with v1
-// is covered by the existing v1 suite; these tests pin the v2 visual
-// contract that the brief calls out as authoritative.
+// button order Edit · (Overview, added v2.1.0) · Export · Undo · Redo.
+// Behavioural parity with v1 is covered by the existing v1 suite; these
+// tests pin the v2 visual contract that the brief calls out as authoritative.
+// Updated in v2.1.0 to include the Overview button — the recipe + icon
+// assertions still hold; only the button-list assertions widened.
 
 test.describe('v2.0 — toolbar refresh', () => {
-  test('toolbar buttons render in order Edit · Export · Undo · Redo, each with an inline SVG icon and a label', async ({ page }) => {
+  test('toolbar buttons render in order Edit · Overview · Export · Undo · Redo, each with an inline SVG icon and a label', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
 
     const buttons = await page.evaluate(() => {
@@ -19,12 +21,13 @@ test.describe('v2.0 — toolbar refresh', () => {
       }));
     });
 
-    expect(buttons.map((b) => b.action)).toEqual(['edit', 'export', 'undo', 'redo']);
+    expect(buttons.map((b) => b.action)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
     for (const b of buttons) expect(b.hasIcon).toBe(true);
     expect(buttons[0].text).toBe('Edit');
-    expect(buttons[1].text).toBe('Export');
-    expect(buttons[2].text).toBe('Undo');
-    expect(buttons[3].text).toBe('Redo');
+    expect(buttons[1].text).toBe('Overview');
+    expect(buttons[2].text).toBe('Export');
+    expect(buttons[3].text).toBe('Undo');
+    expect(buttons[4].text).toBe('Redo');
   });
 
   test('toolbar liquid-glass recipe matches BRIEF-v2-inspector.md (light variant)', async ({ page }) => {
@@ -117,7 +120,7 @@ test.describe('v2.0 — toolbar refresh', () => {
     });
 
     expect(visibilityOn.every((b) => b.display !== 'none')).toBe(true);
-    expect(visibilityOn.map((b) => b.action)).toEqual(['edit', 'export', 'undo', 'redo']);
+    expect(visibilityOn.map((b) => b.action)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
   });
 
   test('icons are single-stroke (fill: none, stroke: currentColor) and 18px in the stacked layout', async ({ page }) => {
@@ -135,7 +138,7 @@ test.describe('v2.0 — toolbar refresh', () => {
       });
     });
 
-    expect(iconStats).toHaveLength(4);
+    expect(iconStats).toHaveLength(5);
     for (const s of iconStats) {
       expect(s.width).toBe('18px');
       expect(s.height).toBe('18px');
