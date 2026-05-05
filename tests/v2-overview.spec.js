@@ -883,6 +883,180 @@ test.describe('v2.1.4 — Delete slide', () => {
   });
 });
 
+// v2.1.5 — Export round-trip. Strict TDD.
+// Reorders + deletes persist in exported HTML. Overview UI is stripped
+// from the export (no data-wfp-edit-overview attribute, no editor root,
+// no overview CSS classes leaked onto slides). The exported HTML opens
+// in normal slide view (overview mode is editor-only — not preserved
+// by the v1 export contract).
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirnameV215 = path.dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR_V215 = path.join(__dirnameV215, 'output');
+
+async function triggerExport(page) {
+  const downloadPromise = page.waitForEvent('download', { timeout: 8_000 });
+  await page.keyboard.press('ControlOrMeta+s');
+  return downloadPromise;
+}
+
+async function readExportedHtml(download) {
+  fs.mkdirSync(OUTPUT_DIR_V215, { recursive: true });
+  const out = path.join(OUTPUT_DIR_V215, download.suggestedFilename());
+  await download.saveAs(out);
+  return fs.readFileSync(out, 'utf-8');
+}
+
+function extractSlideIdsFromHtml(html) {
+  // Pull slide ids in document order from the exported HTML. The
+  // fixtures use id="s0" through "s8" on each .slide.
+  const ids = [];
+  const re = /<div\s+class="slide(?:\s+active)?"\s+id="(s\d+)"/g;
+  let m;
+  while ((m = re.exec(html)) !== null) ids.push(m[1]);
+  return ids;
+}
+
+test.describe('v2.1.5 — Export round-trip', () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  test('reorder persists in the exported HTML (slides appear in the new order)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    // Move s4 to position 0.
+    await simulateDragDrop(page, 4, 0, 'before');
+    const liveOrder = await getSlideOrder(page);
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    const exportedOrder = extractSlideIdsFromHtml(html);
+    expect(exportedOrder).toEqual(liveOrder);
+    // Sanity: s4 is now at position 0 in the exported file.
+    expect(exportedOrder[0]).toBe('s4');
+  });
+
+  test('delete persists in the exported HTML (deleted slide is gone)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await deleteThumbViaButton(page, 2);
+    const liveOrder = await getSlideOrder(page);
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    const exportedOrder = extractSlideIdsFromHtml(html);
+    expect(exportedOrder).toEqual(liveOrder);
+    expect(exportedOrder).not.toContain('s2');
+    expect(exportedOrder.length).toBe(liveOrder.length);
+  });
+
+  test('exported HTML carries no overview chrome (no body data-wfp-edit-overview, no editor root, no wfpe-* classes on slides)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    // Body marker stripped.
+    expect(html).not.toMatch(/<body[^>]*data-wfp-edit-overview/);
+    expect(html).not.toMatch(/data-wfp-edit-overview/);
+    // No editor root.
+    expect(html).not.toContain('id="wfp-editor-root"');
+    // No overview overlay markers.
+    expect(html).not.toContain('wfpe-overview-thumb');
+    expect(html).not.toContain('wfpe-overview-overlay');
+    expect(html).not.toContain('wfpe-overview-delete');
+    expect(html).not.toContain('wfpe-overview-badge');
+    expect(html).not.toContain('wfpe-overview-drop-indicator');
+    // No data-wfp-edit-* anywhere.
+    expect(html).not.toMatch(/data-wfp-edit/);
+  });
+
+  test('exported HTML preserves the original .deck rendering (no overview override leaks)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    // The fixture's own .deck { transform-origin: top left; } is
+    // declared in the fixture CSS — should still be there. Our
+    // overview override `transform: none !important` lived in the
+    // editor's style tag, which is removed with the editor root.
+    expect(html).toMatch(/transform-origin\s*:\s*top\s+left/);
+    // Slides themselves never received the overview transform — but
+    // be defensive: there shouldn't be a runaway "scale(0.22)" inline
+    // style on any slide in the export.
+    expect(html).not.toMatch(/<div[^>]*class="slide[^"]*"[^>]*style="[^"]*scale\(0\.22\)/);
+  });
+
+  test('export-while-overview produces the same slide-id order as export-after-exit-overview', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    // Reorder + delete to make a non-trivial diff. Use idx 2 for the
+    // delete — idx 3 (top-row col 4) sits under the toolbar at 1920px.
+    await simulateDragDrop(page, 4, 0, 'before');
+    await deleteThumbViaButton(page, 2);
+
+    const inOverviewDownload = await triggerExport(page);
+    const inOverviewHtml = await readExportedHtml(inOverviewDownload);
+    const inOverviewIds = extractSlideIdsFromHtml(inOverviewHtml);
+
+    // Exit overview, export again. Edit mode hasn't been turned on
+    // (export Cmd+S works in overview per v2.1.3 gate widening).
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+    // Toggle edit mode on so Cmd+S export still fires (post-overview gate).
+    await page.keyboard.press('e');
+
+    const outOverviewDownload = await triggerExport(page);
+    const outOverviewHtml = await readExportedHtml(outOverviewDownload);
+    const outOverviewIds = extractSlideIdsFromHtml(outOverviewHtml);
+
+    expect(inOverviewIds).toEqual(outOverviewIds);
+  });
+
+  test('undoing a delete then exporting includes the restored slide in the right position', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const original = await getSlideOrder(page);
+    await deleteThumbViaButton(page, 2);
+    await page.keyboard.press('Meta+z'); // undo the delete
+
+    const liveOrder = await getSlideOrder(page);
+    expect(liveOrder).toEqual(original);
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+    const exportedOrder = extractSlideIdsFromHtml(html);
+    expect(exportedOrder).toEqual(original);
+  });
+});
+
 test.describe('v2.1.1 — Overview grid layout (no-editor baseline)', () => {
   test('without the editor loaded, the fixture renders identically to baseline', async ({ page }) => {
     // Load the fixture WITHOUT injecting editor.js. Confirm the deck
