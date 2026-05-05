@@ -188,7 +188,7 @@ Paste the block below into the worktree builder session. Self-contained — no f
 > **Branch:** create a worktree off `main` on a new branch `feat/v2-inspector`. Do not push.
 >
 > **Read first, in order:**
-> 1. `BRIEF-v2-inspector.md` end-to-end. This is the spec.
+> 1. `feature-briefs/v2-inspector.md` end-to-end. This is the spec.
 > 2. `references/v2-inspector-design.png`. UI authoritative; presentation content is placeholder only — do not reproduce any of the demo slide's copy, layout, photo, or labels in code, tests, comments, or commit messages.
 > 3. `CLAUDE.md`, `REQUIREMENTS.md`, `DESIGN.md`, `TESTING.md`, `ROADMAP.md`, and the current `editor.js`.
 >

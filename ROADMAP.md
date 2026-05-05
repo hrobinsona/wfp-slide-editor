@@ -5,7 +5,7 @@ Things deliberately deferred from v1. If you're tempted to build any of these du
 ## v2 candidates
 
 <!-- Delivered: v2.1.0 — Overview mode (grid view, drag-to-reorder, delete).
-     See BRIEF-v2-overview.md for the spec and `git log --grep="v2.1"` for
+     See feature-briefs/v2-overview.md for the spec and `git log --grep="v2.1"` for
      the implementation phases. -->
 
 ### Persistence (autosave)

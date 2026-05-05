@@ -10,9 +10,9 @@ Overview is the **lead v2 feature** per `ROADMAP.md`. The roadmap entry is the s
 
 1. `ROADMAP.md` → `## v2 candidates` → `### v2 LEAD FEATURE: Overview mode`. **This is the canonical scope. Read it cold.**
 2. This brief end-to-end.
-3. `CLAUDE.md`, `REQUIREMENTS.md`, `DESIGN.md`, `TESTING.md`, `BRIEF-v2-inspector.md`, the post-merge `editor.js`.
+3. `CLAUDE.md`, `REQUIREMENTS.md`, `DESIGN.md`, `TESTING.md`, `feature-briefs/v2-inspector.md`, the post-merge `editor.js`.
 
-**Visual reference:** none. No mockup exists for Overview mode. The visual language reuses the **Liquid Glass dialect** established in `BRIEF-v2-inspector.md` (toolbar variants, backdrop-filter values, border, inner highlight, shadow). When in doubt about styling, mirror inspector — don't invent a new aesthetic. If a mockup is added later, drop it at `references/v2-overview-design.png` (the folder is gitignored — same rule as the inspector reference).
+**Visual reference:** none. No mockup exists for Overview mode. The visual language reuses the **Liquid Glass dialect** established in `feature-briefs/v2-inspector.md` (toolbar variants, backdrop-filter values, border, inner highlight, shadow). When in doubt about styling, mirror inspector — don't invent a new aesthetic. If a mockup is added later, drop it at `references/v2-overview-design.png` (the folder is gitignored — same rule as the inspector reference).
 
 ## Build environment
 
@@ -43,7 +43,7 @@ The roadmap entry covers most of this. Treat the bullets below as deltas and cla
 Spec'd in `ROADMAP.md` → `### v2 LEAD FEATURE: Overview mode`. Build to that spec. Two clarifications:
 
 - **DOM strategy on activation:** the roadmap says "create grid container with thumbnails referencing the slides". Builder's choice between (a) temporarily relocating the actual `.slide` elements into a new grid container and restoring on exit, or (b) leaving slides in place and applying CSS-override-via-flag-class to render them as a grid. Either is acceptable. Whichever is chosen must (a) preserve all live styles and animations on slides, (b) leave no trace in the DOM after exit (no leftover wrappers, classes, or inline styles), and (c) survive an export round-trip cleanly.
-- **Active-slide highlight specifically:** must use the Liquid Glass values from `BRIEF-v2-inspector.md` — same `rgba` and `blur` numbers. Don't introduce a new colour token.
+- **Active-slide highlight specifically:** must use the Liquid Glass values from `feature-briefs/v2-inspector.md` — same `rgba` and `blur` numbers. Don't introduce a new colour token.
 
 ### Delete (explicit roadmap deviation — new in this scope)
 
@@ -116,8 +116,8 @@ Paste the block below into the worktree builder session. Self-contained — no f
 >
 > **Read first, in order:**
 > 1. `ROADMAP.md` → `## v2 candidates` → `### v2 LEAD FEATURE: Overview mode`. This is the canonical scope. Read it cold.
-> 2. `BRIEF-v2-overview.md` end-to-end. This is the execution spec.
-> 3. `CLAUDE.md`, `REQUIREMENTS.md`, `DESIGN.md`, `TESTING.md`, `BRIEF-v2-inspector.md`, the current `editor.js`.
+> 2. `feature-briefs/v2-overview.md` end-to-end. This is the execution spec.
+> 3. `CLAUDE.md`, `REQUIREMENTS.md`, `DESIGN.md`, `TESTING.md`, `feature-briefs/v2-inspector.md`, the current `editor.js`.
 >
 > **All open questions are already answered. Do not pause to ask.** Decisions baked in: snap (no animation); Liquid Glass active-slide highlight in the v2-inspector dialect; grid scrolls past 20 slides at 4-per-row; hand-rolled HTML5 native drag-and-drop (no Sortable.js); toolbar Overview button + hotkey `O`; branch base is post-merge `main`; delete is in scope (explicit roadmap deviation — `ROADMAP.md` already updated).
 >

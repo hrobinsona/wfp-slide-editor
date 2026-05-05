@@ -97,7 +97,7 @@
   styleEl.textContent = `
     /* ----- Liquid glass surface (toolbar; inspector reuses these tokens
        in v2.1+). Light variant by default; dark variant via prefers-
-       color-scheme. Recipe values come from BRIEF-v2-inspector.md. ----- */
+       color-scheme. Recipe values come from feature-briefs/v2-inspector.md. ----- */
     #${ROOT_ID} .wfpe-toolbar {
       position: fixed;
       top: 16px;

@@ -30,7 +30,7 @@ test.describe('v2.0 — toolbar refresh', () => {
     expect(buttons[4].text).toBe('Redo');
   });
 
-  test('toolbar liquid-glass recipe matches BRIEF-v2-inspector.md (light variant)', async ({ page }) => {
+  test('toolbar liquid-glass recipe matches feature-briefs/v2-inspector.md (light variant)', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     // Pin the variant we're asserting against. Headless Chromium defaults to
     // light, but make it explicit so the test is deterministic regardless

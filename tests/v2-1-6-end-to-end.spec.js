@@ -6,7 +6,7 @@ import { loadFixtureWithEditor, pickRandomRotationFixture, PINNED_PRIMARIES } fr
 
 // v2.1.6 — End-to-end pass for the v2.1 Overview release.
 //
-// Per BRIEF-v2-overview.md: "Run on both fixtures (Townhall-1.html and
+// Per feature-briefs/v2-overview.md: "Run on both fixtures (Townhall-1.html and
 // boilerplate.html). All v1 done criteria still pass. All v2.0 inspector
 // tests still pass. v2.1 spec passes."
 //
