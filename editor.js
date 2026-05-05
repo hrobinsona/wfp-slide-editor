@@ -78,6 +78,7 @@
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
+    deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
   };
 
   // ===========================================================================
@@ -2429,6 +2430,39 @@
       state.history.shift();
       state.historyIndex--;
     }
+    // Once any slide-level op lands, the fixture's cached slide list
+    // (built once at script load via document.querySelectorAll) is
+    // stale relative to the live deck — its arrow-nav would index into
+    // the wrong slot or land .active on an orphan. From here on, the
+    // editor owns plain-view arrow nav using fresh DOM queries.
+    state.deckMutated = true;
+  }
+
+  // Navigate the live deck by ±1, syncing the fixture's progress-dot
+  // siblings if any exist (best-effort — not all fixtures have them).
+  // Used by the deckMutated arrow-nav takeover in onKeyDown.
+  function navigateRelativeInDeck(delta) {
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    if (slides.length === 0) return;
+    const dots = document.querySelectorAll('.progress-dot');
+    let cur = slides.findIndex((s) => s.classList.contains('active'));
+    if (cur < 0) {
+      // Recovery: no in-DOM slide is .active (e.g., the fixture's
+      // stale handler set .active on an orphan before we took over).
+      // Re-anchor to the first slide so the user sees something.
+      slides[0].classList.add('active');
+      if (dots[0]) {
+        dots.forEach((d) => d.classList.remove('active'));
+        dots[0].classList.add('active');
+      }
+      return;
+    }
+    const next = cur + delta;
+    if (next < 0 || next >= slides.length) return;
+    slides[cur].classList.remove('active');
+    slides[next].classList.add('active');
+    if (dots[cur]) dots[cur].classList.remove('active');
+    if (dots[next]) dots[next].classList.add('active');
   }
 
   function dropTargetThumb(target) {
@@ -2742,6 +2776,25 @@
       e.preventDefault();
       e.stopPropagation();
       setOverviewMode(false);
+      return;
+    }
+
+    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the deck has
+    // been mutated via overview reorder/delete, the fixture's own
+    // keydown handler — which caches slides + cur at load time — is
+    // stale: forward nav lands on the wrong slide (reorder) or sets
+    // .active on an orphan node leaving the user staring at black
+    // (delete). Editor's nav uses fresh DOM queries.
+    if (
+      state.deckMutated &&
+      !state.editMode &&
+      !state.overviewMode &&
+      !e.metaKey && !e.ctrlKey && !e.altKey &&
+      (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === ' ' || e.key === 'Spacebar')
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      navigateRelativeInDeck(e.key === 'ArrowLeft' ? -1 : +1);
       return;
     }
 

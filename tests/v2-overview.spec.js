@@ -883,6 +883,104 @@ test.describe('v2.1.4 — Delete slide', () => {
   });
 });
 
+// v2.1.0 hotfix regressions — the WFP fixture's own keydown handler
+// caches `slides` (via document.querySelectorAll) and `cur` at script
+// load time. After overview reorder/delete, that cache is stale:
+// forward nav lands on the wrong slide (reorder), or sets .active on
+// an orphan node leaving every in-DOM slide display:none → black
+// screen (delete). Editor takes over arrow nav once deckMutated.
+
+test.describe('v2.1.0 hotfix — post-mutation arrow nav uses live DOM', () => {
+  test.use({ viewport: { width: 1920, height: 1080 } });
+
+  test('after a reorder + exit, ArrowRight advances to the new live-order successor (not the fixture\'s cached one)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    // Lock the deck transform so the fixture's resize handler doesn't
+    // re-set anything mid-test.
+    await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    // Move s4 to position 0. Live order becomes [s4,s0,s1,s2,s3,s5,...].
+    // s0 stays active (active follows the slide that was active, not
+    // the position).
+    await simulateDragDrop(page, 4, 0, 'before');
+    await page.keyboard.press('o'); // exit overview
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    // s0 is the active slide (per BRIEF "active follows the moved slide").
+    // s0 is at LIVE position 1. ArrowRight should advance to live position
+    // 2, which is s1.
+    await page.keyboard.press('ArrowRight');
+
+    const activeId = await page.evaluate(() => document.querySelector('.slide.active').id);
+    expect(activeId).toBe('s1');
+  });
+
+  test('after a delete + exit, ArrowRight never lands .active on an orphan (no black-screen state)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    // Delete slide 3 (s2). After: live deck = [s0,s1,s3,s4,s5,...].
+    const thumb = page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(2);
+    await thumb.scrollIntoViewIfNeeded();
+    await thumb.hover();
+    await page.keyboard.press('Backspace');
+
+    // Exit overview.
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    // Walk forward through every remaining slide. With the fixture's
+    // stale handler, the third ArrowRight would call
+    // slides[2].classList.add('active') on the orphan s2 → no in-DOM
+    // .active → black screen. Editor's takeover keeps .active in the
+    // live deck on every step.
+    const liveCount = await page.locator('.deck > .slide').count();
+    for (let i = 1; i < liveCount; i++) {
+      await page.keyboard.press('ArrowRight');
+      const state = await page.evaluate(() => {
+        const slides = [...document.querySelectorAll('.deck > .slide')];
+        const inDomActive = slides.filter((s) => s.classList.contains('active'));
+        const orphanActive = [...document.querySelectorAll('.slide.active')]
+          .filter((s) => !document.contains(s));
+        return {
+          inDomActiveCount: inDomActive.length,
+          orphanActiveCount: orphanActive.length,
+          activeId: inDomActive[0] ? inDomActive[0].id : null,
+        };
+      });
+      expect(state.inDomActiveCount).toBe(1);
+      expect(state.orphanActiveCount).toBe(0);
+      expect(state.activeId).not.toBe('s2'); // s2 was deleted; never visible again
+    }
+  });
+
+  test('with no overview mutation, the fixture\'s own arrow nav still owns ArrowRight (deckMutated stays off)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
+
+    // Enter+exit overview WITHOUT any mutation.
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    // ArrowRight should still flow to the fixture's own handler. Since
+    // s0 is active by default, the fixture should advance to s1 via
+    // its own goTo(1).
+    await page.keyboard.press('ArrowRight');
+    const activeId = await page.evaluate(() => document.querySelector('.slide.active').id);
+    expect(activeId).toBe('s1');
+  });
+});
+
 // v2.1.5 — Export round-trip. Strict TDD.
 // Reorders + deletes persist in exported HTML. Overview UI is stripped
 // from the export (no data-wfp-edit-overview attribute, no editor root,
