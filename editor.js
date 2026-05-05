@@ -2135,6 +2135,12 @@
     });
     window.addEventListener('scroll', scheduleOverviewReposition, true);
     window.addEventListener('resize', scheduleOverviewReposition);
+    // Capture-phase click listener owns thumb-click → navigate (v2.1.2).
+    // Capture so we beat the fixture's own slide click handlers if any
+    // exist. Editor-root clicks (toolbar / inspector) are exempted
+    // inside the handler so their existing bubble-phase handlers still
+    // fire.
+    document.addEventListener('click', onOverviewClick, true);
   }
 
   function exitOverview() {
@@ -2143,10 +2149,51 @@
     overviewOverlay.innerHTML = '';
     window.removeEventListener('scroll', scheduleOverviewReposition, true);
     window.removeEventListener('resize', scheduleOverviewReposition);
+    document.removeEventListener('click', onOverviewClick, true);
     if (overviewRafId) {
       cancelAnimationFrame(overviewRafId);
       overviewRafId = 0;
     }
+  }
+
+  // Walk up from the click target looking for a direct child of .deck
+  // that carries the .slide class. Returns null for clicks on editor
+  // chrome or grid gutters (which fall through without navigating).
+  function findOverviewSlideTarget(el) {
+    while (el && el !== document.body) {
+      if (
+        el.classList && el.classList.contains('slide') &&
+        el.parentElement && el.parentElement.classList.contains('deck')
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function navigateToSlide(slide) {
+    // Clear .active from any other slide in the same deck, set on the
+    // clicked one. Idempotent — clicking the already-active slide just
+    // exits overview without churning the class.
+    const deck = slide.parentElement;
+    if (!deck) return;
+    for (const sib of deck.querySelectorAll(':scope > .slide.active')) {
+      if (sib !== slide) sib.classList.remove('active');
+    }
+    if (!slide.classList.contains('active')) slide.classList.add('active');
+    setOverviewMode(false);
+  }
+
+  function onOverviewClick(e) {
+    // Editor-root clicks (toolbar Overview button, Edit, Export, etc.)
+    // are dispatched to their own listeners; don't intercept them here.
+    if (isInsideEditorRoot(e.target)) return;
+    const slide = findOverviewSlideTarget(e.target);
+    if (!slide) return;
+    e.preventDefault();
+    e.stopPropagation();
+    navigateToSlide(slide);
   }
 
   function isTypingTarget(el) {

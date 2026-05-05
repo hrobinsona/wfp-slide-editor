@@ -333,6 +333,125 @@ test.describe('v2.1.1 — Overview grid layout', () => {
     expect(trace.overlayVisible).toBe('false');
   });
 
+});
+
+// v2.1.2 — Click to navigate. Strict TDD.
+// Click a thumbnail → set that slide as .slide.active and exit overview.
+// Clicks outside any slide are no-ops. The toolbar Overview button still
+// toggles via its own handler (not via the navigate path).
+
+test.describe('v2.1.2 — Click to navigate', () => {
+  test('clicking a thumbnail makes that slide active and exits overview', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    // Slide 0 is active by default.
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    // Click slide 3 (index 2) — pick a slide that wasn't active before.
+    const targetSlide = page.locator('.deck > .slide').nth(2);
+    await targetSlide.click({ force: true });
+
+    const after = await page.evaluate(() => {
+      return {
+        bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
+        activeIds: [...document.querySelectorAll('.slide.active')].map((s) => s.id),
+        overviewBtnMode: document.querySelector('#wfp-editor-root [data-action="overview"]').dataset.mode,
+      };
+    });
+    expect(after.bodyAttr).toBe(null);
+    expect(after.activeIds).toEqual(['s2']);
+    expect(after.overviewBtnMode).toBe('off');
+  });
+
+  test('clicking the first thumbnail navigates to slide 0 from a non-zero start', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.evaluate(() => {
+      document.querySelectorAll('.slide').forEach((s, i) => s.classList.toggle('active', i === 4));
+    });
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    await page.locator('.deck > .slide').first().click({ force: true });
+
+    const activeIds = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide.active')].map((s) => s.id)
+    );
+    expect(activeIds).toEqual(['s0']);
+  });
+
+  test('clicking the last thumbnail navigates to the last slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    const slideCount = await page.locator('.deck > .slide').count();
+    await page.locator('.deck > .slide').nth(slideCount - 1).click({ force: true });
+
+    const activeIds = await page.evaluate(() =>
+      [...document.querySelectorAll('.slide.active')].map((s) => s.id)
+    );
+    expect(activeIds.length).toBe(1);
+    // s0..s8 — last is s(slideCount-1).
+    expect(activeIds[0]).toBe(`s${slideCount - 1}`);
+  });
+
+  test('exactly one slide carries .active after navigation', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    await page.locator('.deck > .slide').nth(3).click({ force: true });
+
+    const count = await page.locator('.slide.active').count();
+    expect(count).toBe(1);
+  });
+
+  test('clicking the toolbar Overview button while in overview just toggles overview off (does not navigate)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const initialActive = await page.evaluate(() =>
+      document.querySelector('.slide.active')?.id || null
+    );
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    await page.locator('#wfp-editor-root [data-action="overview"]').click();
+
+    const after = await page.evaluate(() => ({
+      bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
+      activeId: document.querySelector('.slide.active')?.id || null,
+    }));
+    expect(after.bodyAttr).toBe(null);
+    // Active slide unchanged — the toolbar click toggled overview off
+    // through its own handler, not the navigate path.
+    expect(after.activeId).toBe(initialActive);
+  });
+
+  test('clicking on the editor toolbar/inspector inside overview does not navigate or exit overview', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const initialActive = await page.evaluate(() =>
+      document.querySelector('.slide.active')?.id || null
+    );
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    // Click on the Edit button (different from Overview button). The
+    // editor-root exemption in onOverviewClick must let this click flow
+    // to the badge's own bubble handler — overview stays on, no slide
+    // navigation occurs.
+    await page.locator('#wfp-editor-root .wfpe-mode-badge').click();
+
+    const after = await page.evaluate(() => ({
+      activeId: document.querySelector('.slide.active')?.id || null,
+      bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
+    }));
+    expect(after.activeId).toBe(initialActive);
+    // Overview still on — proves onOverviewClick exempted the editor-root
+    // click rather than no-op'ing because it failed to find a slide ancestor.
+    expect(after.bodyAttr).toBe('on');
+  });
+});
+
+test.describe('v2.1.1 — Overview grid layout (no-editor baseline)', () => {
   test('without the editor loaded, the fixture renders identically to baseline', async ({ page }) => {
     // Load the fixture WITHOUT injecting editor.js. Confirm the deck
     // renders in normal stack-of-slides mode (not grid) — guard against
