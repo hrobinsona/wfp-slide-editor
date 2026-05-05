@@ -22,7 +22,8 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.1.0-v2.1.0';
+  const VERSION = '2.1.0-v2.1.1';
+  const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
@@ -708,6 +709,140 @@
         background: rgba(255, 255, 255, 0.75);
       }
     }
+    /* ----- Overview mode (v2.1.1) — bird's-eye grid of all slides.
+       Strategy: pure-CSS overrides keyed off body[data-wfp-edit-overview]
+       so the user's slide DOM is never mutated. The marker uses the
+       data-wfp-edit-* namespace so the export scrubber strips it
+       automatically (see buildExportHtml). Slide-number badges and the
+       active-slide highlight render as fixed-position overlays in
+       #wfp-editor-root, anchored to each slide's getBoundingClientRect.
+       Overlays don't scale with the slide, which is what we want — they're
+       editor chrome, not slide content. ----- */
+    body[data-wfp-edit-overview="on"] {
+      /* Fixtures set body { overflow: hidden } to lock the canvas; we need
+         the deck to scroll past 20 slides at 4-per-row. */
+      overflow: auto !important;
+    }
+    /* Hide every body-level sibling of .deck except the editor root —
+       WFP fixtures commonly mount slide-progress dots, navigation hints,
+       etc. as body children that overlay the slide. In overview those
+       UI bits don't apply (no single "current" slide rendering); hide
+       them visually without removing them from the DOM so export still
+       round-trips them. */
+    body[data-wfp-edit-overview="on"] > *:not(.deck):not(#${ROOT_ID}) {
+      display: none !important;
+    }
+    body[data-wfp-edit-overview="on"] .deck {
+      /* Override the fixture's fixed 1920x1080 + scale() canvas. The grid
+         flows top-down at fixed 4-per-row, ~0.22 scale (BRIEF). At narrow
+         viewports (<~1830px) the grid is wider than the viewport — body
+         scroll handles both axes.
+         !important is needed because the fixture's resize handler writes
+         an inline transform every viewport change. */
+      display: grid !important;
+      grid-template-columns: repeat(4, calc(1920px * ${OVERVIEW_SCALE})) !important;
+      gap: 28px;
+      padding: 28px;
+      /* width: max-content so the grid's natural width reaches its content
+         size (~1830px); body overflow:auto then provides horizontal
+         scroll on narrow viewports. justify-content:start keeps slide 1
+         at the left edge so the user lands on it without scrolling. */
+      width: max-content !important;
+      height: auto !important;
+      min-height: 100vh;
+      transform: none !important;
+      position: static !important;
+      justify-content: start;
+      align-content: start;
+      background: #1a1d23;
+      box-sizing: border-box;
+    }
+    body[data-wfp-edit-overview="on"] .slide {
+      /* All slides become visible grid cells. The transform shrinks the
+         visual to ~422x238 while the slide's own coordinate system stays
+         1920x1080 — the negative margins reclaim the layout space the
+         transform leaves behind, so each cell occupies only the scaled
+         visual size. */
+      display: block !important;
+      position: relative !important;
+      top: auto !important;
+      left: auto !important;
+      transform: scale(${OVERVIEW_SCALE}) !important;
+      transform-origin: top left !important;
+      margin-right: calc(-1920px * (1 - ${OVERVIEW_SCALE})) !important;
+      margin-bottom: calc(-1080px * (1 - ${OVERVIEW_SCALE})) !important;
+      cursor: pointer;
+      /* Ensure overflow:hidden from the fixture stays — internal slide
+         content sticking out of the scaled cell would visually collide
+         with neighbouring thumbnails. */
+      overflow: hidden !important;
+    }
+    /* Suppress the editor's own selection ring + handles + dim bubble
+       while overview is active — they refer to slide-element selection,
+       which doesn't exist in overview. */
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-selection-ring,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-handle,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-dim-bubble,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector {
+      display: none !important;
+    }
+    /* Overlay layer — sits above the deck, below the toolbar. Each thumb
+       is a fixed-positioned chrome wrapper anchored to a slide's bounding
+       rect; pointer-events stays off in v2.1.1 (interaction lands in
+       v2.1.2 click-to-navigate and v2.1.3 drag). */
+    #${ROOT_ID} .wfpe-overview-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      z-index: 1;
+    }
+    #${ROOT_ID} .wfpe-overview-overlay[data-visible="true"] {
+      display: block;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb {
+      position: fixed;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+    /* Slide-number badge — Liquid Glass dialect, top-left chip on each
+       thumbnail. Dark-glass tint with white text reads on light slides
+       as well as dark ones. */
+    #${ROOT_ID} .wfpe-overview-badge {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      min-width: 22px;
+      padding: 3px 7px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.78);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+      color: #fff;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      text-align: center;
+    }
+    /* Active-slide highlight — Liquid Glass dialect using the inspector
+       focus stroke value (rgba(255,255,255,0.55), already used at the
+       inspector field focus state) so we don't introduce a new alpha
+       token. The inset highlight uses 0.18 (the lower mid-tone present
+       throughout the toolbar palette). The ring sits on the thumb
+       wrapper, not the slide, so it doesn't scale with the 0.22
+       transform. */
+    #${ROOT_ID} .wfpe-overview-thumb[data-active="true"]::before {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border: 2px solid rgba(255, 255, 255, 0.55);
+      border-radius: 6px;
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.18) inset,
+        0 0 28px rgba(255, 255, 255, 0.18);
+      pointer-events: none;
+    }
   `;
   root.appendChild(styleEl);
 
@@ -1084,6 +1219,16 @@
   const dimBubble = document.createElement('div');
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
+
+  // Overview overlay (v2.1.1) — chrome layer rendered above the deck while
+  // overview mode is active. Holds one .wfpe-overview-thumb per slide,
+  // each anchored to the slide's getBoundingClientRect with a number
+  // badge and (when relevant) the active-slide highlight. Empty + hidden
+  // outside overview mode.
+  const overviewOverlay = document.createElement('div');
+  overviewOverlay.className = 'wfpe-overview-overlay';
+  overviewOverlay.dataset.visible = 'false';
+  root.appendChild(overviewOverlay);
 
   const ring = document.createElement('div');
   ring.className = 'wfpe-selection-ring';
@@ -1900,18 +2045,108 @@
     if (next) {
       // Closing any open text edit before entering overview: the edited
       // element's contenteditable lifecycle assumes the slide stays in
-      // its normal layout. Future phases relocate / restyle slides for
-      // the grid; an open contenteditable across that transition would
-      // strand the caret.
+      // its normal layout. Future phases (v2.1.3 reorder, v2.1.4 delete)
+      // mutate slide DOM order; an open contenteditable across that
+      // transition would strand the caret.
       if (state.editingText) endTextEdit();
       setSelected(null);
       refreshInspector();
+      enterOverview();
+    } else {
+      exitOverview();
     }
     overviewBtn.dataset.mode = state.overviewMode ? 'on' : 'off';
-    // Forward hook for v2.1.1 — the grid CSS will key off this on the
-    // toolbar's data attribute so the editor root can style itself
-    // overview-active without a separate global flag.
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Overview enter/exit + overlay layer (v2.1.1)
+  //
+  // CSS-override strategy: the body marker `data-wfp-edit-overview="on"`
+  // gates a stylesheet block that overrides .deck/.slide rendering into a
+  // grid. No slide DOM is mutated. Exit removes the marker; the fixture
+  // CSS resumes its normal rendering with no leftover wrappers, classes,
+  // or inline styles. The marker uses the data-wfp-edit-* namespace so
+  // the export scrubber strips it as part of its existing sweep.
+  //
+  // The overlay layer renders editor chrome (slide-number badges, the
+  // active-slide highlight; v2.1.4 will add the hover × button) at
+  // viewport coordinates anchored to each slide's bounding rect. It
+  // doesn't scale with the 0.22 transform — chrome stays at full size.
+  // ---------------------------------------------------------------------------
+  let overviewRafId = 0;
+  function scheduleOverviewReposition() {
+    if (overviewRafId) return;
+    overviewRafId = requestAnimationFrame(() => {
+      overviewRafId = 0;
+      positionOverviewOverlay();
+    });
+  }
+
+  function buildOverviewOverlay() {
+    overviewOverlay.innerHTML = '';
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      const thumb = document.createElement('div');
+      thumb.className = 'wfpe-overview-thumb';
+      thumb.dataset.wfpEditSlideIndex = String(i);
+      if (slide.classList.contains('active')) thumb.dataset.active = 'true';
+      const badge = document.createElement('span');
+      badge.className = 'wfpe-overview-badge';
+      badge.textContent = String(i + 1);
+      thumb.appendChild(badge);
+      overviewOverlay.appendChild(thumb);
+    }
+    positionOverviewOverlay();
+  }
+
+  function positionOverviewOverlay() {
+    if (!state.overviewMode) return;
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const thumbs = overviewOverlay.children;
+    for (let i = 0; i < slides.length; i++) {
+      const t = thumbs[i];
+      if (!t) continue;
+      const r = slides[i].getBoundingClientRect();
+      t.style.top = `${r.top}px`;
+      t.style.left = `${r.left}px`;
+      t.style.width = `${r.width}px`;
+      t.style.height = `${r.height}px`;
+    }
+  }
+
+  function enterOverview() {
+    // The body marker lives on <body> rather than #wfp-editor-root because
+    // the CSS-override strategy needs a global selector hook above the
+    // .deck level. Using the data-wfp-edit-* namespace means the existing
+    // export scrubber (which strips any data-wfp-edit* attribute on any
+    // element) cleans it up automatically — no special-case needed.
+    document.body.dataset.wfpEditOverview = 'on';
+    // Defer overlay build until the browser has applied the new grid
+    // layout — getBoundingClientRect right now would still report the
+    // pre-grid (stacked-absolute) positions. Save the rAF id so a quick
+    // toggle-off (within one frame) can cancel the pending build before
+    // it strands a zombie overlay over the restored slide rendering.
+    overviewRafId = requestAnimationFrame(() => {
+      overviewRafId = 0;
+      buildOverviewOverlay();
+      overviewOverlay.dataset.visible = 'true';
+    });
+    window.addEventListener('scroll', scheduleOverviewReposition, true);
+    window.addEventListener('resize', scheduleOverviewReposition);
+  }
+
+  function exitOverview() {
+    document.body.removeAttribute('data-wfp-edit-overview');
+    overviewOverlay.dataset.visible = 'false';
+    overviewOverlay.innerHTML = '';
+    window.removeEventListener('scroll', scheduleOverviewReposition, true);
+    window.removeEventListener('resize', scheduleOverviewReposition);
+    if (overviewRafId) {
+      cancelAnimationFrame(overviewRafId);
+      overviewRafId = 0;
+    }
   }
 
   function isTypingTarget(el) {
@@ -2066,6 +2301,11 @@
   // Selection
   // ===========================================================================
   function onClick(e) {
+    // In overview mode, slide-element selection is suppressed — overview
+    // owns the click semantics (v2.1.2 wires click-to-navigate). Toolbar
+    // / inspector clicks still flow through their own handlers because
+    // those bubble independently.
+    if (state.overviewMode) return;
     if (!state.editMode) return;
     if (Date.now() < state.suppressClickUntil) {
       // The mouseup that ended a drag fired this synthetic click. Swallow it
@@ -2151,6 +2391,9 @@
   }
 
   function onMouseDown(e) {
+    // Overview suppresses drag/select — v2.1.3 will install its own
+    // mousedown→drag handler routed through the overlay layer.
+    if (state.overviewMode) return;
     if (!state.editMode) return;
     if (e.button !== 0) return;
 
@@ -2496,6 +2739,9 @@
   }
 
   function onDoubleClick(e) {
+    // No inline text-edit in overview — slides aren't focusable as text
+    // targets; double-click is reserved for future overview semantics.
+    if (state.overviewMode) return;
     if (!state.editMode) return;
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
