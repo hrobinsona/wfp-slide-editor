@@ -451,6 +451,210 @@ test.describe('v2.1.2 — Click to navigate', () => {
   });
 });
 
+// v2.1.3 — Drag to reorder. Strict TDD.
+// Hand-rolled HTML5 native DnD on the overlay thumbs (no slide DOM
+// mutation, no Sortable.js). On drop, the dragged slide is moved in
+// .deck via a single insertBefore. Active slide tracking is automatic
+// (the .active class moves with the DOM node). One drag = one history
+// entry. The history entry shape is extended with `slideOps` alongside
+// the existing per-element `changes` array — extension only.
+
+async function simulateDragDrop(page, sourceIdx, targetIdx, position = 'before') {
+  return page.evaluate(({ srcIdx, tgtIdx, pos }) => {
+    const thumbs = document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb');
+    const src = thumbs[srcIdx];
+    const tgt = thumbs[tgtIdx];
+    if (!src || !tgt) throw new Error(`thumbs missing src=${!!src} tgt=${!!tgt}`);
+    const tgtRect = tgt.getBoundingClientRect();
+    const x = pos === 'before' ? tgtRect.left + 4 : tgtRect.right - 4;
+    const y = tgtRect.top + tgtRect.height / 2;
+    const dt = new DataTransfer();
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    src.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }, { srcIdx: sourceIdx, tgtIdx: targetIdx, pos: position });
+}
+
+async function getSlideOrder(page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('.deck > .slide')].map((s) => s.id)
+  );
+}
+
+test.describe('v2.1.3 — Drag to reorder', () => {
+  test('overview thumbs are draggable while overview is on', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const states = await page.evaluate(() =>
+      [...document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb')]
+        .map((t) => t.draggable)
+    );
+    expect(states.length).toBeGreaterThan(0);
+    for (const d of states) expect(d).toBe(true);
+  });
+
+  test('dragging slide 3 to before slide 1 reorders the deck', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const before = await getSlideOrder(page);
+    expect(before[0]).toBe('s0');
+    expect(before[2]).toBe('s2');
+
+    // Drag thumb at index 2 (slide s2) onto thumb at index 0 (slide s0),
+    // dropping in the LEFT half so it inserts before s0.
+    await simulateDragDrop(page, 2, 0, 'before');
+
+    const after = await getSlideOrder(page);
+    // s2 moved to position 0; s0 and s1 shift right.
+    expect(after[0]).toBe('s2');
+    expect(after[1]).toBe('s0');
+    expect(after[2]).toBe('s1');
+    // Tail unchanged.
+    expect(after.slice(3)).toEqual(before.slice(3));
+  });
+
+  test('dropping in the right half of a target inserts after it', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    // Drag s0 onto right half of s3 → insert after s3 → [s1, s2, s3, s0, s4, ...]
+    await simulateDragDrop(page, 0, 3, 'after');
+
+    const after = await getSlideOrder(page);
+    expect(after.slice(0, 4)).toEqual(['s1', 's2', 's3', 's0']);
+  });
+
+  test('the active slide stays active in its new position after a drag', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    // Make slide 2 (s2) active before entering overview.
+    await page.evaluate(() => {
+      document.querySelectorAll('.slide').forEach((s, i) => s.classList.toggle('active', i === 2));
+    });
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    // Drag s2 (idx 2) to before s0 (idx 0). After: [s2 active, s0, s1, s3, ...]
+    await simulateDragDrop(page, 2, 0, 'before');
+
+    const result = await page.evaluate(() => {
+      const slides = [...document.querySelectorAll('.deck > .slide')];
+      return {
+        firstId: slides[0].id,
+        firstIsActive: slides[0].classList.contains('active'),
+        activeIds: slides.filter((s) => s.classList.contains('active')).map((s) => s.id),
+      };
+    });
+    expect(result.firstId).toBe('s2');
+    expect(result.firstIsActive).toBe(true);
+    expect(result.activeIds).toEqual(['s2']);
+  });
+
+  test('one drag = one history entry; Cmd+Z restores the original order', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const original = await getSlideOrder(page);
+    await simulateDragDrop(page, 4, 0, 'before');
+    const reordered = await getSlideOrder(page);
+    expect(reordered).not.toEqual(original);
+
+    // Cmd+Z (or Ctrl+Z) — fixture-agnostic via metaKey on Mac, ctrlKey elsewhere.
+    await page.keyboard.press('Meta+z');
+
+    const restored = await getSlideOrder(page);
+    expect(restored).toEqual(original);
+  });
+
+  test('Cmd+Shift+Z re-applies the reorder', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const original = await getSlideOrder(page);
+    await simulateDragDrop(page, 4, 0, 'before');
+    const afterDrag = await getSlideOrder(page);
+
+    await page.keyboard.press('Meta+z'); // undo
+    expect(await getSlideOrder(page)).toEqual(original);
+
+    await page.keyboard.press('Meta+Shift+z'); // redo
+    expect(await getSlideOrder(page)).toEqual(afterDrag);
+  });
+
+  test('dropping a slide on itself is a no-op (no DOM change, no history entry)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const before = await getSlideOrder(page);
+    await simulateDragDrop(page, 3, 3, 'before');
+    const after = await getSlideOrder(page);
+    expect(after).toEqual(before);
+
+    // Cmd+Z should be a no-op (no entry to undo). Order should still be `before`.
+    await page.keyboard.press('Meta+z');
+    expect(await getSlideOrder(page)).toEqual(before);
+  });
+
+  test('overview stays on after a reorder (drag does not exit overview)', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    await simulateDragDrop(page, 2, 0, 'before');
+
+    const stillOn = await page.evaluate(() => document.body.dataset.wfpEditOverview === 'on');
+    expect(stillOn).toBe(true);
+  });
+
+  test('overlay rebuilds after a reorder so badge numbers reflect the new positions', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await simulateDragDrop(page, 4, 0, 'before');
+    // Wait for the rebuild rAF (or synchronous rebuild) to settle.
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const labelOrder = await page.evaluate(() => {
+      // Map each thumb's badge label (1-based) back to the slide id at
+      // that position — they should be 1..N matching the new DOM order.
+      return [...document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb')]
+        .map((t) => ({
+          label: t.querySelector('.wfpe-overview-badge').textContent,
+          idx: t.dataset.wfpEditSlideIndex,
+        }));
+    });
+    // Numbers must increment 1..N regardless of which slide is in which slot.
+    expect(labelOrder.map((x) => x.label)).toEqual(labelOrder.map((_, i) => String(i + 1)));
+    expect(labelOrder.map((x) => x.idx)).toEqual(labelOrder.map((_, i) => String(i)));
+  });
+});
+
 test.describe('v2.1.1 — Overview grid layout (no-editor baseline)', () => {
   test('without the editor loaded, the fixture renders identically to baseline', async ({ page }) => {
     // Load the fixture WITHOUT injecting editor.js. Confirm the deck

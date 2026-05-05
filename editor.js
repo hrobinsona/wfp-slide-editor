@@ -76,6 +76,7 @@
     txn: null, // { snapshots: Map<Element, BeforeSnap> } when an op is in progress
     inspectorMinimised: false, // persists across selections within session; resets on reload
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
+    overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
   };
 
   // ===========================================================================
@@ -788,8 +789,10 @@
     }
     /* Overlay layer — sits above the deck, below the toolbar. Each thumb
        is a fixed-positioned chrome wrapper anchored to a slide's bounding
-       rect; pointer-events stays off in v2.1.1 (interaction lands in
-       v2.1.2 click-to-navigate and v2.1.3 drag). */
+       rect. Thumbs become draggable in v2.1.3, so they need pointer-events
+       to receive drag/click events. The click handler in onOverviewClick
+       walks up to the thumb (or down to its slide via the index dataset)
+       to route both navigation and drag through the same surface. */
     #${ROOT_ID} .wfpe-overview-overlay {
       position: fixed;
       inset: 0;
@@ -802,8 +805,31 @@
     }
     #${ROOT_ID} .wfpe-overview-thumb {
       position: fixed;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: grab;
       box-sizing: border-box;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb[data-dragging="true"] {
+      opacity: 0.4;
+      cursor: grabbing;
+    }
+    /* Drop indicator — thin vertical bar drawn between the target thumb
+       and its neighbour to mark the snap insertion point during drag.
+       Pure white at 0.55 (the inspector focus stroke alpha already
+       reused for the active-slide ring) with a soft glow so it reads
+       against either light or dark slide thumbnails. */
+    #${ROOT_ID} .wfpe-overview-drop-indicator {
+      position: fixed;
+      pointer-events: none;
+      width: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.55);
+      display: none;
+      z-index: 4;
+    }
+    #${ROOT_ID} .wfpe-overview-drop-indicator[data-visible="true"] {
+      display: block;
     }
     /* Slide-number badge — Liquid Glass dialect, top-left chip on each
        thumbnail. Dark-glass tint with white text reads on light slides
@@ -1229,6 +1255,13 @@
   overviewOverlay.className = 'wfpe-overview-overlay';
   overviewOverlay.dataset.visible = 'false';
   root.appendChild(overviewOverlay);
+
+  // Drop indicator (v2.1.3) — thin vertical bar shown between thumbs
+  // during drag, marking where the dragged slide will land on drop.
+  const overviewDropIndicator = document.createElement('div');
+  overviewDropIndicator.className = 'wfpe-overview-drop-indicator';
+  overviewDropIndicator.dataset.visible = 'false';
+  root.appendChild(overviewDropIndicator);
 
   const ring = document.createElement('div');
   ring.className = 'wfpe-selection-ring';
@@ -1989,20 +2022,47 @@
     }
   }
 
+  // Slide-level history op handlers (v2.1.3 reorder; v2.1.4 will add
+  // a 'delete' type). These run alongside the per-element `changes`
+  // array — they EXTEND the entry shape rather than replacing it.
+  function undoSlideOp(op) {
+    if (op.type === 'reorder') {
+      applySlideOrder(op.deck, op.beforeOrder);
+    }
+  }
+  function redoSlideOp(op) {
+    if (op.type === 'reorder') {
+      applySlideOrder(op.deck, op.afterOrder);
+    }
+  }
+
   function undo() {
     if (state.historyIndex <= 0) return;
     state.historyIndex--;
     const entry = state.history[state.historyIndex];
-    for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
+    // Slide-level ops in reverse order first, then per-element snapshots.
+    if (entry.slideOps) {
+      for (let i = entry.slideOps.length - 1; i >= 0; i--) undoSlideOp(entry.slideOps[i]);
+    }
+    if (entry.changes) {
+      for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
+    }
     refreshSelection();
+    if (state.overviewMode) buildOverviewOverlay();
   }
 
   function redo() {
     if (state.historyIndex >= state.history.length) return;
     const entry = state.history[state.historyIndex];
-    for (const c of entry.changes) applyElementSnapshot(c.element, c.after);
+    if (entry.changes) {
+      for (const c of entry.changes) applyElementSnapshot(c.element, c.after);
+    }
+    if (entry.slideOps) {
+      for (const op of entry.slideOps) redoSlideOp(op);
+    }
     state.historyIndex++;
     refreshSelection();
+    if (state.overviewMode) buildOverviewOverlay();
   }
 
   // ===========================================================================
@@ -2091,6 +2151,9 @@
       const thumb = document.createElement('div');
       thumb.className = 'wfpe-overview-thumb';
       thumb.dataset.wfpEditSlideIndex = String(i);
+      // Native HTML5 DnD source (v2.1.3). The thumb is editor-owned —
+      // setting draggable here keeps slide DOM untouched.
+      thumb.draggable = true;
       if (slide.classList.contains('active')) thumb.dataset.active = 'true';
       const badge = document.createElement('span');
       badge.className = 'wfpe-overview-badge';
@@ -2141,31 +2204,56 @@
     // inside the handler so their existing bubble-phase handlers still
     // fire.
     document.addEventListener('click', onOverviewClick, true);
+    // HTML5 native DnD listeners (v2.1.3). Delegated from the overlay
+    // root so we don't need to re-bind on each rebuild.
+    overviewOverlay.addEventListener('dragstart', onOverviewDragStart);
+    overviewOverlay.addEventListener('dragover', onOverviewDragOver);
+    overviewOverlay.addEventListener('dragleave', onOverviewDragLeave);
+    overviewOverlay.addEventListener('drop', onOverviewDrop);
+    overviewOverlay.addEventListener('dragend', onOverviewDragEnd);
   }
 
   function exitOverview() {
     document.body.removeAttribute('data-wfp-edit-overview');
     overviewOverlay.dataset.visible = 'false';
     overviewOverlay.innerHTML = '';
+    overviewDropIndicator.dataset.visible = 'false';
+    state.overviewDrag = null;
     window.removeEventListener('scroll', scheduleOverviewReposition, true);
     window.removeEventListener('resize', scheduleOverviewReposition);
     document.removeEventListener('click', onOverviewClick, true);
+    overviewOverlay.removeEventListener('dragstart', onOverviewDragStart);
+    overviewOverlay.removeEventListener('dragover', onOverviewDragOver);
+    overviewOverlay.removeEventListener('dragleave', onOverviewDragLeave);
+    overviewOverlay.removeEventListener('drop', onOverviewDrop);
+    overviewOverlay.removeEventListener('dragend', onOverviewDragEnd);
     if (overviewRafId) {
       cancelAnimationFrame(overviewRafId);
       overviewRafId = 0;
     }
   }
 
-  // Walk up from the click target looking for a direct child of .deck
-  // that carries the .slide class. Returns null for clicks on editor
-  // chrome or grid gutters (which fall through without navigating).
+  // Walk up from the click target. Two valid hit types since v2.1.3:
+  //   - Click landed on an overlay thumb → look up the slide via the
+  //     thumb's wfpEditSlideIndex dataset (thumbs sit above slides with
+  //     pointer-events:auto so they receive clicks before the slide).
+  //   - Click landed on a slide directly (e.g. fallback if a thumb
+  //     hasn't been positioned yet) → walk up to the .deck child slide.
+  // Returns null for clicks on editor chrome or grid gutters.
   function findOverviewSlideTarget(el) {
     while (el && el !== document.body) {
-      if (
-        el.classList && el.classList.contains('slide') &&
-        el.parentElement && el.parentElement.classList.contains('deck')
-      ) {
-        return el;
+      if (el.classList) {
+        if (el.classList.contains('wfpe-overview-thumb')) {
+          const idx = Number(el.dataset.wfpEditSlideIndex);
+          const slides = document.querySelectorAll('.deck > .slide');
+          return slides[idx] || null;
+        }
+        if (
+          el.classList.contains('slide') &&
+          el.parentElement && el.parentElement.classList.contains('deck')
+        ) {
+          return el;
+        }
       }
       el = el.parentElement;
     }
@@ -2186,14 +2274,188 @@
   }
 
   function onOverviewClick(e) {
-    // Editor-root clicks (toolbar Overview button, Edit, Export, etc.)
-    // are dispatched to their own listeners; don't intercept them here.
-    if (isInsideEditorRoot(e.target)) return;
+    // Editor-root clicks normally flow to their own bubble handlers
+    // (toolbar Edit / Export / etc.), but the overview thumbs ALSO live
+    // under #wfp-editor-root in v2.1.3 — they need to navigate. Filter
+    // by walking up: a thumb hit is fine; any other editor-root hit
+    // (toolbar / inspector) is exempted.
+    if (isInsideEditorRoot(e.target) && !e.target.closest('.wfpe-overview-thumb')) {
+      return;
+    }
     const slide = findOverviewSlideTarget(e.target);
     if (!slide) return;
     e.preventDefault();
     e.stopPropagation();
     navigateToSlide(slide);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Drag to reorder (v2.1.3)
+  //
+  // Hand-rolled HTML5 native DnD on the overlay thumbs (per BRIEF — no
+  // Sortable.js, no other library). DOM mutation only on `drop`: a
+  // single .deck.insertBefore(sourceSlide, refNode) call. Active-slide
+  // tracking is automatic since the .active class moves with the node.
+  //
+  // History contract: one drag = one history entry, undoable via the
+  // existing v1 stack which has been EXTENDED (not refactored) with a
+  // `slideOps` array on each entry. slideOps run alongside the existing
+  // per-element `changes` array; reorder ops capture beforeOrder /
+  // afterOrder (arrays of slide node references), and undo/redo
+  // re-arrange the deck's children to match.
+  // ---------------------------------------------------------------------------
+  function ordersEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function applySlideOrder(deck, order) {
+    // Re-attach each slide in the desired sequence. appendChild on an
+    // already-attached node moves it to the end of the parent — so
+    // appending in order produces the sequence in order.
+    for (const slide of order) {
+      if (slide && slide.parentElement === deck) deck.appendChild(slide);
+    }
+  }
+
+  function pushSlideOpEntry(slideOp) {
+    state.history.length = state.historyIndex;
+    state.history.push({ changes: [], slideOps: [slideOp] });
+    state.historyIndex = state.history.length;
+    while (state.history.length > HISTORY_MAX) {
+      state.history.shift();
+      state.historyIndex--;
+    }
+  }
+
+  function dropTargetThumb(target) {
+    while (target && target !== overviewOverlay) {
+      if (target.classList && target.classList.contains('wfpe-overview-thumb')) return target;
+      target = target.parentElement;
+    }
+    return null;
+  }
+
+  function hideDropIndicator() {
+    overviewDropIndicator.dataset.visible = 'false';
+  }
+
+  function positionDropIndicator(thumbRect, insertBefore) {
+    overviewDropIndicator.dataset.visible = 'true';
+    // Park the bar on the chosen edge, slightly outside the thumb so it
+    // reads as a gutter mark rather than a side stripe on the thumb.
+    const x = insertBefore ? thumbRect.left - 4 : thumbRect.right + 1;
+    overviewDropIndicator.style.left = `${x}px`;
+    overviewDropIndicator.style.top = `${thumbRect.top - 4}px`;
+    overviewDropIndicator.style.height = `${thumbRect.height + 8}px`;
+  }
+
+  function onOverviewDragStart(e) {
+    const thumb = dropTargetThumb(e.target);
+    if (!thumb) return;
+    const idx = Number(thumb.dataset.wfpEditSlideIndex);
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const sourceSlide = slides[idx];
+    if (!sourceSlide) return;
+    state.overviewDrag = {
+      sourceSlide,
+      sourceIndex: idx,
+      beforeOrder: slides.slice(),
+    };
+    thumb.dataset.dragging = 'true';
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some browsers (Firefox especially) refuse to start a drag unless
+      // some payload is set on the dataTransfer — the value itself is
+      // unused since we read state.overviewDrag instead.
+      try { e.dataTransfer.setData('text/plain', String(idx)); } catch (_) { /* ignore */ }
+    }
+  }
+
+  function onOverviewDragOver(e) {
+    if (!state.overviewDrag) return;
+    e.preventDefault(); // required to allow drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const thumb = dropTargetThumb(e.target);
+    if (!thumb) {
+      hideDropIndicator();
+      return;
+    }
+    const tIdx = Number(thumb.dataset.wfpEditSlideIndex);
+    if (tIdx === state.overviewDrag.sourceIndex) {
+      hideDropIndicator();
+      return;
+    }
+    const tRect = thumb.getBoundingClientRect();
+    const insertBefore = e.clientX < tRect.left + tRect.width / 2;
+    positionDropIndicator(tRect, insertBefore);
+  }
+
+  function onOverviewDragLeave(e) {
+    // When the cursor leaves the overlay entirely, hide the indicator.
+    // dragleave on individual thumbs fires constantly during a drag,
+    // so only act on overlay-level leaves.
+    if (e.target === overviewOverlay) hideDropIndicator();
+  }
+
+  function onOverviewDrop(e) {
+    if (!state.overviewDrag) return;
+    e.preventDefault();
+    const drag = state.overviewDrag;
+    const thumb = dropTargetThumb(e.target);
+    hideDropIndicator();
+    if (!thumb) {
+      cleanupDrag();
+      return;
+    }
+    const tIdx = Number(thumb.dataset.wfpEditSlideIndex);
+    if (tIdx === drag.sourceIndex) {
+      cleanupDrag();
+      return;
+    }
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const targetSlide = slides[tIdx];
+    if (!targetSlide) {
+      cleanupDrag();
+      return;
+    }
+    const tRect = thumb.getBoundingClientRect();
+    const insertBefore = e.clientX < tRect.left + tRect.width / 2;
+    const deck = drag.sourceSlide.parentElement;
+    if (!deck) {
+      cleanupDrag();
+      return;
+    }
+    const refNode = insertBefore ? targetSlide : targetSlide.nextSibling;
+    deck.insertBefore(drag.sourceSlide, refNode);
+    const afterOrder = [...document.querySelectorAll('.deck > .slide')];
+    if (!ordersEqual(drag.beforeOrder, afterOrder)) {
+      pushSlideOpEntry({
+        type: 'reorder',
+        deck,
+        beforeOrder: drag.beforeOrder,
+        afterOrder,
+      });
+    }
+    cleanupDrag();
+    // Rebuild the overlay so badges, draggables, and active-data flags
+    // reflect the new order. positionOverviewOverlay is called inside.
+    buildOverviewOverlay();
+  }
+
+  function onOverviewDragEnd(_e) {
+    // Fires whether or not the drop succeeded. cleanupDrag is idempotent.
+    cleanupDrag();
+    hideDropIndicator();
+  }
+
+  function cleanupDrag() {
+    if (!state.overviewDrag) return;
+    for (const t of overviewOverlay.children) {
+      if (t.dataset && 'dragging' in t.dataset) delete t.dataset.dragging;
+    }
+    state.overviewDrag = null;
   }
 
   function isTypingTarget(el) {
@@ -2289,7 +2551,11 @@
       return;
     }
 
-    if (!state.editMode) return;
+    // Editor key handling fires when EITHER edit mode or overview mode
+    // is active. Overview is its own "editor active" surface (reorder /
+    // delete / undo); requiring edit-mode-on to undo a reorder while in
+    // overview would be surprising UX.
+    if (!state.editMode && !state.overviewMode) return;
 
     // Suppress slide navigation keys while edit mode is on. The fixture's
     // own keydown handler is registered in bubble phase, so by registering
