@@ -7,7 +7,9 @@
   "scripts": {
     "test": "playwright test",
     "dev": "http-server -p 8080 -c-1 .",
-    "build:bookmarklet": "node scripts/build-bookmarklet.js"
+    "build:editor": "node scripts/build-editor.js",
+    "check:editor": "node scripts/build-editor.js --check",
+    "build:bookmarklet": "node scripts/build-editor.js --check && node scripts/build-bookmarklet.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
