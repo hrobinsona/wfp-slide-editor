@@ -9,6 +9,10 @@ const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'build-bookmarklet.js');
 const OUTPUT = path.join(ROOT, 'bookmarklet.txt');
 
+function outputFor(testInfo) {
+  return path.join(testInfo.outputDir, 'bookmarklet.txt');
+}
+
 function runBuild(env = {}, args = []) {
   return execFileSync('node', [SCRIPT, ...args], {
     cwd: ROOT,
@@ -20,9 +24,14 @@ function runBuild(env = {}, args = []) {
 }
 
 test.describe('Phase 10 — Bookmarklet generator', () => {
-  test('produces a valid javascript: bookmarklet under 1KB', () => {
-    const out = runBuild({ EDITOR_URL: 'https://example.github.io/wfp-slide-editor/editor.js' });
+  test('produces a valid javascript: bookmarklet under 1KB', ({}, testInfo) => {
+    const output = outputFor(testInfo);
+    const out = runBuild(
+      { EDITOR_URL: 'https://example.github.io/wfp-slide-editor/editor.js' },
+      ['--out', output],
+    );
     expect(out).toMatch(/^javascript:/);
+    expect(fs.readFileSync(output, 'utf-8').trim()).toBe(out);
     expect(out.length).toBeLessThan(1024);
     expect(out).toContain('document.createElement');
     expect(out).toContain('https://example.github.io/wfp-slide-editor/editor.js');
@@ -31,9 +40,11 @@ test.describe('Phase 10 — Bookmarklet generator', () => {
     expect(out).toMatch(/\(function\(\)\{[\s\S]*\}\)\(\);?$/);
   });
 
-  test('--local flag points the bookmarklet at http://localhost:8080/editor.js', () => {
-    const out = runBuild({}, ['--local']);
+  test('--local flag points the bookmarklet at http://localhost:8080/editor.js', ({}, testInfo) => {
+    const output = outputFor(testInfo);
+    const out = runBuild({}, ['--local', '--out', output]);
     expect(out).toContain('http://localhost:8080/editor.js');
+    expect(fs.readFileSync(output, 'utf-8').trim()).toBe(out);
   });
 
   test('writes the bookmarklet string to bookmarklet.txt at the project root', () => {
@@ -46,11 +57,12 @@ test.describe('Phase 10 — Bookmarklet generator', () => {
 
   test('the generated bookmarklet body, when executed in a fixture page, injects the editor', async ({
     page,
-  }) => {
+  }, testInfo) => {
     // Build with --local so the script src will resolve via the dev server
     // that the playwright config already starts.
-    runBuild({}, ['--local']);
-    const javascriptUrl = fs.readFileSync(OUTPUT, 'utf-8').trim();
+    const output = outputFor(testInfo);
+    runBuild({}, ['--local', '--out', output]);
+    const javascriptUrl = fs.readFileSync(output, 'utf-8').trim();
     expect(javascriptUrl.startsWith('javascript:')).toBe(true);
     const body = javascriptUrl.slice('javascript:'.length);
 
