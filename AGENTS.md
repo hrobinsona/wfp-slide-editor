@@ -58,7 +58,7 @@ Build-first is for visual surfaces where "correct" needs a browser pass; strict 
 
 ## Subagents
 
-Project subagents may exist in `.claude/agents/`:
+Project subagents may exist in `.codex/agents/`:
 
 - `code-reviewer` - reviews diffs with fresh context and checks project-specific gotchas.
 - `playwright-runner` - runs Playwright and returns concise pass/fail context.

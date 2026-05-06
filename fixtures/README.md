@@ -44,3 +44,5 @@ See `TESTING.md` for the full approach. In short:
 4. Asserts DOM state, export output, etc.
 
 Fixtures must always render correctly in a browser when the editor is NOT loaded. This is a baseline constraint.
+
+Current coverage uses these fixtures for the v1 editor, v2 inspector, and v2.1 Overview mode. Add a new fixture only when it represents a real layout edge case, and keep it local/gitignored unless it has been deliberately sanitized and allow-listed.

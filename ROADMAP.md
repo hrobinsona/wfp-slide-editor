@@ -1,77 +1,115 @@
 # Roadmap
 
-Things deliberately deferred from v1. If you're tempted to build any of these during v1, stop and add notes here instead.
+This file tracks work not covered by the current product contract in `REQUIREMENTS.md`.
 
-## v2 candidates
+## Delivered
 
-<!-- Delivered: v2.1.0 — Overview mode (grid view, drag-to-reorder, delete).
-     See feature-briefs/v2-overview.md for the spec and `git log --grep="v2.1"` for
-     the implementation phases. -->
+### v1 Element Editing
 
-### Persistence (autosave)
-v1 is "export or lose it." v2 should autosave to localStorage so accidentally closing the tab doesn't lose 20 minutes of tweaks. Key by URL + a slide hash.
+Bookmarklet load, edit-mode toggle, selection, drag, resize, font-size keyboard nudges, inline text edit, undo/redo, export, and bookmarklet generation.
+
+Historical build plan: `TASKS.md`.
+
+### v2.0 Inspector and Liquid-glass Refresh
+
+Inspector controls for position, size, font size, colour, opacity, reset styles, and minimised state. Toolbar visual refresh shipped with the same release.
+
+Historical feature brief: `feature-briefs/v2-inspector.md`.
+
+### v2.1 Overview Mode
+
+Slide-grid overview, click-to-navigate, drag-to-reorder, delete, last-slide guard, slide-level undo/redo, and clean export after slide mutations.
+
+Historical feature brief: `feature-briefs/v2-overview.md`.
+
+## Active Engineering Track
+
+### Maintainability Refactor
+
+The editor is now feature-rich but structurally heavy: `editor.js` is about 3.4k lines and carries element editing, inspector, history, overview, and export in one file. Before major feature expansion, fix the known correctness gaps and clarify internal boundaries.
+
+Executable brief: `REFACTOR-MAINTAINABILITY.md`.
+
+## v2.x Candidates
+
+### Persistence
+
+Autosave to localStorage so closing a tab does not lose edits. Key by URL plus a slide/deck hash. Must define restore UX and stale-source behaviour before implementation.
 
 ### Multi-select
-Shift-click to add to selection. Drag-select with marquee. Group operations (move, delete, align).
 
-### Snap-to-grid and alignment guides
-A 16px grid would be nice. Smarter: alignment guides that snap to other elements' edges, centers, and the slide's center axes. Like Figma's smart guides.
+Shift-click to add to selection, marquee selection, and group movement. This likely needs a clearer selection model first.
 
-### Properties panel
-Selected element shows a small inspector: position, size, font-size, font-weight, color, padding. Editable directly.
+### Snap-to-grid and Alignment Guides
 
-### Color picker
-Click a color swatch in the inspector to recolor text or backgrounds.
+A 16px grid would be useful. Smarter guides could snap to element edges, centers, and slide axes.
 
-### Aspect-ratio lock on resize
-Hold Shift while resizing to preserve aspect ratio. Useful for images.
+### Aspect-ratio Lock on Resize
 
-### Adding new elements
-A small "Add" menu: text, image, divider, shape. Inserts at cursor or center of slide.
+Hold Shift while resizing to preserve aspect ratio. Most useful for images and logo-like elements.
 
-### Deleting elements
-Delete key removes selected element. Cmd+Z restores it.
+### Element Delete in Edit Mode
 
-### Z-order control
-Cmd+] to bring forward, Cmd+[ to send back. Layers panel for fine control.
+Delete the selected element from the active slide and make Cmd/Ctrl+Z restore it. This is separate from Overview slide deletion.
 
-### Cross-slide operations
-Copy a styled element from one slide and paste into another with all styles preserved.
+### Z-order Control
 
-## v3 candidates
+Bring forward/send backward shortcuts and possibly a compact layers view.
 
-### Asset replacement
-Click an `<img>`, choose a new file, the editor uploads it (where?) and updates the src. Or: paste an image URL.
+### Cross-slide Copy/Paste
 
-### Animation editing
-Adjust `animation-delay` values inline. Preview the animation in place.
+Copy a styled element from one slide to another while preserving necessary inline styles and assets.
 
-### Theme variable overrides
-WFP slides use CSS variables (`--coral`, `--peach`). Edit them at the slide level and see all dependent elements update.
+### Add New Elements
 
-### Component-aware editing
-Recognize WFP-specific patterns (e.g. `.wfp-badge`, `.philips`) and offer pattern-specific options.
+Insert text, image, divider, or simple shape elements. This moves the editor closer to authoring, so scope carefully.
 
-## Architectural changes deferred
+## v3 Candidates
 
-### Surgical export (Approach B from REQUIREMENTS.md)
-v1 serializes the live DOM. v2 might fetch the original source text on load and apply selector-based patches, preserving formatting exactly.
+### Asset Replacement
 
-### Editor versioning
-v1 ships a single `editor.js`. When v2 lands, freeze v1 as `editor-v1.js` and let users pin to a specific version. New `editor.js` becomes v2. The bookmarklet generator supports a `?version=v1` query param.
+Replace an image source through a file picker or URL. Needs a decision on embedded assets vs external references.
 
-### Splitting `editor.js`
-If the file exceeds ~1500 lines, split into `editor.js` (loader + core) plus modules loaded via dynamic import. Keep the bookmarklet single-script for simplicity.
+### Animation Editing
 
-### Browser extension (alternative distribution)
-Some users prefer an extension over a bookmarklet. Consider once v1 is stable. The same `editor.js` can be the content script.
+Adjust animation delays and preview animations in place.
 
-## Won't build (probably)
+### Theme Variable Overrides
 
-These have been considered and rejected for now:
+Expose CSS custom properties at deck or slide level. Needs guardrails so edits do not unintentionally recolour the whole deck.
 
-- **Mobile/touch support.** Slides are desktop-first by design.
-- **Real-time collaboration.** Out of scope for a personal tool.
-- **Cloud sync of edits.** Same.
-- **WYSIWYG slide creation from scratch.** The editor is for tweaking, not authoring. Authoring stays with Claude.
-- **Plugin system.** Premature.
+### Component-aware Editing
+
+Recognize common WFP slide components and offer pattern-specific controls.
+
+## Architectural Candidates
+
+### Source Split With Stable Deployment
+
+Split implementation source into smaller files only if the deployment path stays obvious. Options include:
+
+- Keep a single deployed `editor.js` generated by an explicit build command.
+- Load multiple plain scripts from the bookmarklet in a documented order.
+- Keep one file but enforce stronger internal module boundaries.
+
+The maintainability refactor should decide whether physical splitting is worth it after the correctness fixes land.
+
+### Surgical Export
+
+Instead of serializing the live DOM, fetch original source text and apply recorded patches. This preserves whitespace/comments better but increases complexity.
+
+### Pinned Editor Versions
+
+Freeze a stable runtime file such as `editor-v2.1.js` when a future change risks breaking older workflows.
+
+### Browser Extension Distribution
+
+Consider only if bookmarklet installation becomes a real adoption blocker.
+
+## Won't Build For Now
+
+- Mobile/touch editing.
+- Real-time collaboration.
+- Cloud sync of edits.
+- Full WYSIWYG slide authoring from scratch.
+- Plugin system.

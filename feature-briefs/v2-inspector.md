@@ -1,5 +1,7 @@
 # v2 Brief — Inspector Panel + Liquid-Glass Refresh
 
+> Status: Delivered. This is a historical execution brief, not the active backlog. The current product contract is `REQUIREMENTS.md`; active maintainability work is in `REFACTOR-MAINTAINABILITY.md`.
+
 ## Context
 
 v1 of the WFP Slide Editor is shipped (phases 0–9 complete; phase 10 bookmarklet is the only v1 work outstanding). All current behavior — selection, drag, resize, font-size keyboard nudge, inline text edit, undo/redo, export — works and is locked behind Playwright tests.

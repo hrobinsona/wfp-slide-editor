@@ -1,5 +1,7 @@
 # Tasks: v1 Build Plan
 
+> Status: Historical. This was the original v1 implementation plan. The current product contract is `REQUIREMENTS.md`; delivered v2 work is archived in `feature-briefs/`; active maintainability work is in `REFACTOR-MAINTAINABILITY.md`. Do not treat this file as the current backlog unless the user explicitly asks to revisit v1 history.
+
 This is the build order. Each task is independently testable. Don't move on until the verification step passes AND the `code-reviewer` subagent approves.
 
 If you finish a task and discover that REQUIREMENTS.md is missing something, update REQUIREMENTS.md, then continue.

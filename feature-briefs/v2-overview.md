@@ -1,5 +1,7 @@
 # v2 Brief — Overview Mode (grid view, reorder, delete)
 
+> Status: Delivered. This is a historical execution brief, not the active backlog. The current product contract is `REQUIREMENTS.md`; active maintainability work is in `REFACTOR-MAINTAINABILITY.md`.
+
 ## Context
 
 `feat/v2-inspector` ships v2.0.0 (inspector panel + liquid-glass refresh). This brief covers the next minor release on top of it: **Overview mode**, the bird's-eye grid view of all slides with drag-to-reorder and delete. Tagged `v2.1.0` at completion.

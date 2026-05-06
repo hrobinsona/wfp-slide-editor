@@ -4,46 +4,53 @@
 
 | Choice | Why |
 |---|---|
-| Vanilla JavaScript (ES2022) | Zero dependencies, no build step, fits in a single file. The editor runs inside any HTML page; minimal surface = minimal conflict. |
-| Plain CSS (scoped via `#wfp-editor-root`) | Same logic. No CSS-in-JS, no preprocessor. Scoped via parent ID selector. |
-| No framework (no React, no Vue, no Svelte) | Editor UI is small (toolbar, ring, handles, toast). Frameworks add weight and risk conflict with whatever the host page might be running. |
+| Vanilla JavaScript (ES2022) | Keeps the editor dependency-free inside arbitrary slide pages. |
+| Plain CSS scoped through `#wfp-editor-root` and explicit editor state attributes | Avoids leaking editor styling into slide content and keeps export cleanup tractable. |
+| No framework | The editor must load as an injected script without React/Vue/Svelte runtime assumptions or host-page conflicts. |
+| Single deployed `editor.js` | Keeps GitHub Pages hosting and bookmarklet loading simple. The file is now large enough that internal refactoring is needed. |
 
 ## Hosting
 
 | Choice | Why |
 |---|---|
-| GitHub Pages | Free, stable URL, version-controlled, no separate account. Deploys on push to `main`. |
+| GitHub Pages | Free, stable URL, version-controlled, and enough for a static JavaScript file. |
 
-The hosted URL pattern: `https://[username].github.io/wfp-slide-editor/editor.js`
+Hosted URL pattern:
+
+```text
+https://[username].github.io/wfp-slide-editor/editor.js
+```
 
 ## Testing
 
 | Choice | Why |
 |---|---|
-| Playwright | End-to-end testing against real fixture HTMLs in a real browser. Required because much of the editor's behavior (drag, scale-aware coordinates, inline-style merging) only manifests in a browser, not in JSDOM. |
-| No unit test framework | The editor has no testable logic units that benefit from isolated unit tests. Everything meaningful happens against the DOM. Playwright covers it. |
+| Playwright | Required for browser-real drag, resize, scale, export, keyboard, and Overview behaviours. |
+| Fixture-driven E2E tests | Real slide decks expose layout and animation edge cases that synthetic DOM tests miss. |
+| No unit test framework yet | Most meaningful behaviour currently needs a browser. If refactoring extracts pure helpers, add unit coverage only where it improves signal. |
 
-## Dev tooling
+## Dev Tooling
 
 | Choice | Why |
 |---|---|
-| `http-server` (npm) | Tiny static file server for local development. Used by `npm run dev` to serve fixtures so they can be opened with the editor injected. |
-| Node 20+ | Required for Playwright. |
+| `http-server` | Tiny static server for local fixture testing and local-only bookmarklet mode. |
+| Node 20+ | Required for Playwright and project scripts. |
+| `scripts/build-bookmarklet.js` | Generates the bookmarklet string for hosted or local editor URLs. |
 
-## Deliberate exclusions
+## Deliberate Exclusions
 
-- **No TypeScript.** The editor is small enough that TS adds friction without proportional benefit. JSDoc comments cover type hints where useful.
-- **No bundler (Vite, esbuild, Rollup).** No build step means no bundler.
-- **No linter / formatter config.** Keep it minimal. Add Prettier later if the project grows.
-- **No CI.** Tests run locally before each push. Add GitHub Actions if/when the editor has multiple contributors.
+- **No runtime dependencies.** The shipped editor must stay self-contained.
+- **No framework.** A framework is not justified for injected editor chrome.
+- **No required bundler today.** The next refactor can propose source splitting, but deployment must stay explicit and low-risk.
+- **No TypeScript today.** JavaScript remains the source of truth; add JSDoc or extracted helper tests where useful.
+- **No CI today.** Tests run locally before pushing. Add CI only if private fixture constraints are solved or a sanitized fixture set is created.
+- **No fixture commits by default.** Real deck content stays local and gitignored.
 
-## Dependencies (production)
+## Dependencies
 
-None. Zero. The shipped `editor.js` has no runtime dependencies.
+Production dependencies: none.
 
-## Dependencies (dev)
-
-Just enough to run tests:
+Development dependencies:
 
 ```json
 {
@@ -54,4 +61,4 @@ Just enough to run tests:
 }
 ```
 
-If a task requires adding a runtime dependency, stop and re-read this file. Adding a dependency is a deliberate decision, not a default.
+If a task seems to need a runtime dependency, stop and document why in the relevant brief before adding it.
