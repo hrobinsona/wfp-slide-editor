@@ -73,7 +73,7 @@
     suppressClickUntil: 0,
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
-    txn: null, // { snapshots: Map<Element, BeforeSnap> } when an op is in progress
+    txn: null, // { snapshots: Map<Element, BeforeSnap>, captureHtml } when an op is in progress
     inspectorMinimised: false, // persists across selections within session; resets on reload
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
@@ -1651,15 +1651,19 @@
       // will re-show them once edit ends.
       hideRing();
       hideDimBubble();
+      stopSelectionTracking();
       return;
     }
+    if (clearDisconnectedSelection()) return;
     if (state.selected && state.selected.isConnected) {
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
+      startSelectionTracking();
     } else {
       hideRing();
       hideDimBubble();
+      stopSelectionTracking();
     }
   }
 
@@ -1683,6 +1687,47 @@
     dimBubble.style.display = 'none';
   }
 
+  let selectionRafId = 0;
+
+  function shouldTrackSelection() {
+    return (
+      state.editMode &&
+      !state.overviewMode &&
+      !state.editingText &&
+      !!state.selected &&
+      state.selected.isConnected
+    );
+  }
+
+  function stopSelectionTracking() {
+    if (!selectionRafId) return;
+    cancelAnimationFrame(selectionRafId);
+    selectionRafId = 0;
+  }
+
+  function startSelectionTracking() {
+    if (selectionRafId || !shouldTrackSelection()) return;
+    selectionRafId = requestAnimationFrame(() => {
+      selectionRafId = 0;
+      if (!shouldTrackSelection()) return;
+      refreshSelection();
+    });
+  }
+
+  function clearDisconnectedSelection() {
+    if (!state.selected || state.selected.isConnected) return false;
+    if (state.editingText && state.editingText.el === state.selected) {
+      state.editingText = null;
+    }
+    state.selected = null;
+    hideRing();
+    hideDimBubble();
+    populateInspector(null);
+    refreshInspector();
+    stopSelectionTracking();
+    return true;
+  }
+
   function setSelected(el) {
     // Close any open txn before swapping selection — defends against
     // an orphaned colour-picker txn (input fired without change) being
@@ -1694,10 +1739,12 @@
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
+      startSelectionTracking();
     } else {
       hideRing();
       hideDimBubble();
       populateInspector(null);
+      stopSelectionTracking();
     }
     // Inspector visibility is updated by the explicit call sites below
     // (onClick / onMouseUp / setEditMode / slideObserver) rather than from
@@ -1964,13 +2011,14 @@
   // a drag performs on flex/grid siblings is bundled into the same entry as
   // the drag itself.
   // ===========================================================================
-  function snapshotElement(el) {
-    return {
+  function snapshotElement(el, options = {}) {
+    const snap = {
       style: el.getAttribute('style'),
       frozen: el.getAttribute('data-wfp-edit-frozen'),
       flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
-      html: el.innerHTML,
     };
+    if (options.captureHtml) snap.html = el.innerHTML;
+    return snap;
   }
 
   function applyElementSnapshot(el, snap) {
@@ -1985,27 +2033,31 @@
     else el.setAttribute('data-wfp-edit-frozen', snap.frozen);
     if (snap.flexFrozen === null) el.removeAttribute('data-wfp-edit-flex-frozen');
     else el.setAttribute('data-wfp-edit-flex-frozen', snap.flexFrozen);
-    if (el.innerHTML !== snap.html) el.innerHTML = snap.html;
+    if (Object.prototype.hasOwnProperty.call(snap, 'html') && el.innerHTML !== snap.html) {
+      el.innerHTML = snap.html;
+    }
   }
 
   function snapshotsEqual(a, b) {
+    const aHasHtml = Object.prototype.hasOwnProperty.call(a, 'html');
+    const bHasHtml = Object.prototype.hasOwnProperty.call(b, 'html');
     return (
       a.style === b.style &&
       a.frozen === b.frozen &&
       a.flexFrozen === b.flexFrozen &&
-      a.html === b.html
+      ((!aHasHtml && !bHasHtml) || a.html === b.html)
     );
   }
 
-  function beginTxn() {
+  function beginTxn(options = {}) {
     if (state.txn) return; // ignore re-entry; outermost owns the txn
-    state.txn = { snapshots: new Map() };
+    state.txn = { snapshots: new Map(), captureHtml: !!options.captureHtml };
   }
 
   function touchElement(el) {
     if (!state.txn || !el) return;
     if (state.txn.snapshots.has(el)) return;
-    state.txn.snapshots.set(el, snapshotElement(el));
+    state.txn.snapshots.set(el, snapshotElement(el, state.txn));
   }
 
   function endTxn() {
@@ -2014,7 +2066,7 @@
     state.txn = null;
     const changes = [];
     for (const [el, before] of txn.snapshots) {
-      const after = snapshotElement(el);
+      const after = snapshotElement(el, txn);
       if (snapshotsEqual(before, after)) continue;
       changes.push({ element: el, before, after });
     }
@@ -2060,7 +2112,7 @@
       state.editingText &&
       state.editingText.el === restoreEditingEl
     ) {
-      beginTxn();
+      beginTxn({ captureHtml: true });
       touchElement(restoreEditingEl);
     }
   }
@@ -3288,7 +3340,7 @@
       originalContenteditable: el.getAttribute('contenteditable'),
     };
 
-    beginTxn();
+    beginTxn({ captureHtml: true });
     touchElement(el);
 
     el.setAttribute('contenteditable', 'true');

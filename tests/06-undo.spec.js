@@ -227,6 +227,87 @@ test.describe('Phase 6 — Undo/redo', () => {
     expect(undoneState.computedPosition).not.toBe('absolute');
   });
 
+  test('undo after flow unlock does not leave inspector bound to a detached selection', async ({
+    page,
+  }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await setDeckScale(page, 1);
+    await page.keyboard.press('e');
+
+    await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      const container = document.createElement('div');
+      container.dataset.testFlowContainer = 'yes';
+      container.style.cssText = [
+        'position:absolute',
+        'left:260px',
+        'top:280px',
+        'width:360px',
+        'padding:16px',
+        'display:flex',
+        'flex-direction:column',
+        'gap:8px',
+        'font-size:24px',
+        'background:rgba(255,255,255,0.01)',
+      ].join(';');
+
+      const child = document.createElement('p');
+      child.dataset.testFlowChild = 'yes';
+      child.textContent = 'Flow child for undo';
+      child.style.cssText = 'margin:0';
+
+      const sibling = document.createElement('p');
+      sibling.textContent = 'Sibling';
+      sibling.style.cssText = 'margin:0';
+
+      container.append(child, sibling);
+      slide.appendChild(container);
+      window.__testFlowChildRef = child;
+    });
+
+    await dragByViewportPx(page, '[data-test-flow-child="yes"]', 40, 20);
+
+    await page.keyboard.press('ControlOrMeta+z');
+
+    const undoUi = await page.evaluate(() => {
+      const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const live = document.querySelector('[data-test-flow-child="yes"]');
+      return {
+        ringDisplay: ring.style.display,
+        inspectorVisible: inspector.dataset.visible,
+        oldReferenceConnected: window.__testFlowChildRef.isConnected,
+        liveExists: !!live,
+      };
+    });
+
+    expect(undoUi.liveExists).toBe(true);
+    expect(undoUi.ringDisplay === 'block' || undoUi.inspectorVisible === 'false').toBe(
+      true,
+    );
+
+    const beforeArrow = await page.evaluate(() => {
+      return {
+        oldReferenceConnected: window.__testFlowChildRef.isConnected,
+        oldReferenceInlineFontSize: window.__testFlowChildRef.style.fontSize,
+      };
+    });
+
+    await page.keyboard.press('ArrowUp');
+
+    const afterArrow = await page.evaluate(() => {
+      return {
+        oldReferenceConnected: window.__testFlowChildRef.isConnected,
+        oldReferenceInlineFontSize: window.__testFlowChildRef.style.fontSize,
+      };
+    });
+
+    expect(
+      afterArrow.oldReferenceConnected ||
+        afterArrow.oldReferenceInlineFontSize === beforeArrow.oldReferenceInlineFontSize,
+    ).toBe(true);
+  });
+
   test('history caps at 50 entries; older entries drop off', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await setDeckScale(page, 1);

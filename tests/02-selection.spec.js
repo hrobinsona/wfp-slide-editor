@@ -39,6 +39,21 @@ async function rectOf(page, selector) {
   }, selector);
 }
 
+async function waitForAnimationFrames(page, count = 2) {
+  await page.evaluate((frames) => {
+    return new Promise((resolve) => {
+      function tick(remaining) {
+        if (remaining <= 0) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(() => tick(remaining - 1));
+      }
+      tick(frames);
+    });
+  }, count);
+}
+
 test.describe('Phase 2 — Selection', () => {
   test('does not select anything when edit mode is OFF', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
@@ -54,6 +69,44 @@ test.describe('Phase 2 — Selection', () => {
     await clickElement(page, '.slide.active h1');
     const state = await ringState(page);
     const target = await rectOf(page, '.slide.active h1');
+
+    expect(state.display).toBe('block');
+    expect(state.top).toBeCloseTo(target.top, 0);
+    expect(state.left).toBeCloseTo(target.left, 0);
+    expect(state.width).toBeCloseTo(target.width, 0);
+    expect(state.height).toBeCloseTo(target.height, 0);
+  });
+
+  test('selection ring follows a selected element after late layout movement', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('e');
+
+    await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      const el = document.createElement('div');
+      el.dataset.testMovingSelection = 'yes';
+      el.textContent = 'Moving selection target';
+      el.style.cssText = [
+        'position:absolute',
+        'left:220px',
+        'top:180px',
+        'width:260px',
+        'height:42px',
+        'font-size:24px',
+      ].join(';');
+      slide.appendChild(el);
+    });
+
+    await clickElement(page, '[data-test-moving-selection="yes"]');
+
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-test-moving-selection="yes"]');
+      el.style.top = '212px';
+    });
+    await waitForAnimationFrames(page, 2);
+
+    const state = await ringState(page);
+    const target = await rectOf(page, '[data-test-moving-selection="yes"]');
 
     expect(state.display).toBe('block');
     expect(state.top).toBeCloseTo(target.top, 0);
