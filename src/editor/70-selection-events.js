@@ -55,7 +55,9 @@
       }
     }
   });
-  document.querySelectorAll('.slide').forEach((slide) => {
+  function observeSlideClass(slide) {
+    if (!slide) return;
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
-  });
+  }
+  document.querySelectorAll('.slide').forEach(observeSlideClass);
 

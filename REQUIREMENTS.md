@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.1)
+# Requirements: Current Product Contract (v2.2)
 
 ## Goal
 
@@ -7,7 +7,9 @@ Ship a bookmarklet-activated editor that lets a user polish WFP HTML slide decks
 - Move and resize existing elements on the active slide.
 - Edit text inline.
 - Adjust typography, colour, opacity, position, and size through an inspector.
+- Copy, paste, and duplicate selected elements within the current editing session.
 - Reorder and delete slides in Overview mode.
+- Insert blank slides from Overview mode.
 - Export clean standalone HTML that preserves the user's edits and removes all editor chrome.
 
 This file is the current product contract. `TASKS.md` and `feature-briefs/` are historical build records.
@@ -60,6 +62,8 @@ The inspector is visible when an element is selected and supports:
 - Text colour and background colour controls.
 - Opacity controls.
 - Reset inline styles for the selected element.
+- Duplicate selected element.
+- Delete selected element.
 - Minimise/expand state remembered within the editor session.
 
 Inspector clicks must not accidentally select slide content or end inline text editing unless that is the intended control behaviour.
@@ -79,11 +83,25 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Existing inline HTML inside the element, such as `<br>` and nested spans, must be preserved.
 - Text edits are undoable as a single history entry.
 
+### Element Copy/Paste/Duplicate/Delete
+
+- Cmd/Ctrl+C while an element is selected copies a session-only serialized clone.
+- Cmd/Ctrl+C while inline text editing is active must fall through to normal browser text copy.
+- Cmd/Ctrl+V in normal slide view pastes the copied element into `.slide.active`.
+- Pasted elements are offset by 20px on both axes from the copied element's slide coordinates.
+- Pasted elements preserve source inline styles and become the selected element.
+- Inspector Duplicate performs the same copy-then-paste behavior on the active slide.
+- Backspace/Delete or Inspector Delete removes the selected element from the active slide.
+- Duplicate/Delete from the inspector commits any open inline text edit before performing the structural action.
+- Element paste/duplicate is undoable and redoable as a structural insert.
+- Element delete is undoable and redoable as a structural removal.
+- Element clipboard state is not integrated with the system clipboard and does not persist across reloads.
+
 ### Undo and Redo
 
 - Cmd/Ctrl+Z undoes the last change.
 - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redoes.
-- Atomic actions are one history entry: drag, resize, font-size nudge, inspector commit, text edit, slide reorder, slide delete.
+- Atomic actions are one history entry: drag, resize, font-size nudge, inspector commit, text edit, element insert/delete, slide reorder, slide delete.
 - History persists for the current page session only.
 - History must support at least 50 entries.
 
@@ -94,9 +112,10 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Click a thumbnail to make that slide active and return to normal slide view.
 - Drag thumbnails to reorder slides.
 - Delete a slide from its thumbnail `x` button, or with Backspace/Delete when a thumbnail delete target is active.
+- Insert a blank slide using the `+` affordances before, between, and after thumbnails.
 - Deleting the last remaining slide is blocked with a toast.
 - If the active slide is deleted, the editor activates the next slide at that position, or the new last slide.
-- Slide reorder and slide delete are undoable and redoable.
+- Slide reorder, slide delete, and slide insert are undoable and redoable.
 - Exported HTML opens in normal slide view, not Overview mode.
 
 ### Export
@@ -106,8 +125,10 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Export must preserve:
   - DOCTYPE, head, scripts, styles, and unchanged slide content.
   - Element style and text edits.
+  - Pasted elements.
   - Slide order changes.
   - Slide deletions.
+  - Inserted blank slides.
 - Export must remove:
   - `#wfp-editor-root`.
   - Editor script tags.
@@ -155,11 +176,9 @@ These are not part of the current product contract. Add them to `ROADMAP.md` or 
 - Group/ungroup operations.
 - Animation or transition editing.
 - Adding new elements.
-- Element deletion from normal edit mode.
-- Cross-slide copy/paste.
 - Asset replacement.
 - Theme variable editing.
-- Overview search/filter, duplicate slide, or add slide.
+- Overview search/filter or duplicate slide.
 - Mobile/touch editing.
 
 ## Known Quality Work

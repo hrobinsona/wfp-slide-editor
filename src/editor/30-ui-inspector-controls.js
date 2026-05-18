@@ -34,11 +34,25 @@
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="6 9 12 15 18 9" />' +
       '</svg>',
-    // Counter-clockwise refresh — paired with "Reset styles" in the inspector.
+    // Counter-clockwise refresh — paired with "Reset" in the inspector.
     refresh:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="1 4 1 10 7 10" />' +
       '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />' +
+      '</svg>',
+    // Copy — paired with the inspector Duplicate action.
+    copy:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect x="8" y="8" width="12" height="12" rx="2" />' +
+      '<path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />' +
+      '</svg>',
+    trash:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M3 6h18" />' +
+      '<path d="M8 6V4h8v2" />' +
+      '<path d="M19 6l-1 14H6L5 6" />' +
+      '<path d="M10 11v5" />' +
+      '<path d="M14 11v5" />' +
       '</svg>',
     // 2x2 grid — Overview toolbar button (v2.1.0).
     overview:
@@ -356,21 +370,39 @@
   inspectorBody.appendChild(opacityRow);
   inspectorInputs.opacity = fieldOpacity.input;
 
-  // Reset row (v2.5). Clears the selected element's entire inline style
+  // Element action row. Duplicate/delete/reset live together to avoid
+  // growing the inspector vertically as structural actions are added.
+  const actionRow = document.createElement('div');
+  actionRow.className = 'wfpe-inspector-row';
+  actionRow.dataset.wfpeRow = 'actions';
+  const duplicateBtn = document.createElement('button');
+  duplicateBtn.type = 'button';
+  duplicateBtn.className = 'wfpe-duplicate-btn';
+  duplicateBtn.dataset.action = 'duplicate-element';
+  duplicateBtn.innerHTML = ICONS.copy + '<span>Duplicate</span>';
+  duplicateBtn.title = 'Duplicate selected element';
+  actionRow.appendChild(duplicateBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'wfpe-delete-btn';
+  deleteBtn.dataset.action = 'delete-element';
+  deleteBtn.innerHTML = ICONS.trash + '<span>Delete</span>';
+  deleteBtn.title = 'Delete selected element';
+  actionRow.appendChild(deleteBtn);
+
+  // Reset action (v2.5). Clears the selected element's entire inline style
   // attribute as one history entry, returning it to its stylesheet-
   // defined rendering. No-op (no history entry) if the element has no
   // inline style to clear.
-  const resetRow = document.createElement('div');
-  resetRow.className = 'wfpe-inspector-row';
-  resetRow.dataset.wfpeRow = 'reset';
   const resetBtn = document.createElement('button');
   resetBtn.type = 'button';
   resetBtn.className = 'wfpe-reset-btn';
   resetBtn.dataset.action = 'reset-styles';
-  resetBtn.innerHTML = ICONS.refresh + '<span>Reset styles</span>';
+  resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
   resetBtn.title = 'Clear all inline style overrides on the selected element';
-  resetRow.appendChild(resetBtn);
-  inspectorBody.appendChild(resetRow);
+  actionRow.appendChild(resetBtn);
+  inspectorBody.appendChild(actionRow);
 
   root.appendChild(inspector);
 
@@ -654,4 +686,11 @@
     endInspectorTxn(ctx);
     refreshSelection();
   });
-
+  duplicateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    duplicateSelected();
+  });
+  deleteBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    deleteSelectedElement();
+  });

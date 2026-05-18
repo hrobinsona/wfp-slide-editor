@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.1: v1 element editing, v2 inspector, and v2.1 Overview mode are all in `editor.js`.
+The shipped editor is v2.2: v1 element editing, v2 inspector, v2.1 Overview mode, and v2.2 element copy/paste plus Overview blank-slide insertion are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -81,6 +81,7 @@ The editor keeps session state in plain objects. The central state currently inc
 - `selected` for the selected slide element.
 - `editingText` for inline text editing.
 - `history` and `historyIndex` for undo/redo.
+- `clipboard` for session-only serialized element copy/paste.
 - `inspectorMinimised` for session-only inspector UI state.
 - `deckMutated` for cases where Overview has reordered or deleted slides and the editor must own navigation state.
 
@@ -130,6 +131,7 @@ Current approach:
 - Keep normal slide DOM as the source of truth.
 - Reorder actual `.slide` elements in `.deck`.
 - Delete actual `.slide` elements from `.deck`.
+- Insert new blank `.slide` elements in `.deck`.
 - Restore normal slide view on exit and on export.
 
 Overview changes are real deck mutations. After reorder/delete, the editor cannot rely on the fixture's original slide index closure always matching the live DOM, so editor navigation paths must account for mutated order.

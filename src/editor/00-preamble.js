@@ -13,8 +13,9 @@
  * Phase 8: Cmd+S export — clones the document, scrubs editor markers, downloads.
  * Phase 9: liquid-glass toolbar + capture-phase suppression of slide nav keys.
  * v2.0:    toolbar liquid-glass refresh — recipe-correct light/dark variants,
- *          inline SVG icons (lucide aesthetic), button order Edit · Export ·
- *          Undo · Redo, no behavior change.
+ *          inline SVG icons (lucide aesthetic), no behavior change.
+ * v2.1:    Overview mode for slide reorder/delete.
+ * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -22,7 +23,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.1.0-v2.1.1';
+  const VERSION = '2.2.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;

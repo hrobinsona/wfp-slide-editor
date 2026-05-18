@@ -82,13 +82,17 @@ for (const fixture of FIXTURES_TO_RUN) {
         return {
           visible: ins.dataset.visible,
           rows: [...ins.querySelectorAll('.wfpe-inspector-row')].map((r) => r.dataset.wfpeRow),
+          hasDuplicate: !!ins.querySelector('.wfpe-duplicate-btn'),
+          hasDelete: !!ins.querySelector('.wfpe-delete-btn'),
           hasReset: !!ins.querySelector('.wfpe-reset-btn'),
         };
       });
       expect(layout.visible).toBe('true');
       expect(layout.rows).toEqual(
-        expect.arrayContaining(['font-size', 'text-color', 'bg-color', 'reset'])
+        expect.arrayContaining(['font-size', 'text-color', 'bg-color', 'actions'])
       );
+      expect(layout.hasDuplicate).toBe(true);
+      expect(layout.hasDelete).toBe(true);
       expect(layout.hasReset).toBe(true);
     });
 

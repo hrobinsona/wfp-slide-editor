@@ -4,7 +4,7 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 
 ## Read These First
 
-- `REQUIREMENTS.md` - current v2.1 product contract.
+- `REQUIREMENTS.md` - current v2.2 product contract.
 - `DESIGN.md` - architectural decisions and current implementation shape.
 - `TESTING.md` - fixture-driven test approach and known reliability work.
 - `ROADMAP.md` - deferred features and active engineering tracks.
@@ -42,6 +42,7 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 - For refactor work, follow `REFACTOR-MAINTAINABILITY.md`.
 - Preserve existing behaviour unless the brief explicitly changes it.
 - Add or harden Playwright coverage before landing behaviour-sensitive changes.
+- For new feature testing, provide a local web preview path: run `npm run dev`, build or confirm a local bookmarklet with `npm run build:bookmarklet -- --local`, and give the user a `http://localhost:8080/...` fixture URL they can open in the Codex in-app browser against the current branch/worktree.
 - Before declaring a phase or brief complete, run the relevant tests and invoke the `code-reviewer` subagent if available.
 - For noisy Playwright runs, prefer the `playwright-runner` subagent if available.
 

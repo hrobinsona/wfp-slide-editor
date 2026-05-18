@@ -488,15 +488,19 @@
     #${ROOT_ID} .wfpe-color-clear:hover {
       background-color: rgba(255, 255, 255, 0.22);
     }
-    /* Reset-styles row (v2.5 redesign): inline icon + label, left-aligned,
-       reading as a quiet text link rather than a full-width pill. The
-       refresh icon signals the destructive nature without leaning on
-       colour. The whole row is the click target via the button itself. */
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="reset"] {
-      justify-content: flex-start;
-      gap: 0;
+    /* Element action row: compact text-link controls for common structural
+       actions. They stay in one row to keep the inspector from growing
+       vertically as feature actions are added. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="actions"] {
+      justify-content: space-between;
+      gap: 6px;
       padding-top: 4px;
+      flex-wrap: nowrap;
+      width: 100%;
+      box-sizing: border-box;
     }
+    #${ROOT_ID} .wfpe-duplicate-btn,
+    #${ROOT_ID} .wfpe-delete-btn,
     #${ROOT_ID} .wfpe-reset-btn {
       appearance: none;
       -webkit-appearance: none;
@@ -504,20 +508,29 @@
       border: 0;
       color: rgba(255, 255, 255, 0.78);
       padding: 4px 6px;
-      margin-left: -6px;
       border-radius: 6px;
       cursor: pointer;
       font: 500 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.01em;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
+      flex: 1 1 0;
+      min-width: 0;
       transition: color 120ms ease, background-color 120ms ease;
     }
+    #${ROOT_ID} .wfpe-duplicate-btn:hover,
+    #${ROOT_ID} .wfpe-delete-btn:hover,
     #${ROOT_ID} .wfpe-reset-btn:hover {
       color: #fff;
       background-color: rgba(255, 255, 255, 0.10);
     }
+    #${ROOT_ID} .wfpe-delete-btn:hover {
+      background-color: rgba(220, 38, 38, 0.28);
+    }
+    #${ROOT_ID} .wfpe-duplicate-btn .wfpe-icon,
+    #${ROOT_ID} .wfpe-delete-btn .wfpe-icon,
     #${ROOT_ID} .wfpe-reset-btn .wfpe-icon {
       width: 13px;
       height: 13px;
@@ -727,10 +740,58 @@
       pointer-events: auto;
       cursor: grab;
       box-sizing: border-box;
+      border-radius: 4px;
     }
     #${ROOT_ID} .wfpe-overview-thumb[data-dragging="true"] {
       opacity: 0.4;
       cursor: grabbing;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      pointer-events: none;
+      box-sizing: border-box;
+      z-index: 0;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb[data-empty="true"]::after {
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 251, 0.86));
+      border-color: rgba(15, 23, 42, 0.22);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+    }
+    #${ROOT_ID} .wfpe-overview-add {
+      position: fixed;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.54);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+      color: #fff;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      opacity: 0.42;
+      z-index: 2;
+      font: 600 18px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      transition: opacity 120ms ease, background-color 120ms ease, transform 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-overview-add:hover,
+    #${ROOT_ID} .wfpe-overview-add:focus {
+      opacity: 1;
+      background: rgba(15, 23, 42, 0.86);
+      transform: scale(1.06);
+      outline: none;
     }
     /* × delete button (v2.1.4) — Liquid Glass pill, top-right of each
        thumb, revealed on thumb hover or focus. Same dark-glass tint as
@@ -814,6 +875,7 @@
       font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.02em;
       text-align: center;
+      z-index: 1;
     }
     /* Active-slide highlight — Liquid Glass dialect using the inspector
        focus stroke value (rgba(255,255,255,0.55), already used at the
@@ -835,4 +897,3 @@
     }
   `;
   root.appendChild(styleEl);
-
