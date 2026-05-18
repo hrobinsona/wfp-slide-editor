@@ -16,6 +16,7 @@
  *          inline SVG icons (lucide aesthetic), no behavior change.
  * v2.1:    Overview mode for slide reorder/delete.
  * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
+ * v2.x:    Cmd/Ctrl-click multi-select for moving elements together.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -23,7 +24,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -61,4 +62,3 @@
   if (document.currentScript) {
     document.currentScript.dataset.wfpEditScript = 'true';
   }
-

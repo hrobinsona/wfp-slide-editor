@@ -412,6 +412,14 @@
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
 
+  const multiBox = document.createElement('div');
+  multiBox.className = 'wfpe-multi-box';
+  root.appendChild(multiBox);
+
+  const multiOutlineLayer = document.createElement('div');
+  multiOutlineLayer.className = 'wfpe-multi-outline-layer';
+  root.appendChild(multiOutlineLayer);
+
   // Overview overlay (v2.1.1) — chrome layer rendered above the deck while
   // overview mode is active. Holds one .wfpe-overview-thumb per slide,
   // each anchored to the slide's getBoundingClientRect with a number

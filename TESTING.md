@@ -8,7 +8,7 @@ Fixtures are immutable inputs. Tests may export HTML and screenshots into `tests
 
 ## Current Coverage
 
-The suite now covers the v1 editor, v2 inspector, and v2.1 Overview mode.
+The suite now covers the v1 editor, v2 inspector, v2.1 Overview mode, v2.2 copy/paste and blank slide insertion, and v2.3 multi-select move.
 
 ```text
 tests/
@@ -27,7 +27,8 @@ tests/
 ├── v2-0-toolbar.spec.js           # Inspector-era toolbar behaviour.
 ├── v2-0-inspector-*.spec.js       # Inspector controls and edge cases.
 ├── v2-1-6-end-to-end.spec.js      # v2.1 end-to-end coverage.
-└── v2-overview.spec.js            # Overview grid, reorder, delete, export.
+├── v2-overview.spec.js            # Overview grid, reorder, delete, export.
+└── v2-multi-select.spec.js        # Cmd/Ctrl-click multi-select and group movement.
 ```
 
 Use `rg --files tests` for the exact current file list.
@@ -84,10 +85,11 @@ Before declaring a feature or refactor done:
 2. Inject the editor through the bookmarklet or local script.
 3. Toggle edit mode with `E`; confirm slide navigation is suppressed while editing.
 4. Select, drag, resize, and undo an element on a scaled deck.
-5. Use inspector controls for position, size, font size, colour, opacity, and reset.
-6. Double-click text, edit it, exit with Escape, and undo/redo.
-7. Toggle Overview with `O`, navigate by clicking a thumbnail, reorder slides, delete a slide, and undo/redo both operations.
-8. Export, open the exported HTML in a fresh tab, and confirm edits persist with no editor UI visible.
+5. Cmd/Ctrl-click multiple elements, drag the group on a scaled deck, and undo/redo the group move.
+6. Use inspector controls for position, size, font size, colour, opacity, and reset.
+7. Double-click text, edit it, exit with Escape, and undo/redo.
+8. Toggle Overview with `O`, navigate by clicking a thumbnail, reorder slides, delete a slide, and undo/redo both operations.
+9. Export, open the exported HTML in a fresh tab, and confirm edits persist with no editor UI visible.
 
 ## Output Artifacts
 

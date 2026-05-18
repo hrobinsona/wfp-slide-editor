@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.2: v1 element editing, v2 inspector, v2.1 Overview mode, and v2.2 element copy/paste plus Overview blank-slide insertion are all in `editor.js`.
+The shipped editor is v2.3: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, and v2.3 move-only multi-select are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -79,6 +79,7 @@ The editor keeps session state in plain objects. The central state currently inc
 - `editMode` for element editing.
 - `overviewMode` for slide-grid editing.
 - `selected` for the selected slide element.
+- `selectedElements` for the active-slide selection set; `selected` remains the primary selected element.
 - `editingText` for inline text editing.
 - `history` and `historyIndex` for undo/redo.
 - `clipboard` for session-only serialized element copy/paste.
@@ -89,15 +90,17 @@ This state is intentionally session-only. Reloading the page discards it unless 
 
 ## Selection Model
 
-**Decision:** Single-element selection.
+**Decision:** Primary-element selection with move-only multi-select.
 
-The selected element is tracked by DOM reference. A separate selection ring, handle set, dimension bubble, and inspector reflect the current selected element. The target element is not given editor-only classes for selection styling, which keeps export cleanup straightforward.
+The primary selected element is tracked by DOM reference in `state.selected`. Multi-select stores active-slide DOM references in `state.selectedElements`; `state.selected` remains the primary member so existing single-element commands retain their contract. A single selected element still shows the selection ring, handle set, dimension bubble, and inspector. Multiple selected elements show one editor-owned group box plus per-element outlines.
 
-Selection is only valid while the target remains connected to the document. History restore paths must either preserve selected nodes or clear/re-resolve selection when a selected node is recreated.
+Selection is only valid while targets remain connected to the active slide. History restore paths must either preserve selected nodes or clear/re-resolve selection when a selected node is recreated. Ancestor/descendant pairs are normalized so the latest clicked target wins and the same visual content is not moved twice.
+
+The first multi-select release is intentionally move-only: group resize, group delete/copy/duplicate, group inspector edits, group/ungroup, and marquee selection stay out of scope.
 
 ## Element Conversion to Absolute Positioning
 
-When a user drags a flow-positioned element, the editor unlocks it into absolute positioning:
+When a user drags a flow-positioned element, including a flow element inside a multi-selection, the editor unlocks it into absolute positioning:
 
 1. Capture its current box relative to the appropriate positioned ancestor.
 2. Write inline `position`, `top`, `left`, `width`, and `height`.

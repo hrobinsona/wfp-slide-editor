@@ -582,6 +582,31 @@
       border-radius: 4px;
       display: none;
     }
+    #${ROOT_ID} .wfpe-multi-box,
+    #${ROOT_ID} .wfpe-multi-outline {
+      position: fixed;
+      pointer-events: none;
+      box-sizing: border-box;
+      display: none;
+    }
+    #${ROOT_ID} .wfpe-multi-outline-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-multi-box {
+      border: 1.5px solid #5b9bd9;
+      background: rgba(91, 155, 217, 0.08);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.55) inset,
+        0 6px 18px rgba(15, 23, 42, 0.12);
+      border-radius: 6px;
+    }
+    #${ROOT_ID} .wfpe-multi-outline {
+      border: 1px dashed rgba(91, 155, 217, 0.82);
+      background: rgba(91, 155, 217, 0.04);
+      border-radius: 4px;
+    }
     #${ROOT_ID} .wfpe-toast {
       position: fixed;
       pointer-events: none;

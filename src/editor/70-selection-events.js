@@ -19,6 +19,15 @@
     }
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
+    if (isSelectionToggleEvent(e)) {
+      if (target) {
+        toggleSelectedElement(target);
+        refreshInspector();
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
     setSelected(target);
     refreshInspector();
   }
@@ -60,4 +69,3 @@
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
   }
   document.querySelectorAll('.slide').forEach(observeSlideClass);
-

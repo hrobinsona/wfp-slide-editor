@@ -823,9 +823,10 @@
     }
 
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && noModifier) {
-      if (!state.selected || !isTextBearing(state.selected)) return;
+      if (!state.selected) return;
       e.preventDefault();
       e.stopPropagation();
+      if (hasMultiSelection() || !isTextBearing(state.selected)) return;
       const direction = e.key === 'ArrowUp' ? +1 : -1;
       const step = e.shiftKey ? 5 : 1;
       beginTxn();
@@ -861,4 +862,3 @@
   }
 
   document.addEventListener('keydown', onKeyDown, true);
-

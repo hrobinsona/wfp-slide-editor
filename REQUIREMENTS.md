@@ -5,6 +5,7 @@
 Ship a bookmarklet-activated editor that lets a user polish WFP HTML slide decks directly in the browser:
 
 - Move and resize existing elements on the active slide.
+- Multi-select active-slide elements and move them together.
 - Edit text inline.
 - Adjust typography, colour, opacity, position, and size through an inspector.
 - Copy, paste, and duplicate selected elements within the current editing session.
@@ -41,16 +42,24 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - Clicking the slide canvas deselects.
 - The editor does not select `.deck`, `.slide`, or anything inside `#wfp-editor-root`.
 - Selection only operates on the active slide.
+- Cmd/Ctrl-click toggles active-slide elements into or out of a multi-selection.
+- Multi-selection displays one group box plus per-element outlines.
+- Plain click returns to single-element selection.
+- Selection clears when the slide canvas is clicked, edit mode exits, Overview mode starts, or the active slide changes.
+- Ancestor/descendant pairs are not both kept in a multi-selection; the latest clicked target wins.
 
 ### Drag and Resize
 
 - Drag a selected element to move it.
+- Drag any member of a multi-selection to move all selected elements together.
+- Multi-selection movement is one undoable history entry.
 - Resize with the eight handles around the selection ring.
 - Drag and resize deltas must be divided by the current `.deck` transform scale before writing slide-coordinate styles.
 - Existing inline styles must be preserved and merged with editor-written styles.
 - Flow-positioned elements can be unlocked into absolute positioning when dragged.
 - Unlocking protects affected siblings and layout containers so nearby content does not shift unexpectedly.
 - Unlock conversion and the drag/resize operation are undoable.
+- Resize handles, the inspector, and dimension bubble are hidden while multiple elements are selected.
 
 ### Inspector
 
@@ -96,12 +105,13 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Element paste/duplicate is undoable and redoable as a structural insert.
 - Element delete is undoable and redoable as a structural removal.
 - Element clipboard state is not integrated with the system clipboard and does not persist across reloads.
+- Multi-selected elements do not copy, paste, duplicate, delete, resize, or receive inspector edits as a group in the first multi-select release.
 
 ### Undo and Redo
 
 - Cmd/Ctrl+Z undoes the last change.
 - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redoes.
-- Atomic actions are one history entry: drag, resize, font-size nudge, inspector commit, text edit, element insert/delete, slide reorder, slide delete.
+- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, text edit, element insert/delete, slide reorder, slide delete.
 - History persists for the current page session only.
 - History must support at least 50 entries.
 
@@ -168,7 +178,7 @@ The cache-buster ensures the next bookmarklet click fetches the latest hosted ed
 
 These are not part of the current product contract. Add them to `ROADMAP.md` or a feature brief before building.
 
-- Multi-select.
+- Marquee/lasso selection.
 - Layers panel or z-order controls.
 - Snap-to-grid or alignment guides.
 - Aspect-ratio locking on resize.

@@ -195,13 +195,23 @@
       if (distSq < DRAG_DEADZONE_PX * DRAG_DEADZONE_PX) return;
       d.started = true;
       beginTxn();
-      touchElement(d.el);
-      if (!d.wasAbsolute) {
-        commitUnlock(d);
-      } else {
+      for (const item of d.items || []) {
+        touchElement(item.el);
+      }
+      for (const item of d.items || []) {
+        if (!item.wasAbsolute) {
+          unlockToAbsolute(item.el);
+        }
+      }
+      for (const item of d.items || []) {
+        if (!item.el || !item.el.isConnected) continue;
+        item.anchorLeft = item.el.offsetLeft;
+        item.anchorTop = item.el.offsetTop;
+        item.width = item.el.offsetWidth;
+        item.height = item.el.offsetHeight;
         // Lock in the anchor as inline left/top so subsequent drags compose.
-        d.el.style.left = `${d.anchorLeft}px`;
-        d.el.style.top = `${d.anchorTop}px`;
+        item.el.style.left = `${item.anchorLeft}px`;
+        item.el.style.top = `${item.anchorTop}px`;
       }
     }
 
@@ -211,8 +221,11 @@
     const scale = getCanvasScale();
     const dx = dxView / scale;
     const dy = dyView / scale;
-    d.el.style.left = `${d.anchorLeft + dx}px`;
-    d.el.style.top = `${d.anchorTop + dy}px`;
+    for (const item of d.items || []) {
+      if (!item.el || !item.el.isConnected) continue;
+      item.el.style.left = `${item.anchorLeft + dx}px`;
+      item.el.style.top = `${item.anchorTop + dy}px`;
+    }
     refreshSelection();
   }
 

@@ -19,6 +19,55 @@
     return el;
   }
 
+  function isSelectionToggleEvent(e) {
+    return !!e && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+  }
+
+  function selectionArraysEqual(a, b) {
+    if (a.length !== b.length) return false;
+    return a.every((el, i) => el === b[i]);
+  }
+
+  function normalizeSelectionElements(elements) {
+    const slide = getActiveSlide();
+    if (!slide) return [];
+    const out = [];
+    for (const el of elements || []) {
+      if (!el || !el.isConnected || !slide.contains(el)) continue;
+      if (el === slide || (el.classList && el.classList.contains('deck'))) continue;
+      if (isInsideEditorRoot(el)) continue;
+      if (!out.includes(el)) out.push(el);
+    }
+    return out;
+  }
+
+  function getSelectedElements() {
+    const source = state.selectedElements && state.selectedElements.length
+      ? state.selectedElements
+      : (state.selected ? [state.selected] : []);
+    return normalizeSelectionElements(source);
+  }
+
+  function hasMultiSelection() {
+    return getSelectedElements().length > 1;
+  }
+
+  function toggleSelectedElement(target) {
+    if (!target) return;
+    const current = getSelectedElements();
+    const existingIndex = current.indexOf(target);
+    let next;
+    let primary = target;
+    if (existingIndex >= 0) {
+      next = current.filter((el) => el !== target);
+      primary = next[next.length - 1] || null;
+    } else {
+      next = current.filter((el) => !el.contains(target) && !target.contains(el));
+      next.push(target);
+    }
+    setSelectedElements(next, primary);
+  }
+
   function stripEditorArtifactsFrom(el) {
     if (!el) return;
     const nodes = [el, ...el.querySelectorAll('*')];
@@ -67,6 +116,7 @@
 
   function copySelectedElement() {
     const el = state.selected;
+    if (hasMultiSelection()) return false;
     if (!el || !el.isConnected) return false;
     state.clipboard = { outerHTML: serializeElementForClipboard(el) };
     return true;
@@ -120,6 +170,7 @@
 
   function deleteSelectedElement() {
     if (state.editingText) endTextEdit();
+    if (hasMultiSelection()) return false;
     const el = state.selected;
     if (!el || !el.isConnected || state.overviewMode) return false;
     const parent = el.parentElement;
@@ -192,19 +243,34 @@
       // Hide both for the duration of the text edit; refreshSelection
       // will re-show them once edit ends.
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       stopSelectionTracking();
       return;
     }
     if (clearDisconnectedSelection()) return;
-    if (state.selected && state.selected.isConnected) {
+    const members = getSelectedElements();
+    if (members.length > 1) {
+      hideRing();
+      hideHandles();
+      hideDimBubble();
+      positionMultiSelection(members);
+      populateInspector(null);
+      startSelectionTracking();
+    } else if (members.length === 1) {
+      hideMultiSelection();
+      state.selected = members[0];
+      state.selectedElements = members;
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
       startSelectionTracking();
     } else {
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       stopSelectionTracking();
     }
   }
@@ -229,6 +295,50 @@
     dimBubble.style.display = 'none';
   }
 
+  function hideMultiSelection() {
+    multiBox.style.display = 'none';
+    multiOutlineLayer.replaceChildren();
+  }
+
+  function positionMultiSelection(elements) {
+    const rects = elements
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 0 || r.height > 0);
+    if (!rects.length) {
+      hideMultiSelection();
+      return;
+    }
+    const bounds = rects.reduce((acc, r) => ({
+      left: Math.min(acc.left, r.left),
+      top: Math.min(acc.top, r.top),
+      right: Math.max(acc.right, r.right),
+      bottom: Math.max(acc.bottom, r.bottom),
+    }), {
+      left: rects[0].left,
+      top: rects[0].top,
+      right: rects[0].right,
+      bottom: rects[0].bottom,
+    });
+
+    multiBox.style.display = 'block';
+    multiBox.style.left = `${bounds.left}px`;
+    multiBox.style.top = `${bounds.top}px`;
+    multiBox.style.width = `${bounds.right - bounds.left}px`;
+    multiBox.style.height = `${bounds.bottom - bounds.top}px`;
+
+    multiOutlineLayer.replaceChildren();
+    for (const r of rects) {
+      const outline = document.createElement('div');
+      outline.className = 'wfpe-multi-outline';
+      outline.style.display = 'block';
+      outline.style.left = `${r.left}px`;
+      outline.style.top = `${r.top}px`;
+      outline.style.width = `${r.width}px`;
+      outline.style.height = `${r.height}px`;
+      multiOutlineLayer.appendChild(outline);
+    }
+  }
+
   let selectionRafId = 0;
 
   function shouldTrackSelection() {
@@ -236,8 +346,7 @@
       state.editMode &&
       !state.overviewMode &&
       !state.editingText &&
-      !!state.selected &&
-      state.selected.isConnected
+      getSelectedElements().length > 0
     );
   }
 
@@ -257,34 +366,59 @@
   }
 
   function clearDisconnectedSelection() {
-    if (!state.selected || state.selected.isConnected) return false;
-    if (state.editingText && state.editingText.el === state.selected) {
+    const current = state.selectedElements && state.selectedElements.length
+      ? state.selectedElements
+      : (state.selected ? [state.selected] : []);
+    if (!state.selected && current.length === 0) return false;
+
+    const members = normalizeSelectionElements(current);
+    const primary = (state.selected && members.includes(state.selected))
+      ? state.selected
+      : (members[members.length - 1] || null);
+    const changed = state.selected !== primary || !selectionArraysEqual(state.selectedElements, members);
+    if (!changed) return false;
+
+    if (state.editingText && state.editingText.el && !members.includes(state.editingText.el)) {
       state.editingText = null;
     }
-    state.selected = null;
-    hideRing();
-    hideDimBubble();
-    populateInspector(null);
-    refreshInspector();
-    stopSelectionTracking();
-    return true;
+    state.selected = primary;
+    state.selectedElements = primary ? members : [];
+    if (!primary) {
+      hideRing();
+      hideHandles();
+      hideDimBubble();
+      hideMultiSelection();
+      populateInspector(null);
+      refreshInspector();
+      stopSelectionTracking();
+      return true;
+    }
+    return false;
   }
 
-  function setSelected(el) {
+  function setSelectedElements(elements, primary) {
     // Close any open txn before swapping selection — defends against
     // an orphaned colour-picker txn (input fired without change) being
     // silently bundled with subsequent unrelated edits on the new
     // selection. endTxn no-ops if no element was touched.
-    if (state.selected !== el && state.txn) endTxn();
-    state.selected = el || null;
+    const members = normalizeSelectionElements(elements);
+    const nextPrimary = (primary && members.includes(primary))
+      ? primary
+      : (members[members.length - 1] || null);
+    const selectionChanged = (
+      state.selected !== nextPrimary ||
+      !selectionArraysEqual(state.selectedElements, members)
+    );
+    if (selectionChanged && state.txn) endTxn();
+    state.selected = nextPrimary;
+    state.selectedElements = nextPrimary ? members : [];
     if (state.selected) {
-      positionRing(state.selected);
-      positionDimBubble(state.selected);
-      populateInspector(state.selected);
-      startSelectionTracking();
+      refreshSelection();
     } else {
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       populateInspector(null);
       stopSelectionTracking();
     }
@@ -297,6 +431,10 @@
     // and mouseup targets (== body), and onClick can't find the original
     // target. Updating inspector after the mouseup keeps the click cycle
     // against the original DOM.
+  }
+
+  function setSelected(el) {
+    setSelectedElements(el ? [el] : [], el || null);
   }
 
   function populateInspector(el) {
@@ -535,7 +673,7 @@
   // is a v2.x ROADMAP item).
   // ===========================================================================
   function refreshInspector() {
-    const visible = !!state.selected;
+    const visible = getSelectedElements().length === 1 && !!state.selected;
     inspector.dataset.visible = visible ? 'true' : 'false';
     inspector.dataset.state = state.inspectorMinimised ? 'minimised' : 'expanded';
     inspectorMinimiseBtn.innerHTML = state.inspectorMinimised ? ICONS.chevronDown : ICONS.chevronUp;
