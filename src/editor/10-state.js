@@ -6,7 +6,7 @@
     selected: null,
     drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
-    editingText: null, // { el, originalContenteditable } while a text edit is open
+    editingText: null, // { el, originalContenteditable, savedRange } while a text edit is open
     suppressClickUntil: 0,
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
@@ -18,4 +18,3 @@
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
   };
-

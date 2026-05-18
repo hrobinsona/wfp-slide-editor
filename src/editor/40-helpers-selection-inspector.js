@@ -378,6 +378,14 @@
       populateColours(el);
       return;
     }
+    if (target === 'text' && state.editingText && state.editingText.el === el) {
+      const ctx = startInspectorTxn({ captureHtml: !!getTextColourRange(el) });
+      touchElement(el);
+      applyTextColourToRange(el, norm);
+      endInspectorTxn(ctx);
+      populateColours(el);
+      return;
+    }
     const cssProp = target === 'text' ? 'color' : 'backgroundColor';
     const currentHex = rgbStringToHex(el.style[cssProp] || '');
     if (currentHex === norm) return; // no-op; suppress duplicate history entry
@@ -399,7 +407,8 @@
     }
     // Text colour
     if (isTextBearing(el)) {
-      const colorRgb = getComputedStyle(el).color;
+      const textColourSource = getActiveTextColourSpan(el) || el;
+      const colorRgb = getComputedStyle(textColourSource).color;
       const hex = rgbStringToHex(colorRgb) || '#000000';
       if (document.activeElement !== textColourRow.hexInput) textColourRow.hexInput.value = hex;
       textColourRow.colorInput.value = hex;

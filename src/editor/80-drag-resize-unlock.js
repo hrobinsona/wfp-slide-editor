@@ -45,7 +45,10 @@
     // and fall through so the outside element can be selected normally.
     if (state.editingText) {
       if (state.editingText.el.contains(e.target)) return;
-      if (inspector.contains(e.target)) return;
+      if (inspector.contains(e.target)) {
+        rememberTextSelectionRange();
+        return;
+      }
       endTextEdit();
     }
 
@@ -314,4 +317,3 @@
     d.width = rect.width;
     d.height = rect.height;
   }
-

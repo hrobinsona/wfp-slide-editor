@@ -603,8 +603,8 @@
   // `restoreCtx` itself can legitimately be null (no text-edit to
   // restore), so we can't reuse null as "no session in progress".
   const pickerSession = {
-    text: { open: false, restoreCtx: null },
-    bg: { open: false, restoreCtx: null },
+    text: { open: false, restoreCtx: null, inlineSpan: null },
+    bg: { open: false, restoreCtx: null, inlineSpan: null },
   };
   function wireColourRow({ swatch, colorInput, hexInput, clearBtn }, target) {
     // The native colour input sits over the swatch as the actual click
@@ -615,12 +615,22 @@
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
+      const norm = parseHexInput(colorInput.value);
+      if (!norm) return;
+      const textRange = target === 'text' && state.editingText && state.editingText.el === el
+        ? getTextColourRange(el)
+        : null;
       if (!pickerSession[target].open) {
         pickerSession[target].open = true;
-        pickerSession[target].restoreCtx = startInspectorTxn();
+        pickerSession[target].inlineSpan = null;
+        pickerSession[target].restoreCtx = startInspectorTxn({ captureHtml: !!textRange });
         touchElement(el);
       }
-      applyColorToElement(el, target, colorInput.value);
+      if (target === 'text' && state.editingText && state.editingText.el === el) {
+        pickerSession[target].inlineSpan = applyTextColourToRange(el, norm, pickerSession[target].inlineSpan);
+      } else {
+        applyColorToElement(el, target, norm);
+      }
       populateColours(el);
     });
     colorInput.addEventListener('change', () => {
@@ -628,16 +638,22 @@
       const ctx = pickerSession[target].restoreCtx;
       pickerSession[target].open = false;
       pickerSession[target].restoreCtx = null;
+      pickerSession[target].inlineSpan = null;
       endInspectorTxn(ctx);
     });
     hexInput.addEventListener('focus', () => {
       hexInput.__wfpeFocusTarget = state.selected || null;
+      hexInput.__wfpeDirty = false;
+    });
+    hexInput.addEventListener('input', () => {
+      hexInput.__wfpeDirty = true;
     });
     hexInput.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') {
         e.preventDefault();
-        commitColourHex(target, hexInput.value, hexInput.__wfpeFocusTarget);
+        if (hexInput.__wfpeDirty) commitColourHex(target, hexInput.value, hexInput.__wfpeFocusTarget);
+        hexInput.__wfpeSkipNextBlurCommit = true;
         hexInput.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -649,7 +665,12 @@
     hexInput.addEventListener('blur', () => {
       const targetEl = hexInput.__wfpeFocusTarget;
       hexInput.__wfpeFocusTarget = null;
+      if (hexInput.__wfpeSkipNextBlurCommit) {
+        hexInput.__wfpeSkipNextBlurCommit = false;
+        return;
+      }
       if (revertingInput === hexInput) { revertingInput = null; return; }
+      if (!hexInput.__wfpeDirty) return;
       commitColourHex(target, hexInput.value, targetEl);
     });
     if (clearBtn) {

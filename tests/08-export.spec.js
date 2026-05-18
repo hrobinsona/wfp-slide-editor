@@ -31,6 +31,41 @@ async function clickToSelect(page, selector) {
   }, selector);
 }
 
+async function dblclickElement(page, selector) {
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(
+      new MouseEvent('dblclick', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+        detail: 2,
+      }),
+    );
+  }, selector);
+}
+
+async function selectTextRange(page, selector, text) {
+  await page.evaluate(({ selector: sel, text: needle }) => {
+    const el = document.querySelector(sel);
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && !node.textContent.includes(needle)) node = walker.nextNode();
+    if (!node) throw new Error(`Text not found: ${needle}`);
+    const start = node.textContent.indexOf(needle);
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + needle.length);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  }, { selector, text });
+}
+
 async function triggerExport(page) {
   const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
   await page.keyboard.press('ControlOrMeta+s');
@@ -164,6 +199,32 @@ test.describe('Phase 8 — Export', () => {
     const { content } = await readDownloadAsString(download);
 
     expect(content).toContain('EXPORTED HEADLINE TEXT');
+  });
+
+  test('exported HTML preserves inline text range colour', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await setDeckScale(page, 1);
+    await page.keyboard.press('e');
+
+    await clickToSelect(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await dblclickElement(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#225588');
+    await hex.press('Enter');
+    await page.keyboard.press('Escape');
+
+    const download = await triggerExport(page);
+    const { content } = await readDownloadAsString(download);
+
+    expect(content).toContain('<span style="color: rgb(34, 85, 136);">Beta</span>');
+    expect(content).not.toContain('contenteditable=');
+    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
   });
 
   test('shows a "Exported to ..." toast after a successful export', async ({ page }) => {
