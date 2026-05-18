@@ -30,6 +30,38 @@ async function startTextEdit(page, selector) {
   }, selector);
 }
 
+async function selectTextRange(page, selector, text) {
+  await page.evaluate(({ selector: sel, text: needle }) => {
+    const el = document.querySelector(sel);
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node && !node.textContent.includes(needle)) node = walker.nextNode();
+    if (!node) throw new Error(`Text not found: ${needle}`);
+    const start = node.textContent.indexOf(needle);
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, start + needle.length);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  }, { selector, text });
+}
+
+async function collapseTextSelection(page, selector) {
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const textNode = [...el.childNodes].find((node) => node.nodeType === Node.TEXT_NODE);
+    const range = document.createRange();
+    range.setStart(textNode, 0);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  }, selector);
+}
+
 test.describe('v2.6 — inspector during inline text edit', () => {
   test.beforeEach(async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
@@ -160,6 +192,152 @@ test.describe('v2.6 — inspector during inline text edit', () => {
     ).toBe('true');
   });
 
+  test('text colour applies to a selected word inside a plain title', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#ff3344');
+    await hex.press('Enter');
+
+    const result = await page.evaluate(() => {
+      const h1 = document.querySelector('.slide.active h1');
+      const spans = [...h1.querySelectorAll('span')].map((span) => ({
+        text: span.textContent,
+        color: span.style.color,
+      }));
+      return { text: h1.textContent, elementColor: h1.style.color, spans };
+    });
+    expect(result.text).toBe('Alpha Beta Gamma');
+    expect(result.elementColor).toBe('');
+    expect(result.spans).toEqual([{ text: 'Beta', color: 'rgb(255, 51, 68)' }]);
+  });
+
+  test('inspector focus preserves the saved text range before text colour commit', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    await page.locator('#wfp-editor-root .wfpe-inspector-title').click();
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#225588');
+    await hex.press('Enter');
+
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1 span').outerHTML
+    )).toBe('<span style="color: rgb(34, 85, 136);">Beta</span>');
+  });
+
+  test('focusing and blurring text colour without changing it does not wrap the saved range', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.focus();
+    await page.locator('#wfp-editor-root .wfpe-inspector-title').click();
+
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').innerHTML
+    )).toBe('Alpha Beta Gamma');
+  });
+
+  test('recolouring the same selected word updates one span and refreshes the colour readout', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#111111');
+    await hex.press('Enter');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#225588');
+    await hex.press('Enter');
+
+    expect(await page.evaluate(() => {
+      const h1 = document.querySelector('.slide.active h1');
+      return [...h1.querySelectorAll('span')].map((span) => ({
+        html: span.outerHTML,
+        color: span.style.color,
+      }));
+    })).toEqual([{
+      html: '<span style="color: rgb(34, 85, 136);">Beta</span>',
+      color: 'rgb(34, 85, 136)',
+    }]);
+    expect(await page.evaluate(() =>
+      document.querySelector('#wfp-editor-root input[type="color"][data-wfpe-target="text"]').value
+    )).toBe('#225588');
+  });
+
+  test('native picker range colour updates one span and creates one undo entry', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    await page.evaluate(() => {
+      const input = document.querySelector('#wfp-editor-root input[type="color"][data-wfpe-target="text"]');
+      input.value = '#111111';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.value = '#225588';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    expect(await page.evaluate(() => {
+      const h1 = document.querySelector('.slide.active h1');
+      return [...h1.querySelectorAll('span')].map((span) => ({
+        text: span.textContent,
+        color: span.style.color,
+      }));
+    })).toEqual([{ text: 'Beta', color: 'rgb(34, 85, 136)' }]);
+
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').innerHTML
+    )).toBe('Alpha Beta Gamma');
+  });
+
+  test('text colour falls back to the whole element when no text range is selected', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    await startTextEdit(page, '.slide.active h1');
+    await collapseTextSelection(page, '.slide.active h1');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#990033');
+    await hex.press('Enter');
+
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').style.color
+    )).toBe('rgb(153, 0, 51)');
+    expect(await page.evaluate(() =>
+      document.querySelectorAll('.slide.active h1 span').length
+    )).toBe(0);
+  });
+
   test('typing into an inspector input does NOT route keystrokes to the text-edit target', async ({ page }) => {
     await selectByMouse(page, '.slide.active h1');
     await startTextEdit(page, '.slide.active h1');
@@ -229,6 +407,55 @@ test.describe('v2.6 — inspector during inline text edit', () => {
     expect(await page.evaluate(() =>
       document.querySelector('.slide.active h1').style.color
     )).toBe('');
+  });
+
+  test('typing before and after a range colour edit keeps separate undo entries', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').innerHTML = 'Alpha Beta Gamma';
+    });
+    const beforeHtml = await page.evaluate(
+      () => document.querySelector('.slide.active h1').innerHTML
+    );
+
+    await startTextEdit(page, '.slide.active h1');
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').appendChild(document.createTextNode(' first'));
+    });
+    await selectTextRange(page, '.slide.active h1', 'Beta');
+
+    const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
+    await hex.click({ clickCount: 3 });
+    await hex.fill('#225588');
+    await hex.press('Enter');
+
+    await page.evaluate(() => {
+      document.querySelector('.slide.active h1').focus();
+      document.querySelector('.slide.active h1').appendChild(document.createTextNode(' second'));
+    });
+    await page.keyboard.press('Escape');
+
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').innerHTML
+    )).toContain('second');
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1 span').style.color
+    )).toBe('rgb(34, 85, 136)');
+
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').innerHTML
+    )).not.toContain('second');
+
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() =>
+      document.querySelectorAll('.slide.active h1 span').length
+    )).toBe(0);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() =>
+      document.querySelector('.slide.active h1').innerHTML
+    )).toBe(beforeHtml);
   });
 
   test('inspector stays visible during text-edit', async ({ page }) => {

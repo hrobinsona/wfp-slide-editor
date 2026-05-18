@@ -25,6 +25,111 @@
     sel.addRange(range);
   }
 
+  function isNodeInsideElement(node, el) {
+    if (!node || !el) return false;
+    if (node === el) return true;
+    const container = node.nodeType === 1 ? node : node.parentNode;
+    return !!container && (container === el || el.contains(container));
+  }
+
+  function isRangeInsideElement(range, el) {
+    if (!range || !el || !el.isConnected) return false;
+    return (
+      isNodeInsideElement(range.startContainer, el) &&
+      isNodeInsideElement(range.endContainer, el) &&
+      isNodeInsideElement(range.commonAncestorContainer, el)
+    );
+  }
+
+  function rememberTextSelectionRange() {
+    const editing = state.editingText;
+    if (!editing || !editing.el || !editing.el.isConnected) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!isRangeInsideElement(range, editing.el)) return;
+    editing.savedRange = range.collapsed ? null : range.cloneRange();
+  }
+
+  function getTextColourRange(el) {
+    const editing = state.editingText;
+    if (!editing || editing.el !== el) return null;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const current = sel.getRangeAt(0);
+      if (!current.collapsed && isRangeInsideElement(current, el)) {
+        editing.savedRange = current.cloneRange();
+        return current.cloneRange();
+      }
+    }
+    if (
+      editing.savedRange &&
+      !editing.savedRange.collapsed &&
+      isRangeInsideElement(editing.savedRange, el)
+    ) {
+      return editing.savedRange.cloneRange();
+    }
+    return null;
+  }
+
+  function saveTextColourSpanRange(el, span) {
+    if (!state.editingText || state.editingText.el !== el || !span || !span.isConnected) return;
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    state.editingText.savedRange = range.cloneRange();
+  }
+
+  function getColourSpanAncestor(node, boundaryEl) {
+    let cur = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    while (cur && cur !== boundaryEl) {
+      if (cur.tagName === 'SPAN' && cur.style && cur.style.color) return cur;
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  function getColourSpanForRange(el, range) {
+    if (!range || range.collapsed) return null;
+    const startSpan = getColourSpanAncestor(range.startContainer, el);
+    const endSpan = getColourSpanAncestor(range.endContainer, el);
+    if (!startSpan || startSpan !== endSpan) return null;
+    if (range.toString() !== startSpan.textContent) return null;
+    return startSpan;
+  }
+
+  function getActiveTextColourSpan(el) {
+    const range = getTextColourRange(el);
+    return range ? getColourSpanForRange(el, range) : null;
+  }
+
+  function applyTextColourToRange(el, hex, existingSpan = null) {
+    if (existingSpan && existingSpan.isConnected && el.contains(existingSpan)) {
+      existingSpan.style.color = hex;
+      saveTextColourSpanRange(el, existingSpan);
+      return existingSpan;
+    }
+
+    const range = getTextColourRange(el);
+    if (!range) {
+      el.style.color = hex;
+      return null;
+    }
+
+    const colourSpan = getColourSpanForRange(el, range);
+    if (colourSpan) {
+      colourSpan.style.color = hex;
+      saveTextColourSpanRange(el, colourSpan);
+      return colourSpan;
+    }
+
+    const span = document.createElement('span');
+    span.style.color = hex;
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    saveTextColourSpanRange(el, span);
+    return span;
+  }
+
   function startTextEdit(el, clickX, clickY) {
     if (state.editingText) return;
     if (!isTextBearing(el)) return;
@@ -32,6 +137,7 @@
     state.editingText = {
       el,
       originalContenteditable: el.getAttribute('contenteditable'),
+      savedRange: null,
     };
 
     beginTxn({ captureHtml: true });
@@ -76,6 +182,7 @@
   }
 
   document.addEventListener('dblclick', onDoubleClick, true);
+  document.addEventListener('selectionchange', rememberTextSelectionRange);
 
   function onMouseMove(e) {
     const d = state.drag;
@@ -127,4 +234,3 @@
   }
 
   document.addEventListener('mousedown', onMouseDown, true);
-

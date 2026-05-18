@@ -93,13 +93,13 @@
   // inspector op as another, then re-opens a fresh text-edit txn so
   // subsequent typing accumulates into a new entry on commit.
   // ---------------------------------------------------------------------------
-  function startInspectorTxn() {
+  function startInspectorTxn(options = {}) {
     let restoreEditingEl = null;
     if (state.editingText) {
       restoreEditingEl = state.editingText.el;
       if (state.txn) endTxn(); // commits typing-so-far
     }
-    if (!state.txn) beginTxn();
+    if (!state.txn) beginTxn(options);
     return restoreEditingEl;
   }
 
@@ -260,4 +260,3 @@
     refreshSelection();
     if (state.overviewMode) buildOverviewOverlay();
   }
-

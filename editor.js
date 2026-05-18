@@ -70,7 +70,7 @@
     selected: null,
     drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
-    editingText: null, // { el, originalContenteditable } while a text edit is open
+    editingText: null, // { el, originalContenteditable, savedRange } while a text edit is open
     suppressClickUntil: 0,
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
@@ -82,7 +82,6 @@
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
   };
-
   // ===========================================================================
   // DOM mount
   // ===========================================================================
@@ -1587,8 +1586,8 @@
   // `restoreCtx` itself can legitimately be null (no text-edit to
   // restore), so we can't reuse null as "no session in progress".
   const pickerSession = {
-    text: { open: false, restoreCtx: null },
-    bg: { open: false, restoreCtx: null },
+    text: { open: false, restoreCtx: null, inlineSpan: null },
+    bg: { open: false, restoreCtx: null, inlineSpan: null },
   };
   function wireColourRow({ swatch, colorInput, hexInput, clearBtn }, target) {
     // The native colour input sits over the swatch as the actual click
@@ -1599,12 +1598,22 @@
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
+      const norm = parseHexInput(colorInput.value);
+      if (!norm) return;
+      const textRange = target === 'text' && state.editingText && state.editingText.el === el
+        ? getTextColourRange(el)
+        : null;
       if (!pickerSession[target].open) {
         pickerSession[target].open = true;
-        pickerSession[target].restoreCtx = startInspectorTxn();
+        pickerSession[target].inlineSpan = null;
+        pickerSession[target].restoreCtx = startInspectorTxn({ captureHtml: !!textRange });
         touchElement(el);
       }
-      applyColorToElement(el, target, colorInput.value);
+      if (target === 'text' && state.editingText && state.editingText.el === el) {
+        pickerSession[target].inlineSpan = applyTextColourToRange(el, norm, pickerSession[target].inlineSpan);
+      } else {
+        applyColorToElement(el, target, norm);
+      }
       populateColours(el);
     });
     colorInput.addEventListener('change', () => {
@@ -1612,16 +1621,22 @@
       const ctx = pickerSession[target].restoreCtx;
       pickerSession[target].open = false;
       pickerSession[target].restoreCtx = null;
+      pickerSession[target].inlineSpan = null;
       endInspectorTxn(ctx);
     });
     hexInput.addEventListener('focus', () => {
       hexInput.__wfpeFocusTarget = state.selected || null;
+      hexInput.__wfpeDirty = false;
+    });
+    hexInput.addEventListener('input', () => {
+      hexInput.__wfpeDirty = true;
     });
     hexInput.addEventListener('keydown', (e) => {
       e.stopPropagation();
       if (e.key === 'Enter') {
         e.preventDefault();
-        commitColourHex(target, hexInput.value, hexInput.__wfpeFocusTarget);
+        if (hexInput.__wfpeDirty) commitColourHex(target, hexInput.value, hexInput.__wfpeFocusTarget);
+        hexInput.__wfpeSkipNextBlurCommit = true;
         hexInput.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -1633,7 +1648,12 @@
     hexInput.addEventListener('blur', () => {
       const targetEl = hexInput.__wfpeFocusTarget;
       hexInput.__wfpeFocusTarget = null;
+      if (hexInput.__wfpeSkipNextBlurCommit) {
+        hexInput.__wfpeSkipNextBlurCommit = false;
+        return;
+      }
       if (revertingInput === hexInput) { revertingInput = null; return; }
+      if (!hexInput.__wfpeDirty) return;
       commitColourHex(target, hexInput.value, targetEl);
     });
     if (clearBtn) {
@@ -2058,6 +2078,14 @@
       populateColours(el);
       return;
     }
+    if (target === 'text' && state.editingText && state.editingText.el === el) {
+      const ctx = startInspectorTxn({ captureHtml: !!getTextColourRange(el) });
+      touchElement(el);
+      applyTextColourToRange(el, norm);
+      endInspectorTxn(ctx);
+      populateColours(el);
+      return;
+    }
     const cssProp = target === 'text' ? 'color' : 'backgroundColor';
     const currentHex = rgbStringToHex(el.style[cssProp] || '');
     if (currentHex === norm) return; // no-op; suppress duplicate history entry
@@ -2079,7 +2107,8 @@
     }
     // Text colour
     if (isTextBearing(el)) {
-      const colorRgb = getComputedStyle(el).color;
+      const textColourSource = getActiveTextColourSpan(el) || el;
+      const colorRgb = getComputedStyle(textColourSource).color;
       const hex = rgbStringToHex(colorRgb) || '#000000';
       if (document.activeElement !== textColourRow.hexInput) textColourRow.hexInput.value = hex;
       textColourRow.colorInput.value = hex;
@@ -2316,13 +2345,13 @@
   // inspector op as another, then re-opens a fresh text-edit txn so
   // subsequent typing accumulates into a new entry on commit.
   // ---------------------------------------------------------------------------
-  function startInspectorTxn() {
+  function startInspectorTxn(options = {}) {
     let restoreEditingEl = null;
     if (state.editingText) {
       restoreEditingEl = state.editingText.el;
       if (state.txn) endTxn(); // commits typing-so-far
     }
-    if (!state.txn) beginTxn();
+    if (!state.txn) beginTxn(options);
     return restoreEditingEl;
   }
 
@@ -2483,7 +2512,6 @@
     refreshSelection();
     if (state.overviewMode) buildOverviewOverlay();
   }
-
   // ===========================================================================
   // Edit mode
   // ===========================================================================
@@ -3458,7 +3486,10 @@
     // and fall through so the outside element can be selected normally.
     if (state.editingText) {
       if (state.editingText.el.contains(e.target)) return;
-      if (inspector.contains(e.target)) return;
+      if (inspector.contains(e.target)) {
+        rememberTextSelectionRange();
+        return;
+      }
       endTextEdit();
     }
 
@@ -3727,7 +3758,6 @@
     d.width = rect.width;
     d.height = rect.height;
   }
-
   // ===========================================================================
   // Inline text edit
   //
@@ -3755,6 +3785,111 @@
     sel.addRange(range);
   }
 
+  function isNodeInsideElement(node, el) {
+    if (!node || !el) return false;
+    if (node === el) return true;
+    const container = node.nodeType === 1 ? node : node.parentNode;
+    return !!container && (container === el || el.contains(container));
+  }
+
+  function isRangeInsideElement(range, el) {
+    if (!range || !el || !el.isConnected) return false;
+    return (
+      isNodeInsideElement(range.startContainer, el) &&
+      isNodeInsideElement(range.endContainer, el) &&
+      isNodeInsideElement(range.commonAncestorContainer, el)
+    );
+  }
+
+  function rememberTextSelectionRange() {
+    const editing = state.editingText;
+    if (!editing || !editing.el || !editing.el.isConnected) return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (!isRangeInsideElement(range, editing.el)) return;
+    editing.savedRange = range.collapsed ? null : range.cloneRange();
+  }
+
+  function getTextColourRange(el) {
+    const editing = state.editingText;
+    if (!editing || editing.el !== el) return null;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const current = sel.getRangeAt(0);
+      if (!current.collapsed && isRangeInsideElement(current, el)) {
+        editing.savedRange = current.cloneRange();
+        return current.cloneRange();
+      }
+    }
+    if (
+      editing.savedRange &&
+      !editing.savedRange.collapsed &&
+      isRangeInsideElement(editing.savedRange, el)
+    ) {
+      return editing.savedRange.cloneRange();
+    }
+    return null;
+  }
+
+  function saveTextColourSpanRange(el, span) {
+    if (!state.editingText || state.editingText.el !== el || !span || !span.isConnected) return;
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    state.editingText.savedRange = range.cloneRange();
+  }
+
+  function getColourSpanAncestor(node, boundaryEl) {
+    let cur = node && node.nodeType === 1 ? node : (node && node.parentElement);
+    while (cur && cur !== boundaryEl) {
+      if (cur.tagName === 'SPAN' && cur.style && cur.style.color) return cur;
+      cur = cur.parentElement;
+    }
+    return null;
+  }
+
+  function getColourSpanForRange(el, range) {
+    if (!range || range.collapsed) return null;
+    const startSpan = getColourSpanAncestor(range.startContainer, el);
+    const endSpan = getColourSpanAncestor(range.endContainer, el);
+    if (!startSpan || startSpan !== endSpan) return null;
+    if (range.toString() !== startSpan.textContent) return null;
+    return startSpan;
+  }
+
+  function getActiveTextColourSpan(el) {
+    const range = getTextColourRange(el);
+    return range ? getColourSpanForRange(el, range) : null;
+  }
+
+  function applyTextColourToRange(el, hex, existingSpan = null) {
+    if (existingSpan && existingSpan.isConnected && el.contains(existingSpan)) {
+      existingSpan.style.color = hex;
+      saveTextColourSpanRange(el, existingSpan);
+      return existingSpan;
+    }
+
+    const range = getTextColourRange(el);
+    if (!range) {
+      el.style.color = hex;
+      return null;
+    }
+
+    const colourSpan = getColourSpanForRange(el, range);
+    if (colourSpan) {
+      colourSpan.style.color = hex;
+      saveTextColourSpanRange(el, colourSpan);
+      return colourSpan;
+    }
+
+    const span = document.createElement('span');
+    span.style.color = hex;
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    saveTextColourSpanRange(el, span);
+    return span;
+  }
+
   function startTextEdit(el, clickX, clickY) {
     if (state.editingText) return;
     if (!isTextBearing(el)) return;
@@ -3762,6 +3897,7 @@
     state.editingText = {
       el,
       originalContenteditable: el.getAttribute('contenteditable'),
+      savedRange: null,
     };
 
     beginTxn({ captureHtml: true });
@@ -3806,6 +3942,7 @@
   }
 
   document.addEventListener('dblclick', onDoubleClick, true);
+  document.addEventListener('selectionchange', rememberTextSelectionRange);
 
   function onMouseMove(e) {
     const d = state.drag;
@@ -3857,7 +3994,6 @@
   }
 
   document.addEventListener('mousedown', onMouseDown, true);
-
   // ===========================================================================
   // Export
   //
