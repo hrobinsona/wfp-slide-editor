@@ -19,6 +19,126 @@
     return el;
   }
 
+  function stripEditorArtifactsFrom(el) {
+    if (!el) return;
+    const nodes = [el, ...el.querySelectorAll('*')];
+    for (const node of nodes) {
+      for (const attr of [...node.attributes]) {
+        if (attr.name.startsWith('data-wfp-edit')) node.removeAttribute(attr.name);
+      }
+      if (node.hasAttribute('contenteditable')) node.removeAttribute('contenteditable');
+    }
+  }
+
+  function getSlideBox(el) {
+    const slide = el.closest('.slide');
+    const scale = getCanvasScale();
+    const elRect = el.getBoundingClientRect();
+    const slideRect = slide ? slide.getBoundingClientRect() : { left: 0, top: 0 };
+    const safeScale = scale || 1;
+    return {
+      left: (elRect.left - slideRect.left) / safeScale,
+      top: (elRect.top - slideRect.top) / safeScale,
+      width: elRect.width / safeScale,
+      height: elRect.height / safeScale,
+    };
+  }
+
+  function serializeElementForClipboard(el) {
+    const clone = el.cloneNode(true);
+    stripEditorArtifactsFrom(clone);
+    const box = getSlideBox(el);
+    const computed = getComputedStyle(el);
+    const contentWidth = parseFloat(computed.width);
+    const contentHeight = parseFloat(computed.height);
+    const width = computed.boxSizing === 'border-box'
+      ? box.width
+      : (Number.isFinite(contentWidth) ? contentWidth : box.width);
+    const height = computed.boxSizing === 'border-box'
+      ? box.height
+      : (Number.isFinite(contentHeight) ? contentHeight : box.height);
+    clone.style.position = 'absolute';
+    clone.style.left = `${box.left}px`;
+    clone.style.top = `${box.top}px`;
+    clone.style.width = `${width}px`;
+    clone.style.height = `${height}px`;
+    return clone.outerHTML;
+  }
+
+  function copySelectedElement() {
+    const el = state.selected;
+    if (!el || !el.isConnected) return false;
+    state.clipboard = { outerHTML: serializeElementForClipboard(el) };
+    return true;
+  }
+
+  function parseClipboardElement() {
+    if (!state.clipboard || !state.clipboard.outerHTML) return null;
+    const template = document.createElement('template');
+    template.innerHTML = state.clipboard.outerHTML.trim();
+    const el = template.content.firstElementChild;
+    if (!el) return null;
+    stripEditorArtifactsFrom(el);
+    return el;
+  }
+
+  function pasteClipboardElement() {
+    const slide = getActiveSlide();
+    if (!slide) return false;
+    const inserted = parseClipboardElement();
+    if (!inserted) return false;
+    const left = parseFloat(inserted.style.left);
+    const top = parseFloat(inserted.style.top);
+    inserted.style.position = 'absolute';
+    inserted.style.left = `${(Number.isFinite(left) ? left : 0) + 20}px`;
+    inserted.style.top = `${(Number.isFinite(top) ? top : 0) + 20}px`;
+
+    const previousSelectedEl = (
+      state.selected &&
+      state.selected.isConnected &&
+      slide.contains(state.selected)
+    ) ? state.selected : null;
+    slide.appendChild(inserted);
+    pushElementInsertEntry({
+      type: 'elementInsert',
+      slideEl: slide,
+      insertedEl: inserted,
+      parentEl: slide,
+      nextSiblingEl: null,
+      previousSelectedEl,
+    });
+    setSelected(inserted);
+    refreshInspector();
+    return true;
+  }
+
+  function duplicateSelected() {
+    if (state.editingText) endTextEdit();
+    if (!copySelectedElement()) return false;
+    return pasteClipboardElement();
+  }
+
+  function deleteSelectedElement() {
+    if (state.editingText) endTextEdit();
+    const el = state.selected;
+    if (!el || !el.isConnected || state.overviewMode) return false;
+    const parent = el.parentElement;
+    const slide = el.closest('.slide');
+    if (!parent || !slide) return false;
+    const nextSibling = el.nextSibling;
+    parent.removeChild(el);
+    pushElementInsertEntry({
+      type: 'elementDelete',
+      slideEl: slide,
+      deletedEl: el,
+      parentEl: parent,
+      nextSiblingEl: nextSibling,
+    });
+    setSelected(null);
+    refreshInspector();
+    return true;
+  }
+
   function positionRing(el) {
     const rect = el.getBoundingClientRect();
     ring.style.display = 'block';
@@ -421,4 +541,3 @@
     state.inspectorMinimised = !!value;
     refreshInspector();
   }
-

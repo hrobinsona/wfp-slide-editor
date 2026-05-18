@@ -13,8 +13,9 @@
  * Phase 8: Cmd+S export — clones the document, scrubs editor markers, downloads.
  * Phase 9: liquid-glass toolbar + capture-phase suppression of slide nav keys.
  * v2.0:    toolbar liquid-glass refresh — recipe-correct light/dark variants,
- *          inline SVG icons (lucide aesthetic), button order Edit · Export ·
- *          Undo · Redo, no behavior change.
+ *          inline SVG icons (lucide aesthetic), no behavior change.
+ * v2.1:    Overview mode for slide reorder/delete.
+ * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -22,7 +23,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.1.0-v2.1.1';
+  const VERSION = '2.2.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -74,6 +75,7 @@
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
     txn: null, // { snapshots: Map<Element, BeforeSnap>, captureHtml } when an op is in progress
+    clipboard: null, // { outerHTML } session-only element copy/paste payload
     inspectorMinimised: false, // persists across selections within session; resets on reload
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
@@ -571,15 +573,19 @@
     #${ROOT_ID} .wfpe-color-clear:hover {
       background-color: rgba(255, 255, 255, 0.22);
     }
-    /* Reset-styles row (v2.5 redesign): inline icon + label, left-aligned,
-       reading as a quiet text link rather than a full-width pill. The
-       refresh icon signals the destructive nature without leaning on
-       colour. The whole row is the click target via the button itself. */
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="reset"] {
-      justify-content: flex-start;
-      gap: 0;
+    /* Element action row: compact text-link controls for common structural
+       actions. They stay in one row to keep the inspector from growing
+       vertically as feature actions are added. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="actions"] {
+      justify-content: space-between;
+      gap: 6px;
       padding-top: 4px;
+      flex-wrap: nowrap;
+      width: 100%;
+      box-sizing: border-box;
     }
+    #${ROOT_ID} .wfpe-duplicate-btn,
+    #${ROOT_ID} .wfpe-delete-btn,
     #${ROOT_ID} .wfpe-reset-btn {
       appearance: none;
       -webkit-appearance: none;
@@ -587,20 +593,29 @@
       border: 0;
       color: rgba(255, 255, 255, 0.78);
       padding: 4px 6px;
-      margin-left: -6px;
       border-radius: 6px;
       cursor: pointer;
       font: 500 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.01em;
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 6px;
+      flex: 1 1 0;
+      min-width: 0;
       transition: color 120ms ease, background-color 120ms ease;
     }
+    #${ROOT_ID} .wfpe-duplicate-btn:hover,
+    #${ROOT_ID} .wfpe-delete-btn:hover,
     #${ROOT_ID} .wfpe-reset-btn:hover {
       color: #fff;
       background-color: rgba(255, 255, 255, 0.10);
     }
+    #${ROOT_ID} .wfpe-delete-btn:hover {
+      background-color: rgba(220, 38, 38, 0.28);
+    }
+    #${ROOT_ID} .wfpe-duplicate-btn .wfpe-icon,
+    #${ROOT_ID} .wfpe-delete-btn .wfpe-icon,
     #${ROOT_ID} .wfpe-reset-btn .wfpe-icon {
       width: 13px;
       height: 13px;
@@ -810,10 +825,58 @@
       pointer-events: auto;
       cursor: grab;
       box-sizing: border-box;
+      border-radius: 4px;
     }
     #${ROOT_ID} .wfpe-overview-thumb[data-dragging="true"] {
       opacity: 0.4;
       cursor: grabbing;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 4px;
+      pointer-events: none;
+      box-sizing: border-box;
+      z-index: 0;
+    }
+    #${ROOT_ID} .wfpe-overview-thumb[data-empty="true"]::after {
+      background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(244, 247, 251, 0.86));
+      border-color: rgba(15, 23, 42, 0.22);
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65);
+    }
+    #${ROOT_ID} .wfpe-overview-add {
+      position: fixed;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border-radius: 50%;
+      background: rgba(15, 23, 42, 0.54);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+      color: #fff;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
+      opacity: 0.42;
+      z-index: 2;
+      font: 600 18px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      transition: opacity 120ms ease, background-color 120ms ease, transform 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-overview-add:hover,
+    #${ROOT_ID} .wfpe-overview-add:focus {
+      opacity: 1;
+      background: rgba(15, 23, 42, 0.86);
+      transform: scale(1.06);
+      outline: none;
     }
     /* × delete button (v2.1.4) — Liquid Glass pill, top-right of each
        thumb, revealed on thumb hover or focus. Same dark-glass tint as
@@ -897,6 +960,7 @@
       font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.02em;
       text-align: center;
+      z-index: 1;
     }
     /* Active-slide highlight — Liquid Glass dialect using the inspector
        focus stroke value (rgba(255,255,255,0.55), already used at the
@@ -918,7 +982,6 @@
     }
   `;
   root.appendChild(styleEl);
-
   // Inline SVG icons — single-stroke, 18px, lucide aesthetic. Embedded
   // directly so the editor stays a self-contained file with no icon-font
   // or runtime dependency. `currentColor` lets the toolbar's text colour
@@ -955,11 +1018,25 @@
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="6 9 12 15 18 9" />' +
       '</svg>',
-    // Counter-clockwise refresh — paired with "Reset styles" in the inspector.
+    // Counter-clockwise refresh — paired with "Reset" in the inspector.
     refresh:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="1 4 1 10 7 10" />' +
       '<path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />' +
+      '</svg>',
+    // Copy — paired with the inspector Duplicate action.
+    copy:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<rect x="8" y="8" width="12" height="12" rx="2" />' +
+      '<path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />' +
+      '</svg>',
+    trash:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M3 6h18" />' +
+      '<path d="M8 6V4h8v2" />' +
+      '<path d="M19 6l-1 14H6L5 6" />' +
+      '<path d="M10 11v5" />' +
+      '<path d="M14 11v5" />' +
       '</svg>',
     // 2x2 grid — Overview toolbar button (v2.1.0).
     overview:
@@ -1277,21 +1354,39 @@
   inspectorBody.appendChild(opacityRow);
   inspectorInputs.opacity = fieldOpacity.input;
 
-  // Reset row (v2.5). Clears the selected element's entire inline style
+  // Element action row. Duplicate/delete/reset live together to avoid
+  // growing the inspector vertically as structural actions are added.
+  const actionRow = document.createElement('div');
+  actionRow.className = 'wfpe-inspector-row';
+  actionRow.dataset.wfpeRow = 'actions';
+  const duplicateBtn = document.createElement('button');
+  duplicateBtn.type = 'button';
+  duplicateBtn.className = 'wfpe-duplicate-btn';
+  duplicateBtn.dataset.action = 'duplicate-element';
+  duplicateBtn.innerHTML = ICONS.copy + '<span>Duplicate</span>';
+  duplicateBtn.title = 'Duplicate selected element';
+  actionRow.appendChild(duplicateBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'wfpe-delete-btn';
+  deleteBtn.dataset.action = 'delete-element';
+  deleteBtn.innerHTML = ICONS.trash + '<span>Delete</span>';
+  deleteBtn.title = 'Delete selected element';
+  actionRow.appendChild(deleteBtn);
+
+  // Reset action (v2.5). Clears the selected element's entire inline style
   // attribute as one history entry, returning it to its stylesheet-
   // defined rendering. No-op (no history entry) if the element has no
   // inline style to clear.
-  const resetRow = document.createElement('div');
-  resetRow.className = 'wfpe-inspector-row';
-  resetRow.dataset.wfpeRow = 'reset';
   const resetBtn = document.createElement('button');
   resetBtn.type = 'button';
   resetBtn.className = 'wfpe-reset-btn';
   resetBtn.dataset.action = 'reset-styles';
-  resetBtn.innerHTML = ICONS.refresh + '<span>Reset styles</span>';
+  resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
   resetBtn.title = 'Clear all inline style overrides on the selected element';
-  resetRow.appendChild(resetBtn);
-  inspectorBody.appendChild(resetRow);
+  actionRow.appendChild(resetBtn);
+  inspectorBody.appendChild(actionRow);
 
   root.appendChild(inspector);
 
@@ -1575,7 +1670,14 @@
     endInspectorTxn(ctx);
     refreshSelection();
   });
-
+  duplicateBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    duplicateSelected();
+  });
+  deleteBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    deleteSelectedElement();
+  });
   // ===========================================================================
   // Helpers
   // ===========================================================================
@@ -1595,6 +1697,126 @@
     if (el.classList && el.classList.contains('deck')) return null;
     if (!slide.contains(el)) return null;
     return el;
+  }
+
+  function stripEditorArtifactsFrom(el) {
+    if (!el) return;
+    const nodes = [el, ...el.querySelectorAll('*')];
+    for (const node of nodes) {
+      for (const attr of [...node.attributes]) {
+        if (attr.name.startsWith('data-wfp-edit')) node.removeAttribute(attr.name);
+      }
+      if (node.hasAttribute('contenteditable')) node.removeAttribute('contenteditable');
+    }
+  }
+
+  function getSlideBox(el) {
+    const slide = el.closest('.slide');
+    const scale = getCanvasScale();
+    const elRect = el.getBoundingClientRect();
+    const slideRect = slide ? slide.getBoundingClientRect() : { left: 0, top: 0 };
+    const safeScale = scale || 1;
+    return {
+      left: (elRect.left - slideRect.left) / safeScale,
+      top: (elRect.top - slideRect.top) / safeScale,
+      width: elRect.width / safeScale,
+      height: elRect.height / safeScale,
+    };
+  }
+
+  function serializeElementForClipboard(el) {
+    const clone = el.cloneNode(true);
+    stripEditorArtifactsFrom(clone);
+    const box = getSlideBox(el);
+    const computed = getComputedStyle(el);
+    const contentWidth = parseFloat(computed.width);
+    const contentHeight = parseFloat(computed.height);
+    const width = computed.boxSizing === 'border-box'
+      ? box.width
+      : (Number.isFinite(contentWidth) ? contentWidth : box.width);
+    const height = computed.boxSizing === 'border-box'
+      ? box.height
+      : (Number.isFinite(contentHeight) ? contentHeight : box.height);
+    clone.style.position = 'absolute';
+    clone.style.left = `${box.left}px`;
+    clone.style.top = `${box.top}px`;
+    clone.style.width = `${width}px`;
+    clone.style.height = `${height}px`;
+    return clone.outerHTML;
+  }
+
+  function copySelectedElement() {
+    const el = state.selected;
+    if (!el || !el.isConnected) return false;
+    state.clipboard = { outerHTML: serializeElementForClipboard(el) };
+    return true;
+  }
+
+  function parseClipboardElement() {
+    if (!state.clipboard || !state.clipboard.outerHTML) return null;
+    const template = document.createElement('template');
+    template.innerHTML = state.clipboard.outerHTML.trim();
+    const el = template.content.firstElementChild;
+    if (!el) return null;
+    stripEditorArtifactsFrom(el);
+    return el;
+  }
+
+  function pasteClipboardElement() {
+    const slide = getActiveSlide();
+    if (!slide) return false;
+    const inserted = parseClipboardElement();
+    if (!inserted) return false;
+    const left = parseFloat(inserted.style.left);
+    const top = parseFloat(inserted.style.top);
+    inserted.style.position = 'absolute';
+    inserted.style.left = `${(Number.isFinite(left) ? left : 0) + 20}px`;
+    inserted.style.top = `${(Number.isFinite(top) ? top : 0) + 20}px`;
+
+    const previousSelectedEl = (
+      state.selected &&
+      state.selected.isConnected &&
+      slide.contains(state.selected)
+    ) ? state.selected : null;
+    slide.appendChild(inserted);
+    pushElementInsertEntry({
+      type: 'elementInsert',
+      slideEl: slide,
+      insertedEl: inserted,
+      parentEl: slide,
+      nextSiblingEl: null,
+      previousSelectedEl,
+    });
+    setSelected(inserted);
+    refreshInspector();
+    return true;
+  }
+
+  function duplicateSelected() {
+    if (state.editingText) endTextEdit();
+    if (!copySelectedElement()) return false;
+    return pasteClipboardElement();
+  }
+
+  function deleteSelectedElement() {
+    if (state.editingText) endTextEdit();
+    const el = state.selected;
+    if (!el || !el.isConnected || state.overviewMode) return false;
+    const parent = el.parentElement;
+    const slide = el.closest('.slide');
+    if (!parent || !slide) return false;
+    const nextSibling = el.nextSibling;
+    parent.removeChild(el);
+    pushElementInsertEntry({
+      type: 'elementDelete',
+      slideEl: slide,
+      deletedEl: el,
+      parentEl: parent,
+      nextSiblingEl: nextSibling,
+    });
+    setSelected(null);
+    refreshInspector();
+    return true;
   }
 
   function positionRing(el) {
@@ -1999,7 +2221,6 @@
     state.inspectorMinimised = !!value;
     refreshInspector();
   }
-
   // ===========================================================================
   // History (undo/redo)
   //
@@ -2117,11 +2338,13 @@
     }
   }
 
-  function pushHistoryEntry(changes) {
+  function pushHistoryEntry(changes, slideOps = null) {
     // Truncate any redo stack — a fresh change invalidates everything
     // beyond the current cursor.
     state.history.length = state.historyIndex;
-    state.history.push({ changes });
+    const entry = { changes };
+    if (slideOps && slideOps.length) entry.slideOps = slideOps;
+    state.history.push(entry);
     state.historyIndex = state.history.length;
     while (state.history.length > HISTORY_MAX) {
       state.history.shift();
@@ -2129,9 +2352,14 @@
     }
   }
 
+  function pushElementInsertEntry(op) {
+    pushHistoryEntry([], [op]);
+  }
+
   // Slide-level history op handlers. These run alongside the per-element
   // `changes` array — they EXTEND the entry shape rather than replacing
-  // it. Op types: 'reorder' (v2.1.3), 'delete' (v2.1.4).
+  // it. Op types: 'reorder' (v2.1.3), 'delete' (v2.1.4),
+  // 'elementInsert', 'elementDelete', and 'slideInsert'.
   function undoSlideOp(op) {
     if (op.type === 'reorder') {
       applySlideOrder(op.deck, op.beforeOrder);
@@ -2150,6 +2378,44 @@
         if (op.fallbackSlide) op.fallbackSlide.classList.remove('active');
         op.slide.classList.add('active');
       }
+    } else if (op.type === 'elementInsert') {
+      if (op.insertedEl && op.insertedEl.parentElement === op.parentEl) {
+        op.parentEl.removeChild(op.insertedEl);
+      }
+      if (state.selected === op.insertedEl) {
+        const fallback = (
+          op.previousSelectedEl &&
+          op.previousSelectedEl.isConnected &&
+          op.slideEl &&
+          op.slideEl.contains(op.previousSelectedEl)
+        ) ? op.previousSelectedEl : null;
+        setSelected(fallback);
+        refreshInspector();
+      }
+    } else if (op.type === 'elementDelete') {
+      if (!op.parentEl || !op.deletedEl) return;
+      const ref = (
+        op.nextSiblingEl &&
+        op.nextSiblingEl.parentElement === op.parentEl
+      ) ? op.nextSiblingEl : null;
+      op.parentEl.insertBefore(op.deletedEl, ref);
+      setSelected(op.deletedEl);
+      refreshInspector();
+    } else if (op.type === 'slideInsert') {
+      const deck = op.deckEl || op.deck;
+      const inserted = op.insertedSlide;
+      if (!deck || !inserted || inserted.parentElement !== deck) return;
+      const slides = [...deck.querySelectorAll(':scope > .slide')];
+      const idx = slides.indexOf(inserted);
+      const fallbackSlide = inserted.classList.contains('active')
+        ? (slides[idx + 1] || slides[idx - 1] || null)
+        : null;
+      if (state.selected && inserted.contains(state.selected)) setSelected(null);
+      inserted.classList.remove('active');
+      deck.removeChild(inserted);
+      if (!deck.querySelector(':scope > .slide.active') && fallbackSlide) {
+        fallbackSlide.classList.add('active');
+      }
     }
   }
   function redoSlideOp(op) {
@@ -2158,6 +2424,34 @@
     } else if (op.type === 'delete') {
       op.deck.removeChild(op.slide);
       if (op.wasActive && op.fallbackSlide) op.fallbackSlide.classList.add('active');
+    } else if (op.type === 'elementInsert') {
+      if (!op.parentEl || !op.insertedEl) return;
+      const ref = (
+        op.nextSiblingEl &&
+        op.nextSiblingEl.parentElement === op.parentEl
+      ) ? op.nextSiblingEl : null;
+      op.parentEl.insertBefore(op.insertedEl, ref);
+      setSelected(op.insertedEl);
+      refreshInspector();
+    } else if (op.type === 'elementDelete') {
+      if (!op.parentEl || !op.deletedEl) return;
+      if (op.deletedEl.parentElement === op.parentEl) {
+        op.parentEl.removeChild(op.deletedEl);
+      }
+      if (state.selected === op.deletedEl || (state.selected && op.deletedEl.contains(state.selected))) {
+        setSelected(null);
+        refreshInspector();
+      }
+    } else if (op.type === 'slideInsert') {
+      const deck = op.deckEl || op.deck;
+      if (!deck || !op.insertedSlide) return;
+      const ref = (
+        op.beforeSibling &&
+        op.beforeSibling.parentElement === deck
+      ) ? op.beforeSibling : null;
+      op.insertedSlide.classList.remove('active');
+      deck.insertBefore(op.insertedSlide, ref);
+      observeSlideClass(op.insertedSlide);
     }
   }
 
@@ -2279,6 +2573,7 @@
       // Native HTML5 DnD source (v2.1.3). The thumb is editor-owned —
       // setting draggable here keeps slide DOM untouched.
       thumb.draggable = true;
+      if (!slide.innerHTML.trim()) thumb.dataset.empty = 'true';
       // Make the thumb focusable (v2.1.4) so the × button reveals via
       // :focus-within for keyboard users; arrow-key navigation between
       // thumbs is an explicit non-goal (BRIEF), but Tab focus is fine.
@@ -2301,13 +2596,25 @@
       thumb.appendChild(del);
       overviewOverlay.appendChild(thumb);
     }
+    for (let i = 0; i <= slides.length; i++) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'wfpe-overview-add';
+      add.dataset.wfpEditInsertIndex = String(i);
+      add.title = i === 0
+        ? 'Insert slide before first slide'
+        : (i === slides.length ? 'Insert slide after last slide' : `Insert slide at position ${i + 1}`);
+      add.setAttribute('aria-label', add.title);
+      add.textContent = '+';
+      overviewOverlay.appendChild(add);
+    }
     positionOverviewOverlay();
   }
 
   function positionOverviewOverlay() {
     if (!state.overviewMode) return;
     const slides = [...document.querySelectorAll('.deck > .slide')];
-    const thumbs = overviewOverlay.children;
+    const thumbs = overviewOverlay.querySelectorAll('.wfpe-overview-thumb');
     for (let i = 0; i < slides.length; i++) {
       const t = thumbs[i];
       if (!t) continue;
@@ -2316,6 +2623,40 @@
       t.style.left = `${r.left}px`;
       t.style.width = `${r.width}px`;
       t.style.height = `${r.height}px`;
+    }
+    positionOverviewAddButtons(slides);
+  }
+
+  function positionOverviewAddButtons(slides) {
+    const buttons = overviewOverlay.querySelectorAll('.wfpe-overview-add');
+    if (slides.length === 0) {
+      buttons.forEach((b) => { b.style.display = 'none'; });
+      return;
+    }
+    const rects = slides.map((slide) => slide.getBoundingClientRect());
+    const place = (button, x, y) => {
+      button.style.display = 'inline-flex';
+      button.style.left = `${x - 12}px`;
+      button.style.top = `${y - 12}px`;
+    };
+    for (let i = 0; i < buttons.length; i++) {
+      const button = buttons[i];
+      if (i === 0) {
+        const first = rects[0];
+        place(button, first.left - 14, first.top + first.height / 2);
+      } else if (i === rects.length) {
+        const last = rects[rects.length - 1];
+        place(button, last.right + 14, last.top + last.height / 2);
+      } else {
+        const prev = rects[i - 1];
+        const next = rects[i];
+        const sameRow = Math.abs(prev.top - next.top) < 4;
+        if (sameRow) {
+          place(button, (prev.right + next.left) / 2, next.top + next.height / 2);
+        } else {
+          place(button, next.left + next.width / 2, (prev.bottom + next.top) / 2);
+        }
+      }
     }
   }
 
@@ -2355,6 +2696,7 @@
     // via mouseover/out for delegation efficiency.
     overviewOverlay.addEventListener('mouseover', onOverviewMouseOver);
     overviewOverlay.addEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.addEventListener('click', onOverviewAddClick);
     overviewOverlay.addEventListener('click', onOverviewDeleteClick);
   }
 
@@ -2374,6 +2716,7 @@
     overviewOverlay.removeEventListener('dragend', onOverviewDragEnd);
     overviewOverlay.removeEventListener('mouseover', onOverviewMouseOver);
     overviewOverlay.removeEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.removeEventListener('click', onOverviewAddClick);
     overviewOverlay.removeEventListener('click', onOverviewDeleteClick);
     state.overviewHoveredSlide = null;
     if (overviewRafId) {
@@ -2640,10 +2983,60 @@
 
   function cleanupDrag() {
     if (!state.overviewDrag) return;
-    for (const t of overviewOverlay.children) {
+    for (const t of overviewOverlay.querySelectorAll('.wfpe-overview-thumb')) {
       if (t.dataset && 'dragging' in t.dataset) delete t.dataset.dragging;
     }
     state.overviewDrag = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Insert blank slide (overview add affordances)
+  // ---------------------------------------------------------------------------
+  function nextBlankSlideId(deck) {
+    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    let maxNumericSuffix = -1;
+    for (const slide of slides) {
+      const id = slide.getAttribute('id') || '';
+      const match = id.match(/(\d+)$/);
+      if (!match) continue;
+      maxNumericSuffix = Math.max(maxNumericSuffix, Number(match[1]));
+    }
+    let next = maxNumericSuffix >= 0 ? maxNumericSuffix + 1 : slides.length + 1;
+    let id = `s${next}`;
+    while (document.getElementById(id)) {
+      next++;
+      id = `s${next}`;
+    }
+    return id;
+  }
+
+  function insertBlankSlideAt(index) {
+    const deck = document.querySelector('.deck');
+    if (!deck) return null;
+    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    const insertIndex = Math.max(0, Math.min(slides.length, Number(index) || 0));
+    const beforeSibling = slides[insertIndex] || null;
+    const slide = document.createElement('div');
+    slide.className = 'slide';
+    slide.id = nextBlankSlideId(deck);
+    deck.insertBefore(slide, beforeSibling);
+    observeSlideClass(slide);
+    pushSlideOpEntry({
+      type: 'slideInsert',
+      deckEl: deck,
+      insertedSlide: slide,
+      beforeSibling,
+    });
+    buildOverviewOverlay();
+    return slide;
+  }
+
+  function onOverviewAddClick(e) {
+    const btn = e.target.closest('.wfpe-overview-add');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    insertBlankSlideAt(Number(btn.dataset.wfpEditInsertIndex));
   }
 
   // ---------------------------------------------------------------------------
@@ -2809,6 +3202,7 @@
 
     if (isTypingTarget(e.target)) return;
     const noModifier = !e.metaKey && !e.ctrlKey && !e.altKey;
+    const isMod = e.metaKey || e.ctrlKey;
 
     if ((e.key === 'e' || e.key === 'E') && noModifier) {
       setEditMode(!state.editMode);
@@ -2856,6 +3250,35 @@
     // overview would be surprising UX.
     if (!state.editMode && !state.overviewMode) return;
 
+    if (state.editMode && isMod && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+      if (!state.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      copySelectedElement();
+      return;
+    }
+
+    if (state.editMode && isMod && !e.altKey && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+      if (!state.clipboard || state.overviewMode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pasteClipboardElement();
+      return;
+    }
+
+    if (
+      state.editMode &&
+      !state.overviewMode &&
+      noModifier &&
+      (e.key === 'Backspace' || e.key === 'Delete')
+    ) {
+      if (!state.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deleteSelectedElement();
+      return;
+    }
+
     // Backspace / Delete in overview deletes the hovered (or focused)
     // thumbnail's slide (v2.1.4). Routes through the same path as the
     // × button click so history + last-slide guard behave identically.
@@ -2900,7 +3323,6 @@
     }
 
     // Undo / redo. Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Cmd/Ctrl+Y = redo.
-    const isMod = e.metaKey || e.ctrlKey;
     if (isMod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
       e.stopPropagation();
@@ -2983,9 +3405,11 @@
       }
     }
   });
-  document.querySelectorAll('.slide').forEach((slide) => {
+  function observeSlideClass(slide) {
+    if (!slide) return;
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
-  });
+  }
+  document.querySelectorAll('.slide').forEach(observeSlideClass);
 
   // ===========================================================================
   // Drag (scale-aware, with unlock-on-flow)

@@ -87,6 +87,7 @@
       // Native HTML5 DnD source (v2.1.3). The thumb is editor-owned —
       // setting draggable here keeps slide DOM untouched.
       thumb.draggable = true;
+      if (!slide.innerHTML.trim()) thumb.dataset.empty = 'true';
       // Make the thumb focusable (v2.1.4) so the × button reveals via
       // :focus-within for keyboard users; arrow-key navigation between
       // thumbs is an explicit non-goal (BRIEF), but Tab focus is fine.
@@ -109,13 +110,25 @@
       thumb.appendChild(del);
       overviewOverlay.appendChild(thumb);
     }
+    for (let i = 0; i <= slides.length; i++) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'wfpe-overview-add';
+      add.dataset.wfpEditInsertIndex = String(i);
+      add.title = i === 0
+        ? 'Insert slide before first slide'
+        : (i === slides.length ? 'Insert slide after last slide' : `Insert slide at position ${i + 1}`);
+      add.setAttribute('aria-label', add.title);
+      add.textContent = '+';
+      overviewOverlay.appendChild(add);
+    }
     positionOverviewOverlay();
   }
 
   function positionOverviewOverlay() {
     if (!state.overviewMode) return;
     const slides = [...document.querySelectorAll('.deck > .slide')];
-    const thumbs = overviewOverlay.children;
+    const thumbs = overviewOverlay.querySelectorAll('.wfpe-overview-thumb');
     for (let i = 0; i < slides.length; i++) {
       const t = thumbs[i];
       if (!t) continue;
@@ -124,6 +137,40 @@
       t.style.left = `${r.left}px`;
       t.style.width = `${r.width}px`;
       t.style.height = `${r.height}px`;
+    }
+    positionOverviewAddButtons(slides);
+  }
+
+  function positionOverviewAddButtons(slides) {
+    const buttons = overviewOverlay.querySelectorAll('.wfpe-overview-add');
+    if (slides.length === 0) {
+      buttons.forEach((b) => { b.style.display = 'none'; });
+      return;
+    }
+    const rects = slides.map((slide) => slide.getBoundingClientRect());
+    const place = (button, x, y) => {
+      button.style.display = 'inline-flex';
+      button.style.left = `${x - 12}px`;
+      button.style.top = `${y - 12}px`;
+    };
+    for (let i = 0; i < buttons.length; i++) {
+      const button = buttons[i];
+      if (i === 0) {
+        const first = rects[0];
+        place(button, first.left - 14, first.top + first.height / 2);
+      } else if (i === rects.length) {
+        const last = rects[rects.length - 1];
+        place(button, last.right + 14, last.top + last.height / 2);
+      } else {
+        const prev = rects[i - 1];
+        const next = rects[i];
+        const sameRow = Math.abs(prev.top - next.top) < 4;
+        if (sameRow) {
+          place(button, (prev.right + next.left) / 2, next.top + next.height / 2);
+        } else {
+          place(button, next.left + next.width / 2, (prev.bottom + next.top) / 2);
+        }
+      }
     }
   }
 
@@ -163,6 +210,7 @@
     // via mouseover/out for delegation efficiency.
     overviewOverlay.addEventListener('mouseover', onOverviewMouseOver);
     overviewOverlay.addEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.addEventListener('click', onOverviewAddClick);
     overviewOverlay.addEventListener('click', onOverviewDeleteClick);
   }
 
@@ -182,6 +230,7 @@
     overviewOverlay.removeEventListener('dragend', onOverviewDragEnd);
     overviewOverlay.removeEventListener('mouseover', onOverviewMouseOver);
     overviewOverlay.removeEventListener('mouseout', onOverviewMouseOut);
+    overviewOverlay.removeEventListener('click', onOverviewAddClick);
     overviewOverlay.removeEventListener('click', onOverviewDeleteClick);
     state.overviewHoveredSlide = null;
     if (overviewRafId) {
@@ -448,10 +497,60 @@
 
   function cleanupDrag() {
     if (!state.overviewDrag) return;
-    for (const t of overviewOverlay.children) {
+    for (const t of overviewOverlay.querySelectorAll('.wfpe-overview-thumb')) {
       if (t.dataset && 'dragging' in t.dataset) delete t.dataset.dragging;
     }
     state.overviewDrag = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Insert blank slide (overview add affordances)
+  // ---------------------------------------------------------------------------
+  function nextBlankSlideId(deck) {
+    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    let maxNumericSuffix = -1;
+    for (const slide of slides) {
+      const id = slide.getAttribute('id') || '';
+      const match = id.match(/(\d+)$/);
+      if (!match) continue;
+      maxNumericSuffix = Math.max(maxNumericSuffix, Number(match[1]));
+    }
+    let next = maxNumericSuffix >= 0 ? maxNumericSuffix + 1 : slides.length + 1;
+    let id = `s${next}`;
+    while (document.getElementById(id)) {
+      next++;
+      id = `s${next}`;
+    }
+    return id;
+  }
+
+  function insertBlankSlideAt(index) {
+    const deck = document.querySelector('.deck');
+    if (!deck) return null;
+    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    const insertIndex = Math.max(0, Math.min(slides.length, Number(index) || 0));
+    const beforeSibling = slides[insertIndex] || null;
+    const slide = document.createElement('div');
+    slide.className = 'slide';
+    slide.id = nextBlankSlideId(deck);
+    deck.insertBefore(slide, beforeSibling);
+    observeSlideClass(slide);
+    pushSlideOpEntry({
+      type: 'slideInsert',
+      deckEl: deck,
+      insertedSlide: slide,
+      beforeSibling,
+    });
+    buildOverviewOverlay();
+    return slide;
+  }
+
+  function onOverviewAddClick(e) {
+    const btn = e.target.closest('.wfpe-overview-add');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    insertBlankSlideAt(Number(btn.dataset.wfpEditInsertIndex));
   }
 
   // ---------------------------------------------------------------------------
@@ -617,6 +716,7 @@
 
     if (isTypingTarget(e.target)) return;
     const noModifier = !e.metaKey && !e.ctrlKey && !e.altKey;
+    const isMod = e.metaKey || e.ctrlKey;
 
     if ((e.key === 'e' || e.key === 'E') && noModifier) {
       setEditMode(!state.editMode);
@@ -664,6 +764,35 @@
     // overview would be surprising UX.
     if (!state.editMode && !state.overviewMode) return;
 
+    if (state.editMode && isMod && !e.altKey && (e.key === 'c' || e.key === 'C')) {
+      if (!state.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      copySelectedElement();
+      return;
+    }
+
+    if (state.editMode && isMod && !e.altKey && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+      if (!state.clipboard || state.overviewMode) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pasteClipboardElement();
+      return;
+    }
+
+    if (
+      state.editMode &&
+      !state.overviewMode &&
+      noModifier &&
+      (e.key === 'Backspace' || e.key === 'Delete')
+    ) {
+      if (!state.selected) return;
+      e.preventDefault();
+      e.stopPropagation();
+      deleteSelectedElement();
+      return;
+    }
+
     // Backspace / Delete in overview deletes the hovered (or focused)
     // thumbnail's slide (v2.1.4). Routes through the same path as the
     // × button click so history + last-slide guard behave identically.
@@ -708,7 +837,6 @@
     }
 
     // Undo / redo. Cmd/Ctrl+Z = undo, Cmd/Ctrl+Shift+Z = redo, Cmd/Ctrl+Y = redo.
-    const isMod = e.metaKey || e.ctrlKey;
     if (isMod && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
       e.stopPropagation();

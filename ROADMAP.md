@@ -22,6 +22,12 @@ Slide-grid overview, click-to-navigate, drag-to-reorder, delete, last-slide guar
 
 Historical feature brief: `feature-briefs/v2-overview.md`.
 
+### v2.2 Element Copy/Paste/Delete + Overview Add Slide
+
+Session-only element copy/paste with same-slide duplicate, selected-element delete, cross-slide paste via the active slide, structural undo/redo, clean export of pasted elements, and blank slide insertion from Overview mode with undo/redo.
+
+Feature brief: `feature-briefs/duplicate execution.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -48,17 +54,9 @@ A 16px grid would be useful. Smarter guides could snap to element edges, centers
 
 Hold Shift while resizing to preserve aspect ratio. Most useful for images and logo-like elements.
 
-### Element Delete in Edit Mode
-
-Delete the selected element from the active slide and make Cmd/Ctrl+Z restore it. This is separate from Overview slide deletion.
-
 ### Z-order Control
 
 Bring forward/send backward shortcuts and possibly a compact layers view.
-
-### Cross-slide Copy/Paste
-
-Copy a styled element from one slide to another while preserving necessary inline styles and assets.
 
 ### Add New Elements
 

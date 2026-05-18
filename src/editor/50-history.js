@@ -115,11 +115,13 @@
     }
   }
 
-  function pushHistoryEntry(changes) {
+  function pushHistoryEntry(changes, slideOps = null) {
     // Truncate any redo stack — a fresh change invalidates everything
     // beyond the current cursor.
     state.history.length = state.historyIndex;
-    state.history.push({ changes });
+    const entry = { changes };
+    if (slideOps && slideOps.length) entry.slideOps = slideOps;
+    state.history.push(entry);
     state.historyIndex = state.history.length;
     while (state.history.length > HISTORY_MAX) {
       state.history.shift();
@@ -127,9 +129,14 @@
     }
   }
 
+  function pushElementInsertEntry(op) {
+    pushHistoryEntry([], [op]);
+  }
+
   // Slide-level history op handlers. These run alongside the per-element
   // `changes` array — they EXTEND the entry shape rather than replacing
-  // it. Op types: 'reorder' (v2.1.3), 'delete' (v2.1.4).
+  // it. Op types: 'reorder' (v2.1.3), 'delete' (v2.1.4),
+  // 'elementInsert', 'elementDelete', and 'slideInsert'.
   function undoSlideOp(op) {
     if (op.type === 'reorder') {
       applySlideOrder(op.deck, op.beforeOrder);
@@ -148,6 +155,44 @@
         if (op.fallbackSlide) op.fallbackSlide.classList.remove('active');
         op.slide.classList.add('active');
       }
+    } else if (op.type === 'elementInsert') {
+      if (op.insertedEl && op.insertedEl.parentElement === op.parentEl) {
+        op.parentEl.removeChild(op.insertedEl);
+      }
+      if (state.selected === op.insertedEl) {
+        const fallback = (
+          op.previousSelectedEl &&
+          op.previousSelectedEl.isConnected &&
+          op.slideEl &&
+          op.slideEl.contains(op.previousSelectedEl)
+        ) ? op.previousSelectedEl : null;
+        setSelected(fallback);
+        refreshInspector();
+      }
+    } else if (op.type === 'elementDelete') {
+      if (!op.parentEl || !op.deletedEl) return;
+      const ref = (
+        op.nextSiblingEl &&
+        op.nextSiblingEl.parentElement === op.parentEl
+      ) ? op.nextSiblingEl : null;
+      op.parentEl.insertBefore(op.deletedEl, ref);
+      setSelected(op.deletedEl);
+      refreshInspector();
+    } else if (op.type === 'slideInsert') {
+      const deck = op.deckEl || op.deck;
+      const inserted = op.insertedSlide;
+      if (!deck || !inserted || inserted.parentElement !== deck) return;
+      const slides = [...deck.querySelectorAll(':scope > .slide')];
+      const idx = slides.indexOf(inserted);
+      const fallbackSlide = inserted.classList.contains('active')
+        ? (slides[idx + 1] || slides[idx - 1] || null)
+        : null;
+      if (state.selected && inserted.contains(state.selected)) setSelected(null);
+      inserted.classList.remove('active');
+      deck.removeChild(inserted);
+      if (!deck.querySelector(':scope > .slide.active') && fallbackSlide) {
+        fallbackSlide.classList.add('active');
+      }
     }
   }
   function redoSlideOp(op) {
@@ -156,6 +201,34 @@
     } else if (op.type === 'delete') {
       op.deck.removeChild(op.slide);
       if (op.wasActive && op.fallbackSlide) op.fallbackSlide.classList.add('active');
+    } else if (op.type === 'elementInsert') {
+      if (!op.parentEl || !op.insertedEl) return;
+      const ref = (
+        op.nextSiblingEl &&
+        op.nextSiblingEl.parentElement === op.parentEl
+      ) ? op.nextSiblingEl : null;
+      op.parentEl.insertBefore(op.insertedEl, ref);
+      setSelected(op.insertedEl);
+      refreshInspector();
+    } else if (op.type === 'elementDelete') {
+      if (!op.parentEl || !op.deletedEl) return;
+      if (op.deletedEl.parentElement === op.parentEl) {
+        op.parentEl.removeChild(op.deletedEl);
+      }
+      if (state.selected === op.deletedEl || (state.selected && op.deletedEl.contains(state.selected))) {
+        setSelected(null);
+        refreshInspector();
+      }
+    } else if (op.type === 'slideInsert') {
+      const deck = op.deckEl || op.deck;
+      if (!deck || !op.insertedSlide) return;
+      const ref = (
+        op.beforeSibling &&
+        op.beforeSibling.parentElement === deck
+      ) ? op.beforeSibling : null;
+      op.insertedSlide.classList.remove('active');
+      deck.insertBefore(op.insertedSlide, ref);
+      observeSlideClass(op.insertedSlide);
     }
   }
 
