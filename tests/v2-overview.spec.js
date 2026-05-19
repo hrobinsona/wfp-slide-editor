@@ -143,7 +143,7 @@ test.describe('v2.1.0 — Overview activation', () => {
 // scale with the 0.22 transform).
 
 test.describe('v2.1.1 — Overview grid layout', () => {
-  test('entering overview marks the body and flips .deck to a 4-column grid', async ({ page }) => {
+  test('entering overview marks the body and flips .deck to a responsive grid', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('o');
 
@@ -158,7 +158,96 @@ test.describe('v2.1.1 — Overview grid layout', () => {
     });
     expect(state.bodyAttr).toBe('on');
     expect(state.display).toBe('grid');
-    expect(state.cols).toBe(4);
+    expect(state.cols).toBeGreaterThan(0);
+  });
+
+  test('overview grid reflows across viewports without horizontal overflow', async ({ page }) => {
+    const viewports = [
+      { width: 360, height: 700 },
+      { width: 700, height: 800 },
+      { width: 1280, height: 800 },
+      { width: 1792, height: 1120 },
+      { width: 2048, height: 900 },
+    ];
+    const results = [];
+
+    for (const viewport of viewports) {
+      await page.setViewportSize(viewport);
+      await loadFixtureWithEditor(page, 'Townhall-1.html');
+      await page.keyboard.press('o');
+      await page.waitForFunction(() => {
+        return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+      });
+
+      const metrics = await page.evaluate(() => {
+        const deck = document.querySelector('.deck');
+        const deckRect = deck.getBoundingClientRect();
+        const slideRects = [...document.querySelectorAll('.deck > .slide')]
+          .map((slide) => slide.getBoundingClientRect())
+          .filter((rect) => rect.width > 0 && rect.height > 0);
+        const cs = getComputedStyle(deck);
+        return {
+          viewportWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          deckLeft: deckRect.left,
+          minSlideLeft: Math.min(...slideRects.map((rect) => rect.left)),
+          maxSlideRight: Math.max(...slideRects.map((rect) => rect.right)),
+          maxSlideWidth: Math.max(...slideRects.map((rect) => rect.width)),
+          computedMarginLeft: cs.marginLeft,
+          columns: cs.gridTemplateColumns.split(' ').filter(Boolean).length,
+        };
+      });
+
+      results.push(metrics);
+      expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+      expect(Math.abs(metrics.deckLeft)).toBeLessThanOrEqual(1);
+      expect(metrics.minSlideLeft).toBeGreaterThanOrEqual(-1);
+      expect(metrics.maxSlideRight).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+      expect(metrics.computedMarginLeft).toBe('0px');
+      if (viewport.width < 760) {
+        expect(metrics.maxSlideWidth).toBeLessThan(422);
+      }
+    }
+
+    expect(new Set(results.map((result) => result.columns)).size).toBeGreaterThan(1);
+  });
+
+  test('overview remains aligned when the viewport changes while open', async ({ page }) => {
+    await page.setViewportSize({ width: 1792, height: 1120 });
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    await page.setViewportSize({ width: 700, height: 800 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const metrics = await page.evaluate(() => {
+      const slides = [...document.querySelectorAll('.deck > .slide')];
+      const thumbs = [...document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb')];
+      const slideRects = slides.map((slide) => slide.getBoundingClientRect());
+      const thumbRects = thumbs.map((thumb) => thumb.getBoundingClientRect());
+      return {
+        viewportWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        maxSlideRight: Math.max(...slideRects.map((rect) => rect.right)),
+        aligned: slideRects.every((slideRect, i) => {
+          const thumbRect = thumbRects[i];
+          return (
+            thumbRect &&
+            Math.abs(slideRect.top - thumbRect.top) <= 1 &&
+            Math.abs(slideRect.left - thumbRect.left) <= 1 &&
+            Math.abs(slideRect.width - thumbRect.width) <= 1 &&
+            Math.abs(slideRect.height - thumbRect.height) <= 1
+          );
+        }),
+      };
+    });
+
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+    expect(metrics.maxSlideRight).toBeLessThanOrEqual(metrics.viewportWidth + 1);
+    expect(metrics.aligned).toBe(true);
   });
 
   test('every .slide is visible in the grid (display !== none)', async ({ page }) => {
@@ -385,7 +474,11 @@ test.describe('v2.1.2 — Click to navigate', () => {
     await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
 
     const slideCount = await page.locator('.deck > .slide').count();
-    await page.locator('.deck > .slide').nth(slideCount - 1).click({ force: true });
+    await page.locator('.deck > .slide').nth(slideCount - 1).scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const lastThumb = page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(slideCount - 1);
+    await lastThumb.click();
 
     const activeIds = await page.evaluate(() =>
       [...document.querySelectorAll('.slide.active')].map((s) => s.id)
@@ -665,10 +758,8 @@ test.describe('v2.1.3 — Drag to reorder', () => {
 
 const deleteBtnSel = '#wfp-editor-root .wfpe-overview-delete';
 
-// Default Playwright viewport (1280x720) is narrower than the overview
-// grid (~1828px wide at 4-per-row × 0.22 scale). Thumbs past column 2
-// can be horizontally off-screen, so test interactions need to scroll
-// them into view before hover/click.
+// Keep this helper even though the overview grid is now responsive: some
+// interactions run after scroll/resize and should target the live thumb rect.
 async function hoverThumb(page, idx) {
   const thumb = page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(idx);
   await thumb.scrollIntoViewIfNeeded();
@@ -684,12 +775,8 @@ async function deleteThumbViaButton(page, idx) {
 }
 
 test.describe('v2.1.4 — Delete slide', () => {
-  // The overview grid at 4-per-row × 0.22 scale is ~1828px wide. The
-  // × delete button sits at the right edge of each thumb (top:6, right:6).
-  // Default Playwright viewport (1280px) cannot reach the × of any
-  // thumb past column 1. Widen for this describe so real hover/click
-  // can land on every thumb in the deck. Production UX at narrow
-  // viewports is documented in v2.1.1 (horizontal scroll).
+  // Widen this describe so real hover/click can land on every thumb in
+  // the deck without vertical scrolling becoming part of the assertion.
   test.use({ viewport: { width: 1920, height: 1080 } });
 
   test('each thumb has a × button (hidden by default, revealed on hover)', async ({ page }) => {

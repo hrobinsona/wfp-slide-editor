@@ -762,9 +762,36 @@
        Overlays don't scale with the slide, which is what we want — they're
        editor chrome, not slide content. ----- */
     body[data-wfp-edit-overview="on"] {
-      /* Fixtures set body { overflow: hidden } to lock the canvas; we need
-         the deck to scroll past 20 slides at 4-per-row. */
-      overflow: auto !important;
+      /* Fixtures set body { overflow: hidden } to lock the canvas; overview
+         needs vertical scroll for multi-row decks while the grid itself
+         stays viewport-fit horizontally. */
+      --wfpe-overview-scale: ${OVERVIEW_SCALE};
+      --wfpe-overview-gap: clamp(16px, 1.6vw, 28px);
+      --wfpe-overview-pad-inline: clamp(16px, 2vw, 28px);
+      --wfpe-overview-pad-top: 112px;
+      --wfpe-overview-thumb-width: calc(1920px * var(--wfpe-overview-scale));
+      overflow-x: hidden !important;
+      overflow-y: auto !important;
+    }
+    @media (max-width: 760px) {
+      body[data-wfp-edit-overview="on"] {
+        --wfpe-overview-scale: 0.18;
+        --wfpe-overview-gap: 16px;
+        --wfpe-overview-pad-inline: 16px;
+      }
+    }
+    @media (max-width: 500px) {
+      body[data-wfp-edit-overview="on"] {
+        --wfpe-overview-scale: 0.15;
+        --wfpe-overview-gap: 14px;
+        --wfpe-overview-pad-inline: 14px;
+      }
+    }
+    @media (max-width: 380px) {
+      body[data-wfp-edit-overview="on"] {
+        --wfpe-overview-scale: 0.12;
+        --wfpe-overview-pad-inline: 12px;
+      }
     }
     /* Hide every body-level sibling of .deck except the editor root —
        WFP fixtures commonly mount slide-progress dots, navigation hints,
@@ -777,25 +804,26 @@
     }
     body[data-wfp-edit-overview="on"] .deck {
       /* Override the fixture's fixed 1920x1080 + scale() canvas. The grid
-         flows top-down at fixed 4-per-row, ~0.22 scale (BRIEF). At narrow
-         viewports (<~1830px) the grid is wider than the viewport — body
-         scroll handles both axes.
+         now reflows to the viewport instead of preserving the normal deck
+         centering margins or a fixed 4-column width.
          !important is needed because the fixture's resize handler writes
-         an inline transform every viewport change. */
+         inline transform/margin values every viewport change. */
       display: grid !important;
-      grid-template-columns: repeat(4, calc(1920px * ${OVERVIEW_SCALE})) !important;
-      gap: 28px;
-      padding: 28px;
-      /* width: max-content so the grid's natural width reaches its content
-         size (~1830px); body overflow:auto then provides horizontal
-         scroll on narrow viewports. justify-content:start keeps slide 1
-         at the left edge so the user lands on it without scrolling. */
-      width: max-content !important;
+      grid-template-columns:
+        repeat(auto-fit, minmax(min(100%, var(--wfpe-overview-thumb-width)), var(--wfpe-overview-thumb-width))) !important;
+      gap: var(--wfpe-overview-gap);
+      padding:
+        var(--wfpe-overview-pad-top)
+        var(--wfpe-overview-pad-inline)
+        var(--wfpe-overview-pad-inline);
+      width: 100% !important;
+      max-width: 100vw !important;
       height: auto !important;
       min-height: 100vh;
+      margin: 0 !important;
       transform: none !important;
       position: static !important;
-      justify-content: start;
+      justify-content: center;
       align-content: start;
       background: #1a1d23;
       box-sizing: border-box;
@@ -810,10 +838,10 @@
       position: relative !important;
       top: auto !important;
       left: auto !important;
-      transform: scale(${OVERVIEW_SCALE}) !important;
+      transform: scale(var(--wfpe-overview-scale)) !important;
       transform-origin: top left !important;
-      margin-right: calc(-1920px * (1 - ${OVERVIEW_SCALE})) !important;
-      margin-bottom: calc(-1080px * (1 - ${OVERVIEW_SCALE})) !important;
+      margin-right: calc(-1920px * (1 - var(--wfpe-overview-scale))) !important;
+      margin-bottom: calc(-1080px * (1 - var(--wfpe-overview-scale))) !important;
       cursor: pointer;
       /* Ensure overflow:hidden from the fixture stays — internal slide
          content sticking out of the scaled cell would visually collide
