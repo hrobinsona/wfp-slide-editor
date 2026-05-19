@@ -79,6 +79,28 @@ async function readDownloadAsString(download) {
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
 }
 
+function extractActiveSlideIdsFromHtml(html) {
+  const ids = [];
+  const re = /<div\s+class="([^"]*\bslide\b[^"]*)"[^>]*id="([^"]+)"/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    const classes = match[1].split(/\s+/);
+    if (classes.includes('active')) ids.push(match[2]);
+  }
+  return ids;
+}
+
+function extractActiveProgressIndicesFromHtml(html) {
+  const indices = [];
+  const re = /<div\s+class="([^"]*\bprogress-dot\b[^"]*)"[^>]*onclick="goTo\((\d+)\)"/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    const classes = match[1].split(/\s+/);
+    if (classes.includes('active')) indices.push(Number(match[2]));
+  }
+  return indices;
+}
+
 test.describe('Phase 8 — Export', () => {
   test('Cmd+S downloads a file with the original basename + -edited.html', async ({
     page,
@@ -272,6 +294,49 @@ test.describe('Phase 8 — Export', () => {
       () => !!document.getElementById('wfp-editor-root'),
     );
     expect(hasRoot).toBe(false);
+
+    await fresh.close();
+  });
+
+  test('exported HTML starts from the first slide even when exported from a later slide', async ({
+    page,
+    context,
+  }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await setDeckScale(page, 1);
+
+    for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight');
+    await expect
+      .poll(() => page.evaluate(() => document.querySelector('.slide.active')?.id))
+      .toBe('s8');
+
+    await page.keyboard.press('e');
+    const download = await triggerExport(page);
+    const { path: outPath, content } = await readDownloadAsString(download);
+
+    expect(extractActiveSlideIdsFromHtml(content)).toEqual(['s0']);
+    expect(extractActiveProgressIndicesFromHtml(content)).toEqual([0]);
+
+    const liveState = await page.evaluate(() => ({
+      activeSlideIds: [...document.querySelectorAll('.slide.active')].map((s) => s.id),
+      activeDotIndices: [...document.querySelectorAll('.progress-dot')]
+        .map((dot, index) => (dot.classList.contains('active') ? index : null))
+        .filter((index) => index !== null),
+    }));
+    expect(liveState).toEqual({
+      activeSlideIds: ['s8'],
+      activeDotIndices: [8],
+    });
+
+    const fresh = await context.newPage();
+    await fresh.goto(`file://${outPath}`);
+    await fresh.locator('.deck').waitFor({ state: 'attached', timeout: 5_000 });
+    await fresh.keyboard.press('ArrowRight');
+
+    const activeSlideIds = await fresh.evaluate(() =>
+      [...document.querySelectorAll('.slide.active')].map((s) => s.id),
+    );
+    expect(activeSlideIds).toEqual(['s1']);
 
     await fresh.close();
   });
