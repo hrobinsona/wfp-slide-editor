@@ -4,7 +4,8 @@
   const state = {
     editMode: false,
     selected: null,
-    drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
+    selectedElements: [], // active-slide selection members; state.selected is the primary member
+    drag: null, // { el, items: [{ el, anchorLeft, anchorTop, wasAbsolute }], startX, startY, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
     editingText: null, // { el, originalContenteditable, savedRange } while a text edit is open
     suppressClickUntil: 0,

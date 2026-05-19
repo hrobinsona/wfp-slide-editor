@@ -54,7 +54,7 @@
 
     // Resize-handle hit takes precedence over a fresh selection/drag.
     const handleDir = e.target && e.target.dataset && e.target.dataset.wfpeHandle;
-    if (handleDir && state.selected) {
+    if (handleDir && state.selected && !hasMultiSelection()) {
       startResize(e, handleDir);
       return;
     }
@@ -63,22 +63,43 @@
     const target = findSelectableTarget(e.target);
     if (!target) return;
 
-    setSelected(target);
+    if (isSelectionToggleEvent(e)) {
+      toggleSelectedElement(target);
+      e.preventDefault();
+      e.stopPropagation();
+      state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+      refreshInspector();
+      return;
+    }
+
+    const currentSelection = getSelectedElements();
+    const dragElements = currentSelection.length > 1 && currentSelection.includes(target)
+      ? currentSelection
+      : [target];
+    if (dragElements.length === 1 && state.selected !== target) {
+      setSelected(target);
+    }
 
     // Suppress the browser's default mousedown-then-drag text selection so
     // the user doesn't end up highlighting random copy while moving things.
     e.preventDefault();
 
-    const cs = getComputedStyle(target);
+    const items = dragElements.map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        el,
+        anchorLeft: el.offsetLeft,
+        anchorTop: el.offsetTop,
+        width: el.offsetWidth,
+        height: el.offsetHeight,
+        wasAbsolute: cs.position === 'absolute',
+      };
+    });
     state.drag = {
       el: target,
+      items,
       startX: e.clientX,
       startY: e.clientY,
-      anchorLeft: target.offsetLeft,
-      anchorTop: target.offsetTop,
-      width: target.offsetWidth,
-      height: target.offsetHeight,
-      wasAbsolute: cs.position === 'absolute',
       started: false,
     };
 
@@ -88,7 +109,7 @@
 
   function startResize(e, dir) {
     const el = state.selected;
-    if (!el) return;
+    if (!el || hasMultiSelection()) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -308,12 +329,4 @@
       width: el.offsetWidth,
       height: el.offsetHeight,
     };
-  }
-
-  function commitUnlock(d) {
-    const rect = unlockToAbsolute(d.el);
-    d.anchorLeft = rect.left;
-    d.anchorTop = rect.top;
-    d.width = rect.width;
-    d.height = rect.height;
   }

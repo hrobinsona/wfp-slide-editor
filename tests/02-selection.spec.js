@@ -39,6 +39,29 @@ async function rectOf(page, selector) {
   }, selector);
 }
 
+async function ringAndTargetState(page, selector) {
+  return page.evaluate((sel) => {
+    window.dispatchEvent(new Event('scroll'));
+    const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
+    const target = document.querySelector(sel).getBoundingClientRect();
+    return {
+      ring: {
+        display: ring.style.display,
+        top: parseFloat(ring.style.top || '0'),
+        left: parseFloat(ring.style.left || '0'),
+        width: parseFloat(ring.style.width || '0'),
+        height: parseFloat(ring.style.height || '0'),
+      },
+      target: {
+        top: target.top,
+        left: target.left,
+        width: target.width,
+        height: target.height,
+      },
+    };
+  }, selector);
+}
+
 async function waitForAnimationFrames(page, count = 2) {
   await page.evaluate((frames) => {
     return new Promise((resolve) => {
@@ -67,8 +90,7 @@ test.describe('Phase 2 — Selection', () => {
     await page.keyboard.press('e');
 
     await clickElement(page, '.slide.active h1');
-    const state = await ringState(page);
-    const target = await rectOf(page, '.slide.active h1');
+    const { ring: state, target } = await ringAndTargetState(page, '.slide.active h1');
 
     expect(state.display).toBe('block');
     expect(state.top).toBeCloseTo(target.top, 0);
@@ -136,17 +158,16 @@ test.describe('Phase 2 — Selection', () => {
     await page.keyboard.press('e');
 
     await clickElement(page, '.slide.active h1');
-    const before = await ringState(page);
 
     // Click the toolbar wrapper itself (not a button). The capture-phase
     // onClick must short-circuit for any editor-root target so the H1
     // selection isn't replaced by the toolbar.
     await clickElement(page, '#wfp-editor-root .wfpe-toolbar');
-    const after = await ringState(page);
+    const { ring: after, target } = await ringAndTargetState(page, '.slide.active h1');
 
     expect(after.display).toBe('block');
-    expect(after.left).toBeCloseTo(before.left, 0);
-    expect(after.top).toBeCloseTo(before.top, 0);
+    expect(after.left).toBeCloseTo(target.left, 0);
+    expect(after.top).toBeCloseTo(target.top, 0);
   });
 
   test('clicking .slide.active itself deselects', async ({ page }) => {

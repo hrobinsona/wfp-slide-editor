@@ -28,6 +28,12 @@ Session-only element copy/paste with same-slide duplicate, selected-element dele
 
 Feature brief: `feature-briefs/duplicate execution.md`.
 
+### v2.3 Multi-Select Move
+
+Cmd/Ctrl-click active-slide multi-select with group bounding box, per-element outlines, scale-aware group movement, flow unlock support, one-step undo/redo, and clean export.
+
+Feature brief: `feature-briefs/v2-multi-select-move.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -42,9 +48,9 @@ Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 Autosave to localStorage so closing a tab does not lose edits. Key by URL plus a slide/deck hash. Must define restore UX and stale-source behaviour before implementation.
 
-### Multi-select
+### Multi-select Follow-ups
 
-Shift-click to add to selection, marquee selection, and group movement. This likely needs a clearer selection model first.
+Marquee/lasso selection, group copy/delete/duplicate, group resize, group inspector edits, and persistent group/ungroup operations.
 
 ### Snap-to-grid and Alignment Guides
 

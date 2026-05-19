@@ -16,6 +16,7 @@
  *          inline SVG icons (lucide aesthetic), no behavior change.
  * v2.1:    Overview mode for slide reorder/delete.
  * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
+ * v2.x:    Cmd/Ctrl-click multi-select for moving elements together.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -23,7 +24,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.2.0';
+  const VERSION = '2.3.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -61,14 +62,14 @@
   if (document.currentScript) {
     document.currentScript.dataset.wfpEditScript = 'true';
   }
-
   // ===========================================================================
   // State
   // ===========================================================================
   const state = {
     editMode: false,
     selected: null,
-    drag: null, // { el, startX, startY, anchorLeft, anchorTop, width, height, wasAbsolute, started }
+    selectedElements: [], // active-slide selection members; state.selected is the primary member
+    drag: null, // { el, items: [{ el, anchorLeft, anchorTop, wasAbsolute }], startX, startY, started }
     resize: null, // { el, dir, startX, startY, initLeft, initTop, initWidth, initHeight }
     editingText: null, // { el, originalContenteditable, savedRange } while a text edit is open
     suppressClickUntil: 0,
@@ -665,6 +666,31 @@
       box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
       border-radius: 4px;
       display: none;
+    }
+    #${ROOT_ID} .wfpe-multi-box,
+    #${ROOT_ID} .wfpe-multi-outline {
+      position: fixed;
+      pointer-events: none;
+      box-sizing: border-box;
+      display: none;
+    }
+    #${ROOT_ID} .wfpe-multi-outline-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-multi-box {
+      border: 1.5px solid #5b9bd9;
+      background: rgba(91, 155, 217, 0.08);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.55) inset,
+        0 6px 18px rgba(15, 23, 42, 0.12);
+      border-radius: 6px;
+    }
+    #${ROOT_ID} .wfpe-multi-outline {
+      border: 1px dashed rgba(91, 155, 217, 0.82);
+      background: rgba(91, 155, 217, 0.04);
+      border-radius: 4px;
     }
     #${ROOT_ID} .wfpe-toast {
       position: fixed;
@@ -1395,6 +1421,14 @@
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
 
+  const multiBox = document.createElement('div');
+  multiBox.className = 'wfpe-multi-box';
+  root.appendChild(multiBox);
+
+  const multiOutlineLayer = document.createElement('div');
+  multiOutlineLayer.className = 'wfpe-multi-outline-layer';
+  root.appendChild(multiOutlineLayer);
+
   // Overview overlay (v2.1.1) — chrome layer rendered above the deck while
   // overview mode is active. Holds one .wfpe-overview-thumb per slide,
   // each anchored to the slide's getBoundingClientRect with a number
@@ -1719,6 +1753,55 @@
     return el;
   }
 
+  function isSelectionToggleEvent(e) {
+    return !!e && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey;
+  }
+
+  function selectionArraysEqual(a, b) {
+    if (a.length !== b.length) return false;
+    return a.every((el, i) => el === b[i]);
+  }
+
+  function normalizeSelectionElements(elements) {
+    const slide = getActiveSlide();
+    if (!slide) return [];
+    const out = [];
+    for (const el of elements || []) {
+      if (!el || !el.isConnected || !slide.contains(el)) continue;
+      if (el === slide || (el.classList && el.classList.contains('deck'))) continue;
+      if (isInsideEditorRoot(el)) continue;
+      if (!out.includes(el)) out.push(el);
+    }
+    return out;
+  }
+
+  function getSelectedElements() {
+    const source = state.selectedElements && state.selectedElements.length
+      ? state.selectedElements
+      : (state.selected ? [state.selected] : []);
+    return normalizeSelectionElements(source);
+  }
+
+  function hasMultiSelection() {
+    return getSelectedElements().length > 1;
+  }
+
+  function toggleSelectedElement(target) {
+    if (!target) return;
+    const current = getSelectedElements();
+    const existingIndex = current.indexOf(target);
+    let next;
+    let primary = target;
+    if (existingIndex >= 0) {
+      next = current.filter((el) => el !== target);
+      primary = next[next.length - 1] || null;
+    } else {
+      next = current.filter((el) => !el.contains(target) && !target.contains(el));
+      next.push(target);
+    }
+    setSelectedElements(next, primary);
+  }
+
   function stripEditorArtifactsFrom(el) {
     if (!el) return;
     const nodes = [el, ...el.querySelectorAll('*')];
@@ -1767,6 +1850,7 @@
 
   function copySelectedElement() {
     const el = state.selected;
+    if (hasMultiSelection()) return false;
     if (!el || !el.isConnected) return false;
     state.clipboard = { outerHTML: serializeElementForClipboard(el) };
     return true;
@@ -1820,6 +1904,7 @@
 
   function deleteSelectedElement() {
     if (state.editingText) endTextEdit();
+    if (hasMultiSelection()) return false;
     const el = state.selected;
     if (!el || !el.isConnected || state.overviewMode) return false;
     const parent = el.parentElement;
@@ -1892,19 +1977,34 @@
       // Hide both for the duration of the text edit; refreshSelection
       // will re-show them once edit ends.
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       stopSelectionTracking();
       return;
     }
     if (clearDisconnectedSelection()) return;
-    if (state.selected && state.selected.isConnected) {
+    const members = getSelectedElements();
+    if (members.length > 1) {
+      hideRing();
+      hideHandles();
+      hideDimBubble();
+      positionMultiSelection(members);
+      populateInspector(null);
+      startSelectionTracking();
+    } else if (members.length === 1) {
+      hideMultiSelection();
+      state.selected = members[0];
+      state.selectedElements = members;
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
       startSelectionTracking();
     } else {
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       stopSelectionTracking();
     }
   }
@@ -1929,6 +2029,50 @@
     dimBubble.style.display = 'none';
   }
 
+  function hideMultiSelection() {
+    multiBox.style.display = 'none';
+    multiOutlineLayer.replaceChildren();
+  }
+
+  function positionMultiSelection(elements) {
+    const rects = elements
+      .map((el) => el.getBoundingClientRect())
+      .filter((r) => r.width > 0 || r.height > 0);
+    if (!rects.length) {
+      hideMultiSelection();
+      return;
+    }
+    const bounds = rects.reduce((acc, r) => ({
+      left: Math.min(acc.left, r.left),
+      top: Math.min(acc.top, r.top),
+      right: Math.max(acc.right, r.right),
+      bottom: Math.max(acc.bottom, r.bottom),
+    }), {
+      left: rects[0].left,
+      top: rects[0].top,
+      right: rects[0].right,
+      bottom: rects[0].bottom,
+    });
+
+    multiBox.style.display = 'block';
+    multiBox.style.left = `${bounds.left}px`;
+    multiBox.style.top = `${bounds.top}px`;
+    multiBox.style.width = `${bounds.right - bounds.left}px`;
+    multiBox.style.height = `${bounds.bottom - bounds.top}px`;
+
+    multiOutlineLayer.replaceChildren();
+    for (const r of rects) {
+      const outline = document.createElement('div');
+      outline.className = 'wfpe-multi-outline';
+      outline.style.display = 'block';
+      outline.style.left = `${r.left}px`;
+      outline.style.top = `${r.top}px`;
+      outline.style.width = `${r.width}px`;
+      outline.style.height = `${r.height}px`;
+      multiOutlineLayer.appendChild(outline);
+    }
+  }
+
   let selectionRafId = 0;
 
   function shouldTrackSelection() {
@@ -1936,8 +2080,7 @@
       state.editMode &&
       !state.overviewMode &&
       !state.editingText &&
-      !!state.selected &&
-      state.selected.isConnected
+      getSelectedElements().length > 0
     );
   }
 
@@ -1957,34 +2100,59 @@
   }
 
   function clearDisconnectedSelection() {
-    if (!state.selected || state.selected.isConnected) return false;
-    if (state.editingText && state.editingText.el === state.selected) {
+    const current = state.selectedElements && state.selectedElements.length
+      ? state.selectedElements
+      : (state.selected ? [state.selected] : []);
+    if (!state.selected && current.length === 0) return false;
+
+    const members = normalizeSelectionElements(current);
+    const primary = (state.selected && members.includes(state.selected))
+      ? state.selected
+      : (members[members.length - 1] || null);
+    const changed = state.selected !== primary || !selectionArraysEqual(state.selectedElements, members);
+    if (!changed) return false;
+
+    if (state.editingText && state.editingText.el && !members.includes(state.editingText.el)) {
       state.editingText = null;
     }
-    state.selected = null;
-    hideRing();
-    hideDimBubble();
-    populateInspector(null);
-    refreshInspector();
-    stopSelectionTracking();
-    return true;
+    state.selected = primary;
+    state.selectedElements = primary ? members : [];
+    if (!primary) {
+      hideRing();
+      hideHandles();
+      hideDimBubble();
+      hideMultiSelection();
+      populateInspector(null);
+      refreshInspector();
+      stopSelectionTracking();
+      return true;
+    }
+    return false;
   }
 
-  function setSelected(el) {
+  function setSelectedElements(elements, primary) {
     // Close any open txn before swapping selection — defends against
     // an orphaned colour-picker txn (input fired without change) being
     // silently bundled with subsequent unrelated edits on the new
     // selection. endTxn no-ops if no element was touched.
-    if (state.selected !== el && state.txn) endTxn();
-    state.selected = el || null;
+    const members = normalizeSelectionElements(elements);
+    const nextPrimary = (primary && members.includes(primary))
+      ? primary
+      : (members[members.length - 1] || null);
+    const selectionChanged = (
+      state.selected !== nextPrimary ||
+      !selectionArraysEqual(state.selectedElements, members)
+    );
+    if (selectionChanged && state.txn) endTxn();
+    state.selected = nextPrimary;
+    state.selectedElements = nextPrimary ? members : [];
     if (state.selected) {
-      positionRing(state.selected);
-      positionDimBubble(state.selected);
-      populateInspector(state.selected);
-      startSelectionTracking();
+      refreshSelection();
     } else {
       hideRing();
+      hideHandles();
       hideDimBubble();
+      hideMultiSelection();
       populateInspector(null);
       stopSelectionTracking();
     }
@@ -1997,6 +2165,10 @@
     // and mouseup targets (== body), and onClick can't find the original
     // target. Updating inspector after the mouseup keeps the click cycle
     // against the original DOM.
+  }
+
+  function setSelected(el) {
+    setSelectedElements(el ? [el] : [], el || null);
   }
 
   function populateInspector(el) {
@@ -2235,7 +2407,7 @@
   // is a v2.x ROADMAP item).
   // ===========================================================================
   function refreshInspector() {
-    const visible = !!state.selected;
+    const visible = getSelectedElements().length === 1 && !!state.selected;
     inspector.dataset.visible = visible ? 'true' : 'false';
     inspector.dataset.state = state.inspectorMinimised ? 'minimised' : 'expanded';
     inspectorMinimiseBtn.innerHTML = state.inspectorMinimised ? ICONS.chevronDown : ICONS.chevronUp;
@@ -3337,9 +3509,10 @@
     }
 
     if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && noModifier) {
-      if (!state.selected || !isTextBearing(state.selected)) return;
+      if (!state.selected) return;
       e.preventDefault();
       e.stopPropagation();
+      if (hasMultiSelection() || !isTextBearing(state.selected)) return;
       const direction = e.key === 'ArrowUp' ? +1 : -1;
       const step = e.shiftKey ? 5 : 1;
       beginTxn();
@@ -3375,7 +3548,6 @@
   }
 
   document.addEventListener('keydown', onKeyDown, true);
-
   // ===========================================================================
   // Selection
   // ===========================================================================
@@ -3397,6 +3569,15 @@
     }
     if (isInsideEditorRoot(e.target)) return;
     const target = findSelectableTarget(e.target);
+    if (isSelectionToggleEvent(e)) {
+      if (target) {
+        toggleSelectedElement(target);
+        refreshInspector();
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
     setSelected(target);
     refreshInspector();
   }
@@ -3438,7 +3619,6 @@
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
   }
   document.querySelectorAll('.slide').forEach(observeSlideClass);
-
   // ===========================================================================
   // Drag (scale-aware, with unlock-on-flow)
   // ===========================================================================
@@ -3495,7 +3675,7 @@
 
     // Resize-handle hit takes precedence over a fresh selection/drag.
     const handleDir = e.target && e.target.dataset && e.target.dataset.wfpeHandle;
-    if (handleDir && state.selected) {
+    if (handleDir && state.selected && !hasMultiSelection()) {
       startResize(e, handleDir);
       return;
     }
@@ -3504,22 +3684,43 @@
     const target = findSelectableTarget(e.target);
     if (!target) return;
 
-    setSelected(target);
+    if (isSelectionToggleEvent(e)) {
+      toggleSelectedElement(target);
+      e.preventDefault();
+      e.stopPropagation();
+      state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+      refreshInspector();
+      return;
+    }
+
+    const currentSelection = getSelectedElements();
+    const dragElements = currentSelection.length > 1 && currentSelection.includes(target)
+      ? currentSelection
+      : [target];
+    if (dragElements.length === 1 && state.selected !== target) {
+      setSelected(target);
+    }
 
     // Suppress the browser's default mousedown-then-drag text selection so
     // the user doesn't end up highlighting random copy while moving things.
     e.preventDefault();
 
-    const cs = getComputedStyle(target);
+    const items = dragElements.map((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        el,
+        anchorLeft: el.offsetLeft,
+        anchorTop: el.offsetTop,
+        width: el.offsetWidth,
+        height: el.offsetHeight,
+        wasAbsolute: cs.position === 'absolute',
+      };
+    });
     state.drag = {
       el: target,
+      items,
       startX: e.clientX,
       startY: e.clientY,
-      anchorLeft: target.offsetLeft,
-      anchorTop: target.offsetTop,
-      width: target.offsetWidth,
-      height: target.offsetHeight,
-      wasAbsolute: cs.position === 'absolute',
       started: false,
     };
 
@@ -3529,7 +3730,7 @@
 
   function startResize(e, dir) {
     const el = state.selected;
-    if (!el) return;
+    if (!el || hasMultiSelection()) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -3750,14 +3951,6 @@
       height: el.offsetHeight,
     };
   }
-
-  function commitUnlock(d) {
-    const rect = unlockToAbsolute(d.el);
-    d.anchorLeft = rect.left;
-    d.anchorTop = rect.top;
-    d.width = rect.width;
-    d.height = rect.height;
-  }
   // ===========================================================================
   // Inline text edit
   //
@@ -3955,13 +4148,23 @@
       if (distSq < DRAG_DEADZONE_PX * DRAG_DEADZONE_PX) return;
       d.started = true;
       beginTxn();
-      touchElement(d.el);
-      if (!d.wasAbsolute) {
-        commitUnlock(d);
-      } else {
+      for (const item of d.items || []) {
+        touchElement(item.el);
+      }
+      for (const item of d.items || []) {
+        if (!item.wasAbsolute) {
+          unlockToAbsolute(item.el);
+        }
+      }
+      for (const item of d.items || []) {
+        if (!item.el || !item.el.isConnected) continue;
+        item.anchorLeft = item.el.offsetLeft;
+        item.anchorTop = item.el.offsetTop;
+        item.width = item.el.offsetWidth;
+        item.height = item.el.offsetHeight;
         // Lock in the anchor as inline left/top so subsequent drags compose.
-        d.el.style.left = `${d.anchorLeft}px`;
-        d.el.style.top = `${d.anchorTop}px`;
+        item.el.style.left = `${item.anchorLeft}px`;
+        item.el.style.top = `${item.anchorTop}px`;
       }
     }
 
@@ -3971,8 +4174,11 @@
     const scale = getCanvasScale();
     const dx = dxView / scale;
     const dy = dyView / scale;
-    d.el.style.left = `${d.anchorLeft + dx}px`;
-    d.el.style.top = `${d.anchorTop + dy}px`;
+    for (const item of d.items || []) {
+      if (!item.el || !item.el.isConnected) continue;
+      item.el.style.left = `${item.anchorLeft + dx}px`;
+      item.el.style.top = `${item.anchorTop + dy}px`;
+    }
     refreshSelection();
   }
 
