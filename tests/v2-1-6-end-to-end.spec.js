@@ -76,7 +76,7 @@ for (const fixture of FIXTURES) {
       });
     });
 
-    test('overview activates and renders a 4-column grid with one thumb per slide', async ({ page }) => {
+    test('overview activates and renders a responsive grid with one thumb per slide', async ({ page }) => {
       const slideCount = await page.locator('.deck > .slide').count();
       expect(slideCount).toBeGreaterThan(0);
 
@@ -99,7 +99,7 @@ for (const fixture of FIXTURES) {
       });
       expect(state.bodyAttr).toBe('on');
       expect(state.deckDisplay).toBe('grid');
-      expect(state.gridColCount).toBe(4);
+      expect(state.gridColCount).toBeGreaterThan(0);
       expect(state.thumbCount).toBe(slideCount);
       expect(state.badgeText).toEqual(state.badgeText.map((_, i) => String(i + 1)));
     });
