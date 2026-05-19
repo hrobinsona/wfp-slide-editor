@@ -4249,6 +4249,24 @@
     return `${base}-edited${ext}`;
   }
 
+  function normalizeExportStartupState(root) {
+    root.querySelectorAll('.deck').forEach((deck) => {
+      const slides = [...deck.querySelectorAll(':scope > .slide')];
+      if (!slides.length) return;
+      slides.forEach((slide, index) => {
+        slide.classList.toggle('active', index === 0);
+      });
+    });
+
+    root.querySelectorAll('.progress').forEach((progress) => {
+      const dots = [...progress.querySelectorAll('.progress-dot')];
+      if (!dots.length) return;
+      dots.forEach((dot, index) => {
+        dot.classList.toggle('active', index === 0);
+      });
+    });
+  }
+
   function buildExportHtml() {
     const clone = document.documentElement.cloneNode(true);
 
@@ -4270,6 +4288,8 @@
       }
       if (el.hasAttribute('contenteditable')) el.removeAttribute('contenteditable');
     });
+
+    normalizeExportStartupState(clone);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
@@ -4297,7 +4317,6 @@
     triggerDownload(filename, html);
     showToast(document.body, `Exported to ${filename}`);
   }
-
   // ===========================================================================
   // Ready
   // ===========================================================================

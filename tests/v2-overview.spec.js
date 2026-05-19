@@ -1105,6 +1105,17 @@ function extractSlideIdsFromHtml(html) {
   return ids;
 }
 
+function extractActiveSlideIdsFromHtml(html) {
+  const ids = [];
+  const re = /<div\s+class="([^"]*\bslide\b[^"]*)"[^>]*id="(s\d+)"/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const classes = m[1].split(/\s+/);
+    if (classes.includes('active')) ids.push(m[2]);
+  }
+  return ids;
+}
+
 test.describe('v2.1.5 — Export round-trip', () => {
   test.use({ viewport: { width: 1920, height: 1080 } });
 
@@ -1126,6 +1137,7 @@ test.describe('v2.1.5 — Export round-trip', () => {
     expect(exportedOrder).toEqual(liveOrder);
     // Sanity: s4 is now at position 0 in the exported file.
     expect(exportedOrder[0]).toBe('s4');
+    expect(extractActiveSlideIdsFromHtml(html)).toEqual(['s4']);
   });
 
   test('delete persists in the exported HTML (deleted slide is gone)', async ({ page }) => {
