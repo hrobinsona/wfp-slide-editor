@@ -19,6 +19,118 @@
     return `${base}-edited${ext}`;
   }
 
+  function shouldSkipAssetUrl(raw) {
+    const value = (raw || '').trim();
+    return (
+      !value ||
+      value.startsWith('#') ||
+      /^(data|blob|javascript|mailto|tel):/i.test(value)
+    );
+  }
+
+  function resolveExportAssetUrl(raw, baseUrl) {
+    const value = (raw || '').trim();
+    if (shouldSkipAssetUrl(value)) return raw;
+    try {
+      return new URL(value, baseUrl).href;
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  function absolutizeCssUrls(cssText, baseUrl) {
+    if (!cssText || !cssText.includes('url(')) return cssText;
+    return cssText.replace(
+      /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g,
+      (match, doubleQuoted, singleQuoted, bare) => {
+        const raw = doubleQuoted ?? singleQuoted ?? (bare || '').trim();
+        const resolved = resolveExportAssetUrl(raw, baseUrl);
+        if (resolved === raw) return match;
+        const quote = singleQuoted !== undefined ? "'" : '"';
+        return `url(${quote}${resolved}${quote})`;
+      },
+    );
+  }
+
+  function absolutizeSrcset(value, baseUrl) {
+    if (!value) return value;
+    return value
+      .split(',')
+      .map((candidate) => {
+        const trimmed = candidate.trim();
+        if (!trimmed) return candidate;
+        const parts = trimmed.split(/\s+/);
+        parts[0] = resolveExportAssetUrl(parts[0], baseUrl);
+        return parts.join(' ');
+      })
+      .join(', ');
+  }
+
+  function absolutizeExportAssetUrls(root) {
+    const baseUrl = document.baseURI || location.href;
+    const attrTargets = [
+      ['[src]', 'src'],
+      ['link[href], image[href], use[href]', 'href'],
+      ['[poster]', 'poster'],
+      ['object[data]', 'data'],
+    ];
+
+    attrTargets.forEach(([selector, attr]) => {
+      root.querySelectorAll(selector).forEach((el) => {
+        const value = el.getAttribute(attr);
+        const resolved = resolveExportAssetUrl(value, baseUrl);
+        if (resolved !== value) el.setAttribute(attr, resolved);
+      });
+    });
+
+    root.querySelectorAll('[srcset]').forEach((el) => {
+      const value = el.getAttribute('srcset');
+      const resolved = absolutizeSrcset(value, baseUrl);
+      if (resolved !== value) el.setAttribute('srcset', resolved);
+    });
+
+    root.querySelectorAll('[style]').forEach((el) => {
+      const value = el.getAttribute('style');
+      const resolved = absolutizeCssUrls(value, baseUrl);
+      if (resolved !== value) el.setAttribute('style', resolved);
+    });
+
+    root.querySelectorAll('style').forEach((style) => {
+      const resolved = absolutizeCssUrls(style.textContent, baseUrl);
+      if (resolved !== style.textContent) style.textContent = resolved;
+    });
+  }
+
+  function hasDynamicProgressDotBuilder(root) {
+    return [...root.querySelectorAll('script')].some((script) => {
+      const text = script.textContent || '';
+      return (
+        /progress-dot/.test(text) &&
+        /createElement\s*\(/.test(text) &&
+        /appendChild\s*\(/.test(text)
+      );
+    });
+  }
+
+  function isRuntimeGeneratedProgressDot(dot) {
+    const nonClassAttributes = [...dot.attributes].filter((attr) => attr.name !== 'class');
+    return (
+      nonClassAttributes.length === 0 &&
+      dot.children.length === 0 &&
+      dot.textContent.trim() === ''
+    );
+  }
+
+  function removeRuntimeGeneratedProgressDots(root) {
+    if (!hasDynamicProgressDotBuilder(root)) return;
+
+    root.querySelectorAll('.progress').forEach((progress) => {
+      progress.querySelectorAll(':scope > .progress-dot').forEach((dot) => {
+        if (isRuntimeGeneratedProgressDot(dot)) dot.remove();
+      });
+    });
+  }
+
   function normalizeExportStartupState(root) {
     root.querySelectorAll('.deck').forEach((deck) => {
       const slides = [...deck.querySelectorAll(':scope > .slide')];
@@ -59,6 +171,8 @@
       if (el.hasAttribute('contenteditable')) el.removeAttribute('contenteditable');
     });
 
+    absolutizeExportAssetUrls(clone);
+    removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
