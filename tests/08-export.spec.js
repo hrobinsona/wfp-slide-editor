@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { EDITOR_PATH, loadFixtureWithEditor } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -99,6 +99,10 @@ function extractActiveProgressIndicesFromHtml(html) {
     if (classes.includes('active')) indices.push(Number(match[2]));
   }
   return indices;
+}
+
+function extractProgressDotCountFromHtml(html) {
+  return (html.match(/class="[^"]*\bprogress-dot\b/g) || []).length;
 }
 
 test.describe('Phase 8 — Export', () => {
@@ -337,6 +341,140 @@ test.describe('Phase 8 — Export', () => {
       [...document.querySelectorAll('.slide.active')].map((s) => s.id),
     );
     expect(activeSlideIds).toEqual(['s1']);
+
+    await fresh.close();
+  });
+
+  test('export does not serialize runtime-generated progress dots', async ({
+    page,
+    context,
+  }) => {
+    await page.setContent(`<!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          .slide { display: none; }
+          .slide.active { display: block; }
+          .progress { position: fixed; bottom: 16px; }
+          .progress-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+          .progress-dot.active { transform: scale(1.3); }
+        </style>
+      </head>
+      <body>
+        <div class="deck">
+          <div class="slide active" id="s0">Slide 1</div>
+          <div class="slide" id="s1">Slide 2</div>
+          <div class="slide" id="s2">Slide 3</div>
+        </div>
+        <div class="progress" id="progress">
+          <div class="progress-dot active"></div>
+          <div class="progress-dot"></div>
+          <div class="progress-dot"></div>
+        </div>
+        <script>
+          const slides = document.querySelectorAll('.slide');
+          const dots = document.getElementById('progress');
+          let current = 0;
+          slides.forEach((_, i) => {
+            const dot = document.createElement('div');
+            dot.className = 'progress-dot' + (i === 0 ? ' active' : '');
+            dot.addEventListener('click', () => show(i));
+            dots.appendChild(dot);
+          });
+          function show(i) {
+            if (i < 0 || i >= slides.length) return;
+            slides[current].classList.remove('active');
+            dots.children[current].classList.remove('active');
+            current = i;
+            slides[current].classList.add('active');
+            dots.children[current].classList.add('active');
+          }
+        </script>
+      </body>
+      </html>`);
+    await page.locator('.deck').waitFor({ state: 'attached' });
+    await expect
+      .poll(() => page.locator('.progress-dot').count())
+      .toBe(6);
+    await page.addScriptTag({ path: EDITOR_PATH });
+    await page.waitForFunction(() => window.__wfpEditorReady === true);
+
+    await page.keyboard.press('e');
+    const download = await triggerExport(page);
+    const { path: outPath, content } = await readDownloadAsString(download);
+
+    expect(extractProgressDotCountFromHtml(content)).toBe(0);
+
+    const fresh = await context.newPage();
+    await fresh.goto(`file://${outPath}`);
+    await fresh.locator('.deck').waitFor({ state: 'attached', timeout: 5_000 });
+    await expect
+      .poll(() => fresh.locator('.progress-dot').count())
+      .toBe(3);
+    await fresh.close();
+  });
+
+  test('export resolves local relative image assets before download', async ({
+    page,
+    context,
+  }) => {
+    const assetDir = path.join(OUTPUT_DIR, 'relative-asset-fixture');
+    fs.mkdirSync(assetDir, { recursive: true });
+
+    const assetPath = path.join(assetDir, 'hero.svg');
+    fs.writeFileSync(
+      assetPath,
+      '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="#f4847b"/></svg>',
+    );
+
+    const pagePath = path.join(assetDir, 'asset-page.html');
+    fs.writeFileSync(
+      pagePath,
+      `<!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          .deck { width: 320px; height: 180px; }
+          .slide { display: none; }
+          .slide.active { display: block; }
+          .hero { width: 24px; height: 24px; background-image: url("hero.svg"); }
+        </style>
+      </head>
+      <body>
+        <div class="deck">
+          <div class="slide active" id="s0">
+            <img class="inline-asset" src="hero.svg" alt="asset">
+            <div class="hero"></div>
+          </div>
+        </div>
+      </body>
+      </html>`,
+    );
+
+    await page.goto(pathToFileURL(pagePath).href);
+    await page.locator('.deck').waitFor({ state: 'attached' });
+    await page.addScriptTag({ path: EDITOR_PATH });
+    await page.waitForFunction(() => window.__wfpEditorReady === true);
+
+    await page.keyboard.press('e');
+    const download = await triggerExport(page);
+    const { path: outPath, content } = await readDownloadAsString(download);
+
+    const assetUrl = pathToFileURL(assetPath).href;
+    expect(content).toContain(`src="${assetUrl}"`);
+    expect(content).toContain(`background-image: url("${assetUrl}")`);
+
+    const fresh = await context.newPage();
+    await fresh.goto(pathToFileURL(outPath).href);
+    await fresh.locator('.deck').waitFor({ state: 'attached', timeout: 5_000 });
+    await fresh.waitForFunction(() => document.querySelector('.inline-asset')?.complete);
+
+    const loaded = await fresh.evaluate(() => ({
+      width: document.querySelector('.inline-asset').naturalWidth,
+      backgroundImage: getComputedStyle(document.querySelector('.hero')).backgroundImage,
+    }));
+    expect(loaded.width).toBe(24);
+    expect(loaded.backgroundImage).toContain(assetUrl);
 
     await fresh.close();
   });
