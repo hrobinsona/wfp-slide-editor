@@ -200,6 +200,34 @@ test.describe('v2.3 — font-size triplet', () => {
     expect(Number(after.slider)).toBe(expectedRounded);
   });
 
+  test('clicking + updates the numeric readout even when the font-size input keeps focus', async ({ page }) => {
+    await selectByMouse(page, '.slide.active h1');
+    const before = Math.round(await readFontSize(page, '.slide.active h1'));
+
+    const after = await page.evaluate(() => {
+      const input = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSize"]');
+      const slider = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSizeSlider"]');
+      const plus = document.querySelector('#wfp-editor-root .wfpe-font-btn[data-action="font-plus"]');
+      input.focus();
+      const focusedBefore = document.activeElement === input;
+      plus.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const live = Math.round(parseFloat(getComputedStyle(document.querySelector('.slide.active h1')).fontSize));
+      return {
+        focusedBefore,
+        focusedAfter: document.activeElement === input,
+        live,
+        input: Number(input.value),
+        slider: Number(slider.value),
+      };
+    });
+
+    expect(after.focusedBefore).toBe(true);
+    expect(after.focusedAfter).toBe(true);
+    expect(after.live).toBe(before + 1);
+    expect(after.input).toBe(after.live);
+    expect(after.slider).toBe(after.live);
+  });
+
   test('font-size keystrokes inside the input do not bubble to the editor (no E toggle, no arrow nudge)', async ({ page }) => {
     await selectByMouse(page, '.slide.active h1');
     const beforeMode = await page.evaluate(() => document.querySelector('#wfp-editor-root .wfpe-mode-badge').dataset.mode);

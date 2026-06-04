@@ -2345,9 +2345,9 @@
     }
   }
 
-  function populateFontSize(el) {
+  function populateFontSize(el, { forceInput = false } = {}) {
     const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
-    if (document.activeElement !== inspectorInputs.fontSize) {
+    if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
     // Slider snaps to its [min, max] range — clamp the displayed value.
@@ -2930,6 +2930,9 @@
 
   function exitOverview() {
     document.body.removeAttribute('data-wfp-edit-overview');
+    // Overview enables document scroll for the grid; normal slide view should
+    // always return to the top of the viewport.
+    window.scrollTo(0, 0);
     overviewOverlay.dataset.visible = 'false';
     overviewOverlay.innerHTML = '';
     overviewDropIndicator.dataset.visible = 'false';
@@ -3393,6 +3396,7 @@
     touchElement(el);
     nudgeFontSize(el, deltaPx);
     endInspectorTxn(ctx);
+    populateFontSize(el, { forceInput: true });
     refreshSelection();
   }
 

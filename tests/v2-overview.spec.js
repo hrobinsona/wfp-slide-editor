@@ -488,6 +488,44 @@ test.describe('v2.1.2 — Click to navigate', () => {
     expect(activeIds[0]).toBe(`s${slideCount - 1}`);
   });
 
+  test('clicking a lower thumbnail after scrolling overview restores slide view to the top', async ({ page }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => {
+      return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
+    });
+
+    const slideCount = await page.locator('.deck > .slide').count();
+    const targetIndex = slideCount - 1;
+    await page.locator('.deck > .slide').nth(targetIndex).scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => window.scrollY > 0);
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    await page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(targetIndex).click();
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    const after = await page.evaluate(() => {
+      const active = document.querySelector('.slide.active');
+      const scrollingElement = document.scrollingElement || document.documentElement;
+      const rect = active.getBoundingClientRect();
+      return {
+        activeId: active.id,
+        bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
+        scrollY: window.scrollY,
+        scrollTop: scrollingElement.scrollTop,
+        activeTop: rect.top,
+        activeBottom: rect.bottom,
+        viewportHeight: window.innerHeight,
+      };
+    });
+    expect(after.bodyAttr).toBe(null);
+    expect(after.activeId).toBe(`s${targetIndex}`);
+    expect(after.scrollY).toBe(0);
+    expect(after.scrollTop).toBe(0);
+    expect(after.activeTop).toBeGreaterThanOrEqual(-1);
+    expect(after.activeBottom).toBeLessThanOrEqual(after.viewportHeight + 1);
+  });
+
   test('exactly one slide carries .active after navigation', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('o');
@@ -1090,7 +1128,10 @@ async function triggerExport(page) {
 
 async function readExportedHtml(download) {
   fs.mkdirSync(OUTPUT_DIR_V215, { recursive: true });
-  const out = path.join(OUTPUT_DIR_V215, download.suggestedFilename());
+  const out = path.join(
+    OUTPUT_DIR_V215,
+    `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+  );
   await download.saveAs(out);
   return fs.readFileSync(out, 'utf-8');
 }

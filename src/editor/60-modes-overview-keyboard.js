@@ -216,6 +216,9 @@
 
   function exitOverview() {
     document.body.removeAttribute('data-wfp-edit-overview');
+    // Overview enables document scroll for the grid; normal slide view should
+    // always return to the top of the viewport.
+    window.scrollTo(0, 0);
     overviewOverlay.dataset.visible = 'false';
     overviewOverlay.innerHTML = '';
     overviewDropIndicator.dataset.visible = 'false';
@@ -679,6 +682,7 @@
     touchElement(el);
     nudgeFontSize(el, deltaPx);
     endInspectorTxn(ctx);
+    populateFontSize(el, { forceInput: true });
     refreshSelection();
   }
 

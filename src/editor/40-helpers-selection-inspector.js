@@ -583,9 +583,9 @@
     }
   }
 
-  function populateFontSize(el) {
+  function populateFontSize(el, { forceInput = false } = {}) {
     const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
-    if (document.activeElement !== inspectorInputs.fontSize) {
+    if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
     // Slider snaps to its [min, max] range — clamp the displayed value.
