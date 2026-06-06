@@ -29,6 +29,23 @@ async function loadDocumentWithEditor(page, fixtureName) {
   await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
 }
 
+async function simulateOverviewDragDrop(page, sourceIdx, targetIdx, position = 'before') {
+  await page.evaluate(({ srcIdx, tgtIdx, pos }) => {
+    const thumbs = document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb');
+    const src = thumbs[srcIdx];
+    const tgt = thumbs[tgtIdx];
+    if (!src || !tgt) throw new Error(`Missing overview thumb src=${srcIdx} target=${tgtIdx}`);
+    const rect = tgt.getBoundingClientRect();
+    const x = pos === 'before' ? rect.left + 4 : rect.right - 4;
+    const y = rect.top + rect.height / 2;
+    const dt = new DataTransfer();
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    src.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }, { srcIdx: sourceIdx, tgtIdx: targetIdx, pos: position });
+}
+
 test.describe('v2.4.0 — Deck-root resolver', () => {
   test('native decks are resolved and marked without changing the slide list', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
@@ -203,5 +220,104 @@ test.describe('v2.4.1 — Foreign-deck editing', () => {
 
     await page.keyboard.press('ControlOrMeta+z');
     await expect(page.locator('.slide.active .foreign-note')).toHaveCount(1);
+  });
+});
+
+test.describe('v2.4.2 — Foreign-deck Overview with measured cells', () => {
+  test('native overview still uses 1920 by 1080 design cells', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0);
+
+    const metrics = await page.evaluate(() => {
+      const deck = document.querySelector('.deck');
+      const thumb = document.querySelector('#wfp-editor-root .wfpe-overview-thumb');
+      const rect = thumb.getBoundingClientRect();
+      const cs = getComputedStyle(deck);
+      return {
+        cellW: cs.getPropertyValue('--wfpe-cell-w').trim(),
+        cellH: cs.getPropertyValue('--wfpe-cell-h').trim(),
+        thumbW: Math.round(rect.width),
+        thumbH: Math.round(rect.height),
+      };
+    });
+
+    expect(metrics.cellW).toBe('1920px');
+    expect(metrics.cellH).toBe('1080px');
+    expect(metrics.thumbW).toBe(422);
+    expect(metrics.thumbH).toBe(238);
+  });
+
+  test('foreign overview measures viewport-sized cells and makes opacity-hidden slides visible', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4);
+
+    const metrics = await page.evaluate(() => {
+      const root = document.querySelector('#foreign-presentation');
+      const slides = [...root.querySelectorAll(':scope > .slide')];
+      const thumbs = [...document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb')];
+      return {
+        display: getComputedStyle(root).display,
+        cellW: getComputedStyle(root).getPropertyValue('--wfpe-cell-w').trim(),
+        cellH: getComputedStyle(root).getPropertyValue('--wfpe-cell-h').trim(),
+        opacities: slides.map((slide) => getComputedStyle(slide).opacity),
+        transitions: slides.map((slide) => getComputedStyle(slide).transitionDuration),
+        thumbRects: thumbs.map((thumb) => {
+          const rect = thumb.getBoundingClientRect();
+          return { width: Math.round(rect.width), height: Math.round(rect.height) };
+        }),
+        overflowX: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    });
+
+    expect(metrics.display).toBe('grid');
+    expect(metrics.cellW).toBe('1280px');
+    expect(metrics.cellH).toBe('720px');
+    expect(metrics.opacities).toEqual(['1', '1', '1', '1']);
+    expect(metrics.transitions).toEqual(['0s', '0s', '0s', '0s']);
+    expect(metrics.overflowX).toBeLessThanOrEqual(1);
+    for (const rect of metrics.thumbRects) {
+      expect(rect.width).toBe(282);
+      expect(rect.height).toBe(158);
+    }
+  });
+
+  test('foreign overview reorders, deletes, inserts, and exports cleanly', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4);
+
+    await simulateOverviewDragDrop(page, 0, 2, 'after');
+    await expect.poll(() => page.evaluate(() =>
+      [...document.querySelectorAll('#foreign-presentation > .slide')].map((slide) => slide.id)
+    )).toEqual(['foreign-slide-2', 'foreign-slide-3', 'foreign-slide-1', 'foreign-slide-4']);
+
+    const deleteThumb = page.locator('#wfp-editor-root .wfpe-overview-thumb[data-wfp-edit-slide-index="1"]');
+    await deleteThumb.hover();
+    await deleteThumb.locator('.wfpe-overview-delete').click();
+    await expect.poll(() => page.evaluate(() =>
+      [...document.querySelectorAll('#foreign-presentation > .slide')].map((slide) => slide.id)
+    )).toEqual(['foreign-slide-2', 'foreign-slide-1', 'foreign-slide-4']);
+
+    await page.locator('#wfp-editor-root .wfpe-overview-add[data-wfp-edit-insert-index="1"]').click();
+    await expect.poll(() => page.locator('#foreign-presentation > .slide').count()).toBe(4);
+    await expect(page.locator('#foreign-presentation > .slide').nth(1)).toHaveAttribute('id', 's5');
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    expect(html).toContain('id="s5"');
+    expect(html).not.toContain('id="wfp-editor-root"');
+    expect(html).not.toContain('wfpe-overview');
+    expect(html).not.toContain('data-wfp-edit-deck-root');
+    expect(html).not.toContain('data-wfp-edit-overview');
+    expect(html).not.toContain('--wfpe-cell-w: 1280px');
   });
 });
