@@ -382,12 +382,13 @@
       state.history.shift();
       state.historyIndex--;
     }
-    // Once any slide-level op lands, the fixture's cached slide list
-    // (built once at script load via document.querySelectorAll) is
+    // Once any slide-level op lands, a deck's cached slide list (often
+    // built once at script load via document.querySelectorAll) can be
     // stale relative to the live deck — its arrow-nav would index into
     // the wrong slot or land .active on an orphan. From here on, the
-    // editor owns plain-view arrow nav using fresh DOM queries.
-    state.deckMutated = getDocumentMode() === 'native';
+    // editor owns plain-view arrow nav for paginated modes using fresh
+    // DOM queries. Flat mode has no page-shaped navigation.
+    state.deckMutated = getDocumentMode() !== 'flat';
   }
 
   // Navigate the live deck by ±1, syncing the fixture's progress-dot

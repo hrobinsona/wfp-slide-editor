@@ -579,3 +579,23 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
     await exportedPage.close();
   });
 });
+
+test.describe('v2.4.5 — End-to-end checkpoint regressions', () => {
+  test('foreign deck arrow navigation follows live DOM order after overview reorder', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4);
+
+    await simulateOverviewDragDrop(page, 0, 2, 'after');
+    await expect.poll(() => page.evaluate(() =>
+      [...document.querySelectorAll('#foreign-presentation > .slide')].map((slide) => slide.id)
+    )).toEqual(['foreign-slide-2', 'foreign-slide-3', 'foreign-slide-1', 'foreign-slide-4']);
+
+    await page.keyboard.press('o');
+    await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-1');
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-4');
+  });
+});
