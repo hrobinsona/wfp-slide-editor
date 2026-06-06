@@ -743,6 +743,7 @@
       margin: 0 !important;
       transform: none !important;
       position: static !important;
+      overflow: visible !important;
       justify-content: center;
       align-content: start;
       background: #1a1d23;
@@ -754,10 +755,19 @@
          negative margins reclaim the layout space the
          transform leaves behind, so each cell occupies only the scaled
          visual size. */
-      display: block !important;
+      display: var(--wfpe-overview-slide-display, block) !important;
       position: relative !important;
       top: auto !important;
       left: auto !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: var(--wfpe-cell-w) !important;
+      height: var(--wfpe-cell-h) !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+      box-sizing: border-box !important;
       opacity: 1 !important;
       visibility: visible !important;
       pointer-events: auto !important;

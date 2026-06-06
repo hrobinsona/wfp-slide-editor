@@ -300,6 +300,118 @@ test.describe('v2.4.2 — Foreign-deck Overview with measured cells', () => {
     }
   });
 
+  test('foreign overview keeps transformed flex slides in stable measured thumbnail cells', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.setContent(`
+      <!doctype html>
+      <html>
+      <head>
+        <style>
+          * { box-sizing: border-box; }
+          body { margin: 0; overflow: hidden; background: #0a0a0c; color: white; font-family: system-ui, sans-serif; }
+          .presentation { position: fixed; inset: 0; overflow: clip; background: #0a0a0c; }
+          .slide {
+            position: absolute;
+            inset: 0;
+            bottom: 64px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 40px 80px;
+            opacity: 0;
+            pointer-events: none;
+            transform: translateX(80px) scale(0.97);
+          }
+          .slide.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translateX(0) scale(1);
+          }
+          .content-area {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            max-width: 1040px;
+            width: 100%;
+            transform: translateY(0);
+          }
+          .card {
+            min-height: 260px;
+            border: 1px solid rgba(255,255,255,0.16);
+            border-radius: 20px;
+            padding: 28px 24px;
+          }
+          .tall { min-height: 360px; }
+        </style>
+      </head>
+      <body>
+        <div class="presentation">
+          ${Array.from({ length: 7 }, (_, i) => `
+            <section class="slide${i === 2 ? ' active' : ''}" data-slide="${i}">
+              <h2>Slide ${i + 1}</h2>
+              <div class="content-area">
+                <div class="card">One</div>
+                <div class="card${i >= 4 ? ' tall' : ''}">Two</div>
+                <div class="card">Three</div>
+              </div>
+            </section>
+          `).join('')}
+        </div>
+      </body>
+      </html>
+    `);
+    await page.addScriptTag({ path: EDITOR_PATH });
+    await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 7);
+
+    const metrics = await page.evaluate(() => {
+      const root = document.querySelector('.presentation');
+      const rootStyle = getComputedStyle(root);
+      const thumbs = [...document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb')].map((thumb) => {
+        const rect = thumb.getBoundingClientRect();
+        return {
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          bottom: Math.round(rect.bottom),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      });
+      const slides = [...document.querySelectorAll('.presentation > .slide')].map((slide) => {
+        const rect = slide.getBoundingClientRect();
+        const cs = getComputedStyle(slide);
+        return {
+          display: cs.display,
+          bottom: cs.bottom,
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      });
+      return {
+        rootOverflow: rootStyle.overflow,
+        slideDisplayVar: rootStyle.getPropertyValue('--wfpe-overview-slide-display').trim(),
+        cellW: rootStyle.getPropertyValue('--wfpe-cell-w').trim(),
+        cellH: rootStyle.getPropertyValue('--wfpe-cell-h').trim(),
+        thumbs,
+        slides,
+      };
+    });
+
+    expect(metrics.rootOverflow).toBe('visible');
+    expect(metrics.slideDisplayVar).toBe('flex');
+    expect(metrics.cellW).toBe('1280px');
+    expect(metrics.cellH).toBe('656px');
+    expect(metrics.thumbs).toHaveLength(7);
+    expect(new Set(metrics.thumbs.map((thumb) => thumb.height))).toEqual(new Set([144]));
+    expect(metrics.thumbs[2].top).toBeGreaterThanOrEqual(metrics.thumbs[0].bottom + 8);
+    expect(metrics.thumbs[4].top).toBeGreaterThanOrEqual(metrics.thumbs[2].bottom + 8);
+    expect(new Set(metrics.slides.map((slide) => slide.display))).toEqual(new Set(['flex']));
+    expect(new Set(metrics.slides.map((slide) => slide.height))).toEqual(new Set([144]));
+  });
+
   test('foreign overview reorders, deletes, inserts, and exports cleanly', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     await loadDocumentWithEditor(page, 'foreign-deck.html');
@@ -442,6 +554,129 @@ test.describe('v2.4.3 — Flat document mode', () => {
     });
     expect(undone.left).toBe(Math.round(before.left));
     expect(undone.top).toBe(Math.round(before.top));
+  });
+
+  test('flat document resize can grow an element beyond stylesheet max-width', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const title = page.locator('.flat-title');
+    await title.click();
+
+    const before = await title.evaluate((el) => ({
+      width: el.offsetWidth,
+      computedMaxWidth: getComputedStyle(el).maxWidth,
+    }));
+    expect(before.computedMaxWidth).not.toBe('none');
+
+    const handle = page.locator('#wfp-editor-root .wfpe-handle-e');
+    await expect(handle).not.toHaveCSS('display', 'none');
+    const handleBox = await handle.boundingBox();
+    expect(handleBox).not.toBeNull();
+
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 160, handleBox.y + handleBox.height / 2, { steps: 5 });
+    await page.mouse.up();
+
+    const after = await title.evaluate((el) => ({
+      width: el.offsetWidth,
+      inlineWidth: el.style.width,
+      inlineMaxWidth: el.style.maxWidth,
+      computedMaxWidth: getComputedStyle(el).maxWidth,
+    }));
+
+    expect(after.inlineWidth).not.toBe('');
+    expect(after.inlineMaxWidth).toBe('none');
+    expect(after.computedMaxWidth).toBe('none');
+    expect(after.width).toBeGreaterThanOrEqual(before.width + 140);
+
+    await page.keyboard.press('ControlOrMeta+z');
+    const undone = await title.evaluate((el) => ({
+      width: el.offsetWidth,
+      inlineMaxWidth: el.style.maxWidth,
+      computedMaxWidth: getComputedStyle(el).maxWidth,
+    }));
+    expect(undone.width).toBe(before.width);
+    expect(undone.inlineMaxWidth).toBe('');
+    expect(undone.computedMaxWidth).toBe(before.computedMaxWidth);
+  });
+
+  test('flat document drag keeps static grid children anchored during flow unlock', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.evaluate(() => {
+      const root = document.querySelector('#flat-article');
+      const grid = document.createElement('div');
+      grid.dataset.testid = 'flow-grid';
+      grid.style.cssText = [
+        'display:grid',
+        'grid-template-columns:repeat(3,160px)',
+        'gap:16px',
+        'width:512px',
+        'margin:48px auto',
+        'align-items:stretch',
+        'transform:translateY(0)',
+      ].join(';');
+
+      ['A', 'B', 'C'].forEach((label) => {
+        const cell = document.createElement('div');
+        cell.dataset.testid = `flow-grid-${label.toLowerCase()}`;
+        cell.textContent = label;
+        cell.style.cssText = [
+          'height:90px',
+          'padding:18px',
+          'border-radius:6px',
+          'background:#eef5f7',
+          'border:1px solid #d4e4ea',
+          'color:#234856',
+          'font-weight:750',
+        ].join(';');
+        grid.append(cell);
+      });
+
+      root.prepend(grid);
+    });
+    await page.keyboard.press('e');
+
+    const target = page.locator('[data-testid="flow-grid-c"]');
+    const first = page.locator('[data-testid="flow-grid-a"]');
+    const before = await target.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { left: rect.left, top: rect.top };
+    });
+    const firstBefore = await first.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { left: rect.left, top: rect.top };
+    });
+
+    await target.click();
+    const box = await target.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 24, { steps: 5 });
+    await page.mouse.up();
+
+    const after = await target.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        inlineLeft: el.style.left,
+        inlineTop: el.style.top,
+      };
+    });
+    const firstAfter = await first.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { left: rect.left, top: rect.top };
+    });
+
+    expect(after.left).toBeCloseTo(before.left + 60, 0);
+    expect(after.top).toBeCloseTo(before.top + 24, 0);
+    expect(after.inlineLeft).not.toMatch(/^-/);
+    expect(after.inlineTop).not.toMatch(/^-/);
+    expect(firstAfter.left).toBeCloseTo(firstBefore.left, 0);
+    expect(firstAfter.top).toBeCloseTo(firstBefore.top, 0);
   });
 
   test('flat document export preserves edits and strips mode residue', async ({ page }) => {

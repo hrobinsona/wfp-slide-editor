@@ -829,6 +829,7 @@
       margin: 0 !important;
       transform: none !important;
       position: static !important;
+      overflow: visible !important;
       justify-content: center;
       align-content: start;
       background: #1a1d23;
@@ -840,10 +841,19 @@
          negative margins reclaim the layout space the
          transform leaves behind, so each cell occupies only the scaled
          visual size. */
-      display: block !important;
+      display: var(--wfpe-overview-slide-display, block) !important;
       position: relative !important;
       top: auto !important;
       left: auto !important;
+      right: auto !important;
+      bottom: auto !important;
+      width: var(--wfpe-cell-w) !important;
+      height: var(--wfpe-cell-h) !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+      box-sizing: border-box !important;
       opacity: 1 !important;
       visibility: visible !important;
       pointer-events: auto !important;
@@ -1992,6 +2002,30 @@
     };
   }
 
+  function applyExplicitSizeConstraints(el, size) {
+    const cs = getComputedStyle(el);
+    if (Number.isFinite(size.width)) {
+      const maxWidth = parseFloat(cs.maxWidth);
+      if (cs.maxWidth !== 'none' && Number.isFinite(maxWidth) && size.width > maxWidth) {
+        el.style.maxWidth = 'none';
+      }
+      const minWidth = parseFloat(cs.minWidth);
+      if (Number.isFinite(minWidth) && size.width < minWidth) {
+        el.style.minWidth = '0px';
+      }
+    }
+    if (Number.isFinite(size.height)) {
+      const maxHeight = parseFloat(cs.maxHeight);
+      if (cs.maxHeight !== 'none' && Number.isFinite(maxHeight) && size.height > maxHeight) {
+        el.style.maxHeight = 'none';
+      }
+      const minHeight = parseFloat(cs.minHeight);
+      if (Number.isFinite(minHeight) && size.height < minHeight) {
+        el.style.minHeight = '0px';
+      }
+    }
+  }
+
   function serializeElementForClipboard(el) {
     const clone = el.cloneNode(true);
     stripEditorArtifactsFrom(clone);
@@ -2557,6 +2591,8 @@
     // Clamp width/height to the same minimum the resize handle enforces
     // so inspector edits can't shrink an element below the resize floor.
     const clamped = (prop === 'w' || prop === 'h') ? Math.max(RESIZE_MIN_PX, next) : next;
+    if (prop === 'w') applyExplicitSizeConstraints(el, { width: clamped });
+    if (prop === 'h') applyExplicitSizeConstraints(el, { height: clamped });
     el.style[cssProp] = `${clamped}px`;
     endInspectorTxn(ctx);
     refreshSelection();
@@ -3049,12 +3085,23 @@
     };
   }
 
+  function getOverviewSlideDisplay() {
+    if (getDocumentMode() === 'native') return 'block';
+    const activeSlide = getActiveSlide();
+    const slide = activeSlide || getSlides().find((candidate) => candidate && candidate.isConnected);
+    if (!slide) return 'block';
+    const display = getComputedStyle(slide).display;
+    return ['block', 'flex', 'grid', 'inline-block', 'flow-root'].includes(display) ? display : 'block';
+  }
+
   function applyOverviewCellDimensions() {
     const dims = measureOverviewCellDimensions();
+    const slideDisplay = getOverviewSlideDisplay();
     overviewMeasureStyleEl.textContent = `
       body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) {
         --wfpe-cell-w: ${dims.width}px;
         --wfpe-cell-h: ${dims.height}px;
+        --wfpe-overview-slide-display: ${slideDisplay};
       }
     `;
   }
@@ -4019,6 +4066,7 @@
       height = RESIZE_MIN_PX;
     }
 
+    applyExplicitSizeConstraints(r.el, { width, height });
     r.el.style.left = `${left}px`;
     r.el.style.top = `${top}px`;
     r.el.style.width = `${width}px`;
@@ -4052,21 +4100,37 @@
   // children BEFORE any style mutations so the dragged element's offsetWidth
   // doesn't collapse to shrink-to-fit during the snapshot.
   // ---------------------------------------------------------------------------
+  function getChildOffsetRelativeToContainer(child, container) {
+    if (child.offsetParent === container) {
+      return { left: child.offsetLeft, top: child.offsetTop };
+    }
+    if (child.offsetParent === container.offsetParent) {
+      return {
+        left: child.offsetLeft - container.offsetLeft,
+        top: child.offsetTop - container.offsetTop,
+      };
+    }
+
+    const scale = getCanvasScale() || 1;
+    const childRect = child.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    return {
+      left: (childRect.left - containerRect.left) / scale + container.scrollLeft,
+      top: (childRect.top - containerRect.top) / scale + container.scrollTop,
+    };
+  }
+
   function snapshotChildOffsetsRelativeTo(container) {
-    // For a static container, container and its children share the same
-    // offsetParent, so child.offsetLeft - container.offsetLeft is the
-    // child's position within the container in CSS pixels.
-    //
-    // For a positioned container, the children's offsetParent IS the
-    // container itself; child.offsetLeft is already the in-container offset.
-    const isStatic = getComputedStyle(container).position === 'static';
-    return [...container.children].map((child) => ({
-      child,
-      left: isStatic ? child.offsetLeft - container.offsetLeft : child.offsetLeft,
-      top: isStatic ? child.offsetTop - container.offsetTop : child.offsetTop,
-      width: child.offsetWidth,
-      height: child.offsetHeight,
-    }));
+    return [...container.children].map((child) => {
+      const pos = getChildOffsetRelativeToContainer(child, container);
+      return {
+        child,
+        left: pos.left,
+        top: pos.top,
+        width: child.offsetWidth,
+        height: child.offsetHeight,
+      };
+    });
   }
 
   function pinContainerChildren(container) {

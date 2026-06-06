@@ -187,6 +187,7 @@
       height = RESIZE_MIN_PX;
     }
 
+    applyExplicitSizeConstraints(r.el, { width, height });
     r.el.style.left = `${left}px`;
     r.el.style.top = `${top}px`;
     r.el.style.width = `${width}px`;
@@ -220,21 +221,37 @@
   // children BEFORE any style mutations so the dragged element's offsetWidth
   // doesn't collapse to shrink-to-fit during the snapshot.
   // ---------------------------------------------------------------------------
+  function getChildOffsetRelativeToContainer(child, container) {
+    if (child.offsetParent === container) {
+      return { left: child.offsetLeft, top: child.offsetTop };
+    }
+    if (child.offsetParent === container.offsetParent) {
+      return {
+        left: child.offsetLeft - container.offsetLeft,
+        top: child.offsetTop - container.offsetTop,
+      };
+    }
+
+    const scale = getCanvasScale() || 1;
+    const childRect = child.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    return {
+      left: (childRect.left - containerRect.left) / scale + container.scrollLeft,
+      top: (childRect.top - containerRect.top) / scale + container.scrollTop,
+    };
+  }
+
   function snapshotChildOffsetsRelativeTo(container) {
-    // For a static container, container and its children share the same
-    // offsetParent, so child.offsetLeft - container.offsetLeft is the
-    // child's position within the container in CSS pixels.
-    //
-    // For a positioned container, the children's offsetParent IS the
-    // container itself; child.offsetLeft is already the in-container offset.
-    const isStatic = getComputedStyle(container).position === 'static';
-    return [...container.children].map((child) => ({
-      child,
-      left: isStatic ? child.offsetLeft - container.offsetLeft : child.offsetLeft,
-      top: isStatic ? child.offsetTop - container.offsetTop : child.offsetTop,
-      width: child.offsetWidth,
-      height: child.offsetHeight,
-    }));
+    return [...container.children].map((child) => {
+      const pos = getChildOffsetRelativeToContainer(child, container);
+      return {
+        child,
+        left: pos.left,
+        top: pos.top,
+        width: child.offsetWidth,
+        height: child.offsetHeight,
+      };
+    });
   }
 
   function pinContainerChildren(container) {

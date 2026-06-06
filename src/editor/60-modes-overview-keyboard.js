@@ -198,12 +198,23 @@
     };
   }
 
+  function getOverviewSlideDisplay() {
+    if (getDocumentMode() === 'native') return 'block';
+    const activeSlide = getActiveSlide();
+    const slide = activeSlide || getSlides().find((candidate) => candidate && candidate.isConnected);
+    if (!slide) return 'block';
+    const display = getComputedStyle(slide).display;
+    return ['block', 'flex', 'grid', 'inline-block', 'flow-root'].includes(display) ? display : 'block';
+  }
+
   function applyOverviewCellDimensions() {
     const dims = measureOverviewCellDimensions();
+    const slideDisplay = getOverviewSlideDisplay();
     overviewMeasureStyleEl.textContent = `
       body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) {
         --wfpe-cell-w: ${dims.width}px;
         --wfpe-cell-h: ${dims.height}px;
+        --wfpe-overview-slide-display: ${slideDisplay};
       }
     `;
   }

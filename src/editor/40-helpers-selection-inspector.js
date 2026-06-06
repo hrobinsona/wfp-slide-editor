@@ -215,6 +215,30 @@
     };
   }
 
+  function applyExplicitSizeConstraints(el, size) {
+    const cs = getComputedStyle(el);
+    if (Number.isFinite(size.width)) {
+      const maxWidth = parseFloat(cs.maxWidth);
+      if (cs.maxWidth !== 'none' && Number.isFinite(maxWidth) && size.width > maxWidth) {
+        el.style.maxWidth = 'none';
+      }
+      const minWidth = parseFloat(cs.minWidth);
+      if (Number.isFinite(minWidth) && size.width < minWidth) {
+        el.style.minWidth = '0px';
+      }
+    }
+    if (Number.isFinite(size.height)) {
+      const maxHeight = parseFloat(cs.maxHeight);
+      if (cs.maxHeight !== 'none' && Number.isFinite(maxHeight) && size.height > maxHeight) {
+        el.style.maxHeight = 'none';
+      }
+      const minHeight = parseFloat(cs.minHeight);
+      if (Number.isFinite(minHeight) && size.height < minHeight) {
+        el.style.minHeight = '0px';
+      }
+    }
+  }
+
   function serializeElementForClipboard(el) {
     const clone = el.cloneNode(true);
     stripEditorArtifactsFrom(clone);
@@ -780,6 +804,8 @@
     // Clamp width/height to the same minimum the resize handle enforces
     // so inspector edits can't shrink an element below the resize floor.
     const clamped = (prop === 'w' || prop === 'h') ? Math.max(RESIZE_MIN_PX, next) : next;
+    if (prop === 'w') applyExplicitSizeConstraints(el, { width: clamped });
+    if (prop === 'h') applyExplicitSizeConstraints(el, { height: clamped });
     el.style[cssProp] = `${clamped}px`;
     endInspectorTxn(ctx);
     refreshSelection();
