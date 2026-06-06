@@ -23,6 +23,19 @@ async function readExportedHtml(download) {
   return fs.readFileSync(out, 'utf-8');
 }
 
+async function saveExportedHtml(download) {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  const out = path.join(
+    OUTPUT_DIR,
+    `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+  );
+  await download.saveAs(out);
+  return {
+    path: out,
+    html: fs.readFileSync(out, 'utf-8'),
+  };
+}
+
 async function loadDocumentWithEditor(page, fixtureName) {
   await page.goto(`/fixtures/${fixtureName}`, { timeout: 30_000 });
   await page.addScriptTag({ path: EDITOR_PATH });
@@ -452,5 +465,117 @@ test.describe('v2.4.3 — Flat document mode', () => {
     expect(html).not.toContain('data-wfp-edit-flat-position-context');
     expect(html).not.toContain('contenteditable=');
     expect(html).not.toContain('wfpe-overview');
+  });
+});
+
+test.describe('v2.4.4 — Cross-mode export round-trip', () => {
+  test('native deck export has no adaptive residue and reloads as a clean native deck', async ({ page, context }) => {
+    await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
+
+    const download = await triggerExport(page);
+    const exported = await saveExportedHtml(download);
+
+    expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toContain('id="wfp-editor-root"');
+    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toContain('contenteditable=');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${exported.path}`);
+    await expect(exportedPage.locator('.deck')).toHaveCount(1);
+    await expect(exportedPage.locator('.deck > .slide')).toHaveCount(9);
+    await expect(exportedPage.locator('.deck > .slide.active')).toHaveCount(1);
+    await expect(exportedPage.locator('#wfp-editor-root')).toHaveCount(0);
+    await exportedPage.close();
+  });
+
+  test('foreign deck export preserves off-contract root/order and strips adaptive residue', async ({ page, context }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4);
+
+    await simulateOverviewDragDrop(page, 0, 2, 'after');
+    await expect.poll(() => page.evaluate(() =>
+      [...document.querySelectorAll('#foreign-presentation > .slide')].map((slide) => slide.id)
+    )).toEqual(['foreign-slide-2', 'foreign-slide-3', 'foreign-slide-1', 'foreign-slide-4']);
+
+    const download = await triggerExport(page);
+    const exported = await saveExportedHtml(download);
+
+    expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toContain('id="wfp-editor-root"');
+    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toContain('--wfpe-cell-w');
+    expect(exported.html).not.toContain('contenteditable=');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${exported.path}`);
+    const state = await exportedPage.evaluate(() => ({
+      hasDeck: !!document.querySelector('.deck'),
+      rootExists: !!document.querySelector('#foreign-presentation'),
+      order: [...document.querySelectorAll('#foreign-presentation > .slide')].map((slide) => slide.id),
+      activeCount: document.querySelectorAll('#foreign-presentation > .slide.active').length,
+      editorRoot: !!document.querySelector('#wfp-editor-root'),
+    }));
+    expect(state).toEqual({
+      hasDeck: false,
+      rootExists: true,
+      order: ['foreign-slide-2', 'foreign-slide-3', 'foreign-slide-1', 'foreign-slide-4'],
+      activeCount: 1,
+      editorRoot: false,
+    });
+    await exportedPage.close();
+  });
+
+  test('flat document export preserves long-form structure and strips adaptive residue', async ({ page, context }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const callout = page.locator('[data-testid="flat-callout"]');
+    await callout.scrollIntoViewIfNeeded();
+    await callout.click();
+    const box = await callout.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 50, box.y + box.height / 2 + 25, { steps: 4 });
+    await page.mouse.up();
+
+    const download = await triggerExport(page);
+    const exported = await saveExportedHtml(download);
+
+    expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toContain('id="wfp-editor-root"');
+    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toContain('contenteditable=');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${exported.path}`);
+    const state = await exportedPage.evaluate(() => {
+      const root = document.querySelector('#flat-article');
+      const calloutEl = document.querySelector('[data-testid="flat-callout"]');
+      return {
+        hasDeck: !!document.querySelector('.deck'),
+        slideCount: document.querySelectorAll('.slide').length,
+        rootExists: !!root,
+        rootInlineStyle: root?.getAttribute('style') || null,
+        calloutPosition: calloutEl?.style.position || '',
+        calloutLeft: calloutEl?.style.left || '',
+        editorRoot: !!document.querySelector('#wfp-editor-root'),
+      };
+    });
+    expect(state.hasDeck).toBe(false);
+    expect(state.slideCount).toBe(0);
+    expect(state.rootExists).toBe(true);
+    expect(state.rootInlineStyle).toBeNull();
+    expect(state.calloutPosition).toBe('absolute');
+    expect(state.calloutLeft).not.toBe('');
+    expect(state.editorRoot).toBe(false);
+    await exportedPage.close();
   });
 });
