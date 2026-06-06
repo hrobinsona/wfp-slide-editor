@@ -1935,11 +1935,19 @@
     }
   }
 
-  function getSlideBox(el) {
+  function getCoordinateRootForElement(el) {
     const slide = el.closest('.slide');
+    if (slide && getDeckRoot() && getDeckRoot().contains(slide)) return slide;
+    const activeSlide = getActiveSlide();
+    if (activeSlide && activeSlide.contains(el)) return activeSlide;
+    return getDeckRoot();
+  }
+
+  function getSlideBox(el) {
+    const coordinateRoot = getCoordinateRootForElement(el);
     const scale = getCanvasScale();
     const elRect = el.getBoundingClientRect();
-    const slideRect = slide ? slide.getBoundingClientRect() : { left: 0, top: 0 };
+    const slideRect = coordinateRoot ? coordinateRoot.getBoundingClientRect() : { left: 0, top: 0 };
     const safeScale = scale || 1;
     return {
       left: (elRect.left - slideRect.left) / safeScale,
