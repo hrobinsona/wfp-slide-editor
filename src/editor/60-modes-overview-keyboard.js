@@ -32,6 +32,12 @@
   // drag-to-reorder, and delete affordances on top of this state flag.
   // ===========================================================================
   function setOverviewMode(value) {
+    if (isFlatMode()) {
+      state.overviewMode = false;
+      overviewBtn.dataset.mode = 'off';
+      toolbar.dataset.overviewMode = 'off';
+      return;
+    }
     const next = !!value;
     if (next === state.overviewMode) return;
     state.overviewMode = next;
@@ -78,7 +84,7 @@
 
   function buildOverviewOverlay() {
     overviewOverlay.innerHTML = '';
-    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const slides = getSlides();
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
       const thumb = document.createElement('div');
@@ -127,7 +133,7 @@
 
   function positionOverviewOverlay() {
     if (!state.overviewMode) return;
-    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const slides = getSlides();
     const thumbs = overviewOverlay.querySelectorAll('.wfpe-overview-thumb');
     for (let i = 0; i < slides.length; i++) {
       const t = thumbs[i];
@@ -174,12 +180,45 @@
     }
   }
 
+  function measureOverviewCellDimensions() {
+    if (getDocumentMode() === 'native') {
+      return { width: 1920, height: 1080 };
+    }
+
+    const slides = getSlides();
+    let width = 0;
+    let height = 0;
+    for (const slide of slides) {
+      width = Math.max(width, slide.offsetWidth || slide.getBoundingClientRect().width || 0);
+      height = Math.max(height, slide.offsetHeight || slide.getBoundingClientRect().height || 0);
+    }
+    return {
+      width: Math.max(1, Math.round(width || 1920)),
+      height: Math.max(1, Math.round(height || 1080)),
+    };
+  }
+
+  function applyOverviewCellDimensions() {
+    const dims = measureOverviewCellDimensions();
+    overviewMeasureStyleEl.textContent = `
+      body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) {
+        --wfpe-cell-w: ${dims.width}px;
+        --wfpe-cell-h: ${dims.height}px;
+      }
+    `;
+  }
+
+  function clearOverviewCellDimensions() {
+    overviewMeasureStyleEl.textContent = '';
+  }
+
   function enterOverview() {
     // The body marker lives on <body> rather than #wfp-editor-root because
     // the CSS-override strategy needs a global selector hook above the
     // .deck level. Using the data-wfp-edit-* namespace means the existing
     // export scrubber (which strips any data-wfp-edit* attribute on any
     // element) cleans it up automatically — no special-case needed.
+    applyOverviewCellDimensions();
     document.body.dataset.wfpEditOverview = 'on';
     // Defer overlay build until the browser has applied the new grid
     // layout — getBoundingClientRect right now would still report the
@@ -216,6 +255,7 @@
 
   function exitOverview() {
     document.body.removeAttribute('data-wfp-edit-overview');
+    clearOverviewCellDimensions();
     // Overview enables document scroll for the grid; normal slide view should
     // always return to the top of the viewport.
     window.scrollTo(0, 0);
@@ -254,12 +294,12 @@
       if (el.classList) {
         if (el.classList.contains('wfpe-overview-thumb')) {
           const idx = Number(el.dataset.wfpEditSlideIndex);
-          const slides = document.querySelectorAll('.deck > .slide');
+          const slides = getSlides();
           return slides[idx] || null;
         }
         if (
           el.classList.contains('slide') &&
-          el.parentElement && el.parentElement.classList.contains('deck')
+          el.parentElement === getDeckRoot()
         ) {
           return el;
         }
@@ -347,14 +387,14 @@
     // stale relative to the live deck — its arrow-nav would index into
     // the wrong slot or land .active on an orphan. From here on, the
     // editor owns plain-view arrow nav using fresh DOM queries.
-    state.deckMutated = true;
+    state.deckMutated = getDocumentMode() === 'native';
   }
 
   // Navigate the live deck by ±1, syncing the fixture's progress-dot
   // siblings if any exist (best-effort — not all fixtures have them).
   // Used by the deckMutated arrow-nav takeover in onKeyDown.
   function navigateRelativeInDeck(delta) {
-    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const slides = getSlides();
     if (slides.length === 0) return;
     const dots = document.querySelectorAll('.progress-dot');
     let cur = slides.findIndex((s) => s.classList.contains('active'));
@@ -403,7 +443,7 @@
     const thumb = dropTargetThumb(e.target);
     if (!thumb) return;
     const idx = Number(thumb.dataset.wfpEditSlideIndex);
-    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const slides = getSlides();
     const sourceSlide = slides[idx];
     if (!sourceSlide) return;
     state.overviewDrag = {
@@ -462,7 +502,7 @@
       cleanupDrag();
       return;
     }
-    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const slides = getSlides();
     const targetSlide = slides[tIdx];
     if (!targetSlide) {
       cleanupDrag();
@@ -477,7 +517,7 @@
     }
     const refNode = insertBefore ? targetSlide : targetSlide.nextSibling;
     deck.insertBefore(drag.sourceSlide, refNode);
-    const afterOrder = [...document.querySelectorAll('.deck > .slide')];
+    const afterOrder = getSlides();
     if (!ordersEqual(drag.beforeOrder, afterOrder)) {
       pushSlideOpEntry({
         type: 'reorder',
@@ -528,9 +568,9 @@
   }
 
   function insertBlankSlideAt(index) {
-    const deck = document.querySelector('.deck');
-    if (!deck) return null;
-    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    const deck = getDeckRoot();
+    if (!deck || getDocumentMode() === 'flat') return null;
+    const slides = getSlides();
     const insertIndex = Math.max(0, Math.min(slides.length, Number(index) || 0));
     const beforeSibling = slides[insertIndex] || null;
     const slide = document.createElement('div');
@@ -573,8 +613,8 @@
   // ---------------------------------------------------------------------------
   function deleteSlideFromOverview(slide) {
     const deck = slide && slide.parentElement;
-    if (!deck || !deck.classList.contains('deck')) return;
-    const slides = [...deck.querySelectorAll(':scope > .slide')];
+    if (!deck || deck !== getDeckRoot() || getDocumentMode() === 'flat') return;
+    const slides = getSlides();
     if (slides.length <= 1) {
       showToast(slide, "Can't delete the last slide.");
       return;
@@ -614,7 +654,7 @@
       const thumb = active.closest('.wfpe-overview-thumb');
       if (thumb) {
         const i = Number(thumb.dataset.wfpEditSlideIndex);
-        return document.querySelectorAll('.deck > .slide')[i] || null;
+        return getSlides()[i] || null;
       }
     }
     return state.overviewHoveredSlide;
@@ -624,7 +664,7 @@
     const thumb = e.target.closest('.wfpe-overview-thumb');
     if (!thumb) return;
     const idx = Number(thumb.dataset.wfpEditSlideIndex);
-    state.overviewHoveredSlide = document.querySelectorAll('.deck > .slide')[idx] || null;
+    state.overviewHoveredSlide = getSlides()[idx] || null;
   }
 
   function onOverviewMouseOut(e) {
@@ -643,7 +683,7 @@
     e.preventDefault();
     e.stopPropagation();
     const idx = Number(btn.dataset.wfpEditSlideIndex);
-    const slide = document.querySelectorAll('.deck > .slide')[idx];
+    const slide = getSlides()[idx];
     if (!slide) return;
     deleteSlideFromOverview(slide);
   }
@@ -731,6 +771,7 @@
     // (matches the `E` precedent). Escape exits when overview is on,
     // no-op otherwise — text-edit Escape is already handled above.
     if ((e.key === 'o' || e.key === 'O') && noModifier) {
+      if (isFlatMode()) return;
       e.preventDefault();
       e.stopPropagation();
       setOverviewMode(!state.overviewMode);

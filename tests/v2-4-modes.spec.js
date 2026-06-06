@@ -321,3 +321,136 @@ test.describe('v2.4.2 — Foreign-deck Overview with measured cells', () => {
     expect(html).not.toContain('--wfpe-cell-w: 1280px');
   });
 });
+
+test.describe('v2.4.3 — Flat document mode', () => {
+  test('flat documents resolve main as the implicit page and disable Overview', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+
+    const resolved = await page.evaluate(() => {
+      const root = document.querySelector('#flat-article');
+      const overviewBtn = document.querySelector('#wfp-editor-root [data-action="overview"]');
+      return {
+        hasDeck: !!document.querySelector('.deck'),
+        slideCount: document.querySelectorAll('.slide').length,
+        rootMarked: root?.getAttribute('data-wfp-edit-deck-root') === 'true',
+        flatMarked: root?.getAttribute('data-wfp-edit-flat-root') === 'true',
+        overviewHidden: !!overviewBtn && (overviewBtn.hidden || getComputedStyle(overviewBtn).display === 'none'),
+        overviewDisabled: !!overviewBtn && overviewBtn.disabled,
+      };
+    });
+
+    expect(resolved).toEqual({
+      hasDeck: false,
+      slideCount: 0,
+      rootMarked: true,
+      flatMarked: true,
+      overviewHidden: true,
+      overviewDisabled: true,
+    });
+
+    await page.keyboard.press('o');
+    const overviewState = await page.evaluate(() => ({
+      bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
+      thumbCount: document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length,
+    }));
+    expect(overviewState).toEqual({ bodyAttr: null, thumbCount: 0 });
+  });
+
+  test('flat root gets an editor-owned positioning context without inline root mutation', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+
+    const rootState = await page.evaluate(() => {
+      const root = document.querySelector('#flat-article');
+      return {
+        inlineStyle: root.getAttribute('style'),
+        computedPosition: getComputedStyle(root).position,
+        positionMarker: root.getAttribute('data-wfp-edit-flat-position-context'),
+      };
+    });
+
+    expect(rootState).toEqual({
+      inlineStyle: null,
+      computedPosition: 'relative',
+      positionMarker: 'true',
+    });
+  });
+
+  test('flat document elements can be selected, dragged, undone, and refreshed while scrolling', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const callout = page.locator('[data-testid="flat-callout"]');
+    await callout.scrollIntoViewIfNeeded();
+    const before = await callout.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        scrollY: window.scrollY,
+      };
+    });
+
+    await callout.click();
+    await expect(page.locator('#wfp-editor-root .wfpe-selection-ring')).not.toHaveCSS('display', 'none');
+
+    const box = await callout.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 70, box.y + box.height / 2 + 45, { steps: 5 });
+    await page.mouse.up();
+
+    const moved = await callout.evaluate((el) => ({
+      left: el.getBoundingClientRect().left,
+      top: el.getBoundingClientRect().top,
+      inlineLeft: el.style.left,
+      inlineTop: el.style.top,
+      rootInlineStyle: document.querySelector('#flat-article').getAttribute('style'),
+    }));
+    expect(moved.left).toBeGreaterThanOrEqual(before.left + 65);
+    expect(moved.top).toBeGreaterThanOrEqual(before.top + 40);
+    expect(moved.inlineLeft).not.toBe('');
+    expect(moved.inlineTop).not.toBe('');
+    expect(moved.rootInlineStyle).toBeNull();
+
+    const ringTopBeforeScroll = await page.locator('#wfp-editor-root .wfpe-selection-ring').evaluate((el) =>
+      Math.round(el.getBoundingClientRect().top)
+    );
+    await page.mouse.wheel(0, 240);
+    await expect.poll(() => page.locator('#wfp-editor-root .wfpe-selection-ring').evaluate((el) =>
+      Math.round(el.getBoundingClientRect().top)
+    )).not.toBe(ringTopBeforeScroll);
+
+    await page.evaluate((scrollY) => window.scrollTo(0, scrollY), before.scrollY);
+    await page.keyboard.press('ControlOrMeta+z');
+    const undone = await callout.evaluate((el) => {
+      const rect = el.getBoundingClientRect();
+      return { left: Math.round(rect.left), top: Math.round(rect.top) };
+    });
+    expect(undone.left).toBe(Math.round(before.left));
+    expect(undone.top).toBe(Math.round(before.top));
+  });
+
+  test('flat document export preserves edits and strips mode residue', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const title = page.locator('.flat-title');
+    await title.dblclick();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Updated flat document title');
+    await page.keyboard.press('Escape');
+    await expect(title).toHaveText('Updated flat document title');
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+
+    expect(html).toContain('Updated flat document title');
+    expect(html).not.toContain('id="wfp-editor-root"');
+    expect(html).not.toContain('data-wfp-edit-deck-root');
+    expect(html).not.toContain('data-wfp-edit-flat-root');
+    expect(html).not.toContain('data-wfp-edit-flat-position-context');
+    expect(html).not.toContain('contenteditable=');
+    expect(html).not.toContain('wfpe-overview');
+  });
+});

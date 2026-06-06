@@ -5,8 +5,122 @@
     return !!el && root.contains(el);
   }
 
+  function markResolvedRoot(resolvedRoot, mode) {
+    if (!resolvedRoot) return;
+    resolvedRoot.setAttribute('data-wfp-edit-deck-root', 'true');
+    if (mode === 'flat') {
+      resolvedRoot.setAttribute('data-wfp-edit-flat-root', 'true');
+    }
+  }
+
+  function ensureFlatPositionContext(flatRoot) {
+    if (!flatRoot) return;
+    if (getComputedStyle(flatRoot).position === 'static') {
+      flatRoot.setAttribute('data-wfp-edit-flat-position-context', 'true');
+    }
+  }
+
+  function resolveNativeDeckRoot() {
+    return document.querySelector('.deck');
+  }
+
+  function resolveForeignDeckRoot() {
+    const counts = new Map();
+    document.querySelectorAll('.slide').forEach((slide) => {
+      const parent = slide.parentElement;
+      if (!parent) return;
+      counts.set(parent, (counts.get(parent) || 0) + 1);
+    });
+
+    let bestRoot = null;
+    let bestCount = 0;
+    counts.forEach((count, parent) => {
+      if (count > bestCount) {
+        bestRoot = parent;
+        bestCount = count;
+      }
+    });
+    return bestRoot;
+  }
+
+  function getFlatRootOverride() {
+    const override = window.__WFP_EDIT_ROOT__;
+    if (typeof override !== 'string' || !override.trim()) return null;
+    try {
+      const el = document.querySelector(override);
+      return el instanceof Element ? el : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function isDominantBodyWrapperCandidate(el) {
+    if (!el || el.id === ROOT_ID) return false;
+    return !['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE'].includes(el.tagName);
+  }
+
+  function resolveFlatRoot() {
+    const override = getFlatRootOverride();
+    if (override) return override;
+    const main = document.querySelector('main');
+    if (main) return main;
+    const article = document.querySelector('article');
+    if (article) return article;
+    const bodyChildren = [...document.body.children].filter(isDominantBodyWrapperCandidate);
+    if (bodyChildren.length === 1) return bodyChildren[0];
+    return document.body;
+  }
+
+  function resolveDeckRoot() {
+    const nativeRoot = resolveNativeDeckRoot();
+    if (nativeRoot) {
+      markResolvedRoot(nativeRoot, 'native');
+      return { mode: 'native', root: nativeRoot };
+    }
+
+    const foreignRoot = resolveForeignDeckRoot();
+    if (foreignRoot) {
+      markResolvedRoot(foreignRoot, 'foreign');
+      return { mode: 'foreign', root: foreignRoot };
+    }
+
+    const flatRoot = resolveFlatRoot();
+    markResolvedRoot(flatRoot, 'flat');
+    ensureFlatPositionContext(flatRoot);
+    return { mode: 'flat', root: flatRoot };
+  }
+
+  function getDocumentMode() {
+    return deckContext.mode;
+  }
+
+  function isFlatMode() {
+    return getDocumentMode() === 'flat';
+  }
+
+  function applyModeFeatureGating() {
+    if (!isFlatMode()) return;
+    overviewBtn.hidden = true;
+    overviewBtn.disabled = true;
+    overviewBtn.setAttribute('aria-hidden', 'true');
+    overviewBtn.dataset.mode = 'off';
+    toolbar.dataset.overviewMode = 'off';
+  }
+
+  function getDeckRoot() {
+    return deckContext.root;
+  }
+
+  function getSlides() {
+    const deckRoot = getDeckRoot();
+    if (!deckRoot) return [];
+    if (getDocumentMode() === 'flat') return [deckRoot];
+    return [...deckRoot.querySelectorAll(':scope > .slide')];
+  }
+
   function getActiveSlide() {
-    return document.querySelector('.slide.active');
+    if (getDocumentMode() === 'flat') return getDeckRoot();
+    return getSlides().find((slide) => slide.classList.contains('active')) || null;
   }
 
   function findSelectableTarget(el) {
@@ -14,7 +128,7 @@
     const slide = getActiveSlide();
     if (!slide) return null;
     if (el === slide) return null;
-    if (el.classList && el.classList.contains('deck')) return null;
+    if (el === getDeckRoot()) return null;
     if (!slide.contains(el)) return null;
     return el;
   }
@@ -34,7 +148,7 @@
     const out = [];
     for (const el of elements || []) {
       if (!el || !el.isConnected || !slide.contains(el)) continue;
-      if (el === slide || (el.classList && el.classList.contains('deck'))) continue;
+      if (el === slide || el === getDeckRoot()) continue;
       if (isInsideEditorRoot(el)) continue;
       if (!out.includes(el)) out.push(el);
     }
@@ -79,11 +193,19 @@
     }
   }
 
-  function getSlideBox(el) {
+  function getCoordinateRootForElement(el) {
     const slide = el.closest('.slide');
+    if (slide && getDeckRoot() && getDeckRoot().contains(slide)) return slide;
+    const activeSlide = getActiveSlide();
+    if (activeSlide && activeSlide.contains(el)) return activeSlide;
+    return getDeckRoot();
+  }
+
+  function getSlideBox(el) {
+    const coordinateRoot = getCoordinateRootForElement(el);
     const scale = getCanvasScale();
     const elRect = el.getBoundingClientRect();
-    const slideRect = slide ? slide.getBoundingClientRect() : { left: 0, top: 0 };
+    const slideRect = coordinateRoot ? coordinateRoot.getBoundingClientRect() : { left: 0, top: 0 };
     const safeScale = scale || 1;
     return {
       left: (elRect.left - slideRect.left) / safeScale,
@@ -174,8 +296,8 @@
     const el = state.selected;
     if (!el || !el.isConnected || state.overviewMode) return false;
     const parent = el.parentElement;
-    const slide = el.closest('.slide');
-    if (!parent || !slide) return false;
+    const slide = getCoordinateRootForElement(el);
+    if (!parent || !slide || !slide.contains(el)) return false;
     const nextSibling = el.nextSibling;
     parent.removeChild(el);
     pushElementInsertEntry({

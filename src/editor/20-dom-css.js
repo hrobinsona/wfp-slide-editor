@@ -120,6 +120,9 @@
     #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"]:hover {
       background-color: rgba(255, 255, 255, 0.28);
     }
+    [data-wfp-edit-flat-position-context="true"] {
+      position: relative !important;
+    }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
       filter: brightness(1.06);
       background-color: transparent;
@@ -684,7 +687,9 @@
       --wfpe-overview-gap: clamp(16px, 1.6vw, 28px);
       --wfpe-overview-pad-inline: clamp(16px, 2vw, 28px);
       --wfpe-overview-pad-top: 112px;
-      --wfpe-overview-thumb-width: calc(1920px * var(--wfpe-overview-scale));
+      --wfpe-cell-w: 1920px;
+      --wfpe-cell-h: 1080px;
+      --wfpe-overview-thumb-width: calc(var(--wfpe-cell-w) * var(--wfpe-overview-scale));
       overflow-x: hidden !important;
       overflow-y: auto !important;
     }
@@ -708,16 +713,16 @@
         --wfpe-overview-pad-inline: 12px;
       }
     }
-    /* Hide every body-level sibling of .deck except the editor root —
+    /* Hide every body-level sibling of the resolved deck root except the editor root —
        WFP fixtures commonly mount slide-progress dots, navigation hints,
        etc. as body children that overlay the slide. In overview those
        UI bits don't apply (no single "current" slide rendering); hide
        them visually without removing them from the DOM so export still
        round-trips them. */
-    body[data-wfp-edit-overview="on"] > *:not(.deck):not(#${ROOT_ID}) {
+    body[data-wfp-edit-overview="on"] > *:not([data-wfp-edit-deck-root]):not(#${ROOT_ID}) {
       display: none !important;
     }
-    body[data-wfp-edit-overview="on"] .deck {
+    body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) {
       /* Override the fixture's fixed 1920x1080 + scale() canvas. The grid
          now reflows to the viewport instead of preserving the normal deck
          centering margins or a fixed 4-column width.
@@ -743,20 +748,24 @@
       background: #1a1d23;
       box-sizing: border-box;
     }
-    body[data-wfp-edit-overview="on"] .slide {
+    body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) > .slide {
       /* All slides become visible grid cells. The transform shrinks the
-         visual to ~422x238 while the slide's own coordinate system stays
-         1920x1080 — the negative margins reclaim the layout space the
+         visual while the slide's own coordinate system stays intact — the
+         negative margins reclaim the layout space the
          transform leaves behind, so each cell occupies only the scaled
          visual size. */
       display: block !important;
       position: relative !important;
       top: auto !important;
       left: auto !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+      transition: none !important;
       transform: scale(var(--wfpe-overview-scale)) !important;
       transform-origin: top left !important;
-      margin-right: calc(-1920px * (1 - var(--wfpe-overview-scale))) !important;
-      margin-bottom: calc(-1080px * (1 - var(--wfpe-overview-scale))) !important;
+      margin-right: calc(var(--wfpe-cell-w) * (var(--wfpe-overview-scale) - 1)) !important;
+      margin-bottom: calc(var(--wfpe-cell-h) * (var(--wfpe-overview-scale) - 1)) !important;
       cursor: pointer;
       /* Ensure overflow:hidden from the fixture stays — internal slide
          content sticking out of the scaled cell would visually collide
@@ -950,3 +959,6 @@
     }
   `;
   root.appendChild(styleEl);
+
+  const overviewMeasureStyleEl = document.createElement('style');
+  root.appendChild(overviewMeasureStyleEl);

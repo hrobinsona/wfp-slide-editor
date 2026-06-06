@@ -24,7 +24,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.3.0';
+  const VERSION = '2.4.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;

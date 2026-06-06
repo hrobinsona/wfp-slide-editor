@@ -25,6 +25,7 @@ fixtures/*.html
 
 # Allow-listed sanitized fixtures:
 !fixtures/foreign-deck.html
+!fixtures/flat-document.html
 
 # ═══════════════════════════════════════════════════════════════
 # PRIVACY: references folder (design mockups, brand assets)

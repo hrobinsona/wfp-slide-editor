@@ -2,7 +2,7 @@
   // Drag (scale-aware, with unlock-on-flow)
   // ===========================================================================
   function getCanvasScale() {
-    const deck = document.querySelector('.deck');
+    const deck = getDeckRoot();
     if (!deck) return 1;
     const t = getComputedStyle(deck).transform;
     if (!t || t === 'none') return 1;

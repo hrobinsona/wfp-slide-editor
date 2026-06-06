@@ -131,8 +131,13 @@
     });
   }
 
+  function getExportDeckRoots(root) {
+    const markedRoots = [...root.querySelectorAll('[data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root])')];
+    return markedRoots.length ? markedRoots : [...root.querySelectorAll('.deck')];
+  }
+
   function normalizeExportStartupState(root) {
-    root.querySelectorAll('.deck').forEach((deck) => {
+    getExportDeckRoots(root).forEach((deck) => {
       const slides = [...deck.querySelectorAll(':scope > .slide')];
       if (!slides.length) return;
       slides.forEach((slide, index) => {
@@ -164,16 +169,16 @@
     clone.querySelectorAll('[data-wfp-edit-script]').forEach((s) => s.remove());
     clone.querySelectorAll('script[src*="editor.js"]').forEach((s) => s.remove());
 
+    absolutizeExportAssetUrls(clone);
+    removeRuntimeGeneratedProgressDots(clone);
+    normalizeExportStartupState(clone);
+
     clone.querySelectorAll('*').forEach((el) => {
       for (const attr of [...el.attributes]) {
         if (attr.name.startsWith('data-wfp-edit')) el.removeAttribute(attr.name);
       }
       if (el.hasAttribute('contenteditable')) el.removeAttribute('contenteditable');
     });
-
-    absolutizeExportAssetUrls(clone);
-    removeRuntimeGeneratedProgressDots(clone);
-    normalizeExportStartupState(clone);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }

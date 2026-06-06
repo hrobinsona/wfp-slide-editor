@@ -476,6 +476,7 @@
   });
   overviewBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    if (isFlatMode()) return;
     setOverviewMode(!state.overviewMode);
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
@@ -723,3 +724,4 @@
     e.preventDefault();
     deleteSelectedElement();
   });
+  applyModeFeatureGating();

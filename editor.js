@@ -206,6 +206,9 @@
     #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"]:hover {
       background-color: rgba(255, 255, 255, 0.28);
     }
+    [data-wfp-edit-flat-position-context="true"] {
+      position: relative !important;
+    }
     #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
       filter: brightness(1.06);
       background-color: transparent;
@@ -1045,7 +1048,6 @@
 
   const overviewMeasureStyleEl = document.createElement('style');
   root.appendChild(overviewMeasureStyleEl);
-
   // Inline SVG icons — single-stroke, 18px, lucide aesthetic. Embedded
   // directly so the editor stays a self-contained file with no icon-font
   // or runtime dependency. `currentColor` lets the toolbar's text colour
@@ -1524,6 +1526,7 @@
   });
   overviewBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    if (isFlatMode()) return;
     setOverviewMode(!state.overviewMode);
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
@@ -1771,6 +1774,7 @@
     e.preventDefault();
     deleteSelectedElement();
   });
+  applyModeFeatureGating();
   // ===========================================================================
   // Helpers
   // ===========================================================================
@@ -1783,6 +1787,13 @@
     resolvedRoot.setAttribute('data-wfp-edit-deck-root', 'true');
     if (mode === 'flat') {
       resolvedRoot.setAttribute('data-wfp-edit-flat-root', 'true');
+    }
+  }
+
+  function ensureFlatPositionContext(flatRoot) {
+    if (!flatRoot) return;
+    if (getComputedStyle(flatRoot).position === 'static') {
+      flatRoot.setAttribute('data-wfp-edit-flat-position-context', 'true');
     }
   }
 
@@ -1852,11 +1863,25 @@
 
     const flatRoot = resolveFlatRoot();
     markResolvedRoot(flatRoot, 'flat');
+    ensureFlatPositionContext(flatRoot);
     return { mode: 'flat', root: flatRoot };
   }
 
   function getDocumentMode() {
     return deckContext.mode;
+  }
+
+  function isFlatMode() {
+    return getDocumentMode() === 'flat';
+  }
+
+  function applyModeFeatureGating() {
+    if (!isFlatMode()) return;
+    overviewBtn.hidden = true;
+    overviewBtn.disabled = true;
+    overviewBtn.setAttribute('aria-hidden', 'true');
+    overviewBtn.dataset.mode = 'off';
+    toolbar.dataset.overviewMode = 'off';
   }
 
   function getDeckRoot() {
@@ -2048,8 +2073,8 @@
     const el = state.selected;
     if (!el || !el.isConnected || state.overviewMode) return false;
     const parent = el.parentElement;
-    const slide = el.closest('.slide');
-    if (!parent || !slide) return false;
+    const slide = getCoordinateRootForElement(el);
+    if (!parent || !slide || !slide.contains(el)) return false;
     const nextSibling = el.nextSibling;
     parent.removeChild(el);
     pushElementInsertEntry({
@@ -2858,6 +2883,12 @@
   // drag-to-reorder, and delete affordances on top of this state flag.
   // ===========================================================================
   function setOverviewMode(value) {
+    if (isFlatMode()) {
+      state.overviewMode = false;
+      overviewBtn.dataset.mode = 'off';
+      toolbar.dataset.overviewMode = 'off';
+      return;
+    }
     const next = !!value;
     if (next === state.overviewMode) return;
     state.overviewMode = next;
@@ -3591,6 +3622,7 @@
     // (matches the `E` precedent). Escape exits when overview is on,
     // no-op otherwise — text-edit Escape is already handled above.
     if ((e.key === 'o' || e.key === 'O') && noModifier) {
+      if (isFlatMode()) return;
       e.preventDefault();
       e.stopPropagation();
       setOverviewMode(!state.overviewMode);
