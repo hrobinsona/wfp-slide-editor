@@ -60,6 +60,11 @@
     }
 
     if (isInsideEditorRoot(e.target)) return;
+    if (isPointInsidePassiveEditorSurface(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const target = findSelectableTarget(e.target);
     if (!target) return;
 

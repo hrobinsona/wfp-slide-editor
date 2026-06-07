@@ -5,6 +5,27 @@
     return !!el && root.contains(el);
   }
 
+  function isPointInsideElementBox(el, x, y) {
+    if (!el || getComputedStyle(el).display === 'none') return false;
+    const rect = el.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      x >= rect.left &&
+      x <= rect.right &&
+      y >= rect.top &&
+      y <= rect.bottom
+    );
+  }
+
+  function isPointInsidePassiveEditorSurface(e) {
+    if (!e) return false;
+    return (
+      isPointInsideElementBox(toolbar, e.clientX, e.clientY) ||
+      isPointInsideElementBox(inspector, e.clientX, e.clientY)
+    );
+  }
+
   function markResolvedRoot(resolvedRoot, mode) {
     if (!resolvedRoot) return;
     resolvedRoot.setAttribute('data-wfp-edit-deck-root', 'true');
@@ -400,14 +421,15 @@
       updateAnnotationDraftStatus(null);
       return;
     }
+    const targetChanged = annotationRow.__wfpeTarget !== el;
     const preserveDraft = (
       !options.force &&
-      annotationRow.__wfpeTarget === el &&
+      !targetChanged &&
       annotationRow.dataset.dirty === 'true'
     );
     annotationRow.__wfpeTarget = el;
     const text = getAnnotationText(el);
-    if (options.force || (!preserveDraft && document.activeElement !== annotationTextarea)) {
+    if (options.force || targetChanged || (!preserveDraft && document.activeElement !== annotationTextarea)) {
       annotationTextarea.value = text;
     }
     annotationDeleteBtn.disabled = !hasAnnotation(el);

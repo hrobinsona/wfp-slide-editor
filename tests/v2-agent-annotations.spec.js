@@ -72,7 +72,8 @@ async function readAnnotation(page, selector = '.slide.active h1') {
 
 async function readDownloadAsString(download) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  const out = path.join(OUTPUT_DIR, download.suggestedFilename());
+  const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}-${download.suggestedFilename()}`;
+  const out = path.join(OUTPUT_DIR, unique);
   await download.saveAs(out);
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
 }
@@ -205,6 +206,32 @@ test.describe('v2.5 — agent handoff annotations', () => {
     await page.locator(markerSel).click();
     await expect(page.locator(textareaSel)).toHaveValue(NOTE);
     await expect(page.locator(statusSel)).toHaveText('Saved');
+  });
+
+  test('unsaved annotation draft is discarded when selecting another element', async ({ page }) => {
+    await loadReady(page);
+
+    await clickToSelect(page, '.slide.active h1');
+    await page.locator(textareaSel).fill(NOTE);
+    await expect(page.locator(statusSel)).toHaveText('Unsaved');
+
+    await clickToSelect(page, '.slide.active .foreign-note');
+    await expect(page.locator(textareaSel)).toHaveValue('');
+    await expect(page.locator(statusSel)).toHaveText('');
+
+    const state = await page.evaluate(() => ({
+      headingId: document.querySelector('.slide.active h1')?.getAttribute('data-wfp-edit-annotation-id') || '',
+      headingText: document.querySelector('.slide.active h1')?.getAttribute('data-wfp-edit-annotation-text') || '',
+      noteText: document.querySelector('.slide.active .foreign-note')?.getAttribute('data-wfp-edit-annotation-text') || '',
+      rowDirty: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.dirty || '',
+      rowHasNote: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.hasNote || '',
+    }));
+
+    expect(state.headingId).toBe('');
+    expect(state.headingText).toBe('');
+    expect(state.noteText).toBe('');
+    expect(state.rowDirty).toBe('false');
+    expect(state.rowHasNote).toBe('false');
   });
 
   test('can add annotations to multiple selected elements', async ({ page }) => {

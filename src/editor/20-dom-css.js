@@ -19,7 +19,7 @@
       position: fixed;
       top: 16px;
       right: 16px;
-      pointer-events: auto;
+      pointer-events: none;
       display: flex;
       align-items: stretch;
       gap: 2px;
@@ -74,6 +74,7 @@
       cursor: pointer;
       white-space: nowrap;
       transition: background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+      pointer-events: auto;
     }
     #${ROOT_ID} .wfpe-toolbar-btn .wfpe-icon,
     #${ROOT_ID} .wfpe-mode-badge .wfpe-icon {
@@ -174,7 +175,7 @@
       top: 82px;
       right: 16px;
       width: 280px;
-      pointer-events: auto;
+      pointer-events: none;
       display: none;
       /* Same z-index stratum as the toolbar so neither selection ring
          nor resize handles can paint over the inspector. */
@@ -203,6 +204,12 @@
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 40%);
       pointer-events: none;
       z-index: -1;
+    }
+    #${ROOT_ID} .wfpe-inspector button,
+    #${ROOT_ID} .wfpe-inspector input,
+    #${ROOT_ID} .wfpe-inspector textarea,
+    #${ROOT_ID} .wfpe-inspector label {
+      pointer-events: auto;
     }
     #${ROOT_ID} .wfpe-inspector[data-visible="true"] {
       display: flex;

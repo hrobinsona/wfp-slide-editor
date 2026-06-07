@@ -110,7 +110,7 @@
       position: fixed;
       top: 16px;
       right: 16px;
-      pointer-events: auto;
+      pointer-events: none;
       display: flex;
       align-items: stretch;
       gap: 2px;
@@ -165,6 +165,7 @@
       cursor: pointer;
       white-space: nowrap;
       transition: background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+      pointer-events: auto;
     }
     #${ROOT_ID} .wfpe-toolbar-btn .wfpe-icon,
     #${ROOT_ID} .wfpe-mode-badge .wfpe-icon {
@@ -265,7 +266,7 @@
       top: 82px;
       right: 16px;
       width: 280px;
-      pointer-events: auto;
+      pointer-events: none;
       display: none;
       /* Same z-index stratum as the toolbar so neither selection ring
          nor resize handles can paint over the inspector. */
@@ -294,6 +295,12 @@
       background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 40%);
       pointer-events: none;
       z-index: -1;
+    }
+    #${ROOT_ID} .wfpe-inspector button,
+    #${ROOT_ID} .wfpe-inspector input,
+    #${ROOT_ID} .wfpe-inspector textarea,
+    #${ROOT_ID} .wfpe-inspector label {
+      pointer-events: auto;
     }
     #${ROOT_ID} .wfpe-inspector[data-visible="true"] {
       display: flex;
@@ -2033,6 +2040,27 @@
     return !!el && root.contains(el);
   }
 
+  function isPointInsideElementBox(el, x, y) {
+    if (!el || getComputedStyle(el).display === 'none') return false;
+    const rect = el.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      x >= rect.left &&
+      x <= rect.right &&
+      y >= rect.top &&
+      y <= rect.bottom
+    );
+  }
+
+  function isPointInsidePassiveEditorSurface(e) {
+    if (!e) return false;
+    return (
+      isPointInsideElementBox(toolbar, e.clientX, e.clientY) ||
+      isPointInsideElementBox(inspector, e.clientX, e.clientY)
+    );
+  }
+
   function markResolvedRoot(resolvedRoot, mode) {
     if (!resolvedRoot) return;
     resolvedRoot.setAttribute('data-wfp-edit-deck-root', 'true');
@@ -2428,14 +2456,15 @@
       updateAnnotationDraftStatus(null);
       return;
     }
+    const targetChanged = annotationRow.__wfpeTarget !== el;
     const preserveDraft = (
       !options.force &&
-      annotationRow.__wfpeTarget === el &&
+      !targetChanged &&
       annotationRow.dataset.dirty === 'true'
     );
     annotationRow.__wfpeTarget = el;
     const text = getAnnotationText(el);
-    if (options.force || (!preserveDraft && document.activeElement !== annotationTextarea)) {
+    if (options.force || targetChanged || (!preserveDraft && document.activeElement !== annotationTextarea)) {
       annotationTextarea.value = text;
     }
     annotationDeleteBtn.disabled = !hasAnnotation(el);
@@ -4358,6 +4387,11 @@
       return;
     }
     if (isInsideEditorRoot(e.target)) return;
+    if (isPointInsidePassiveEditorSurface(e)) {
+      e.stopPropagation();
+      e.preventDefault();
+      return;
+    }
     const target = findSelectableTarget(e.target);
     if (isSelectionToggleEvent(e)) {
       if (target) {
@@ -4472,6 +4506,11 @@
     }
 
     if (isInsideEditorRoot(e.target)) return;
+    if (isPointInsidePassiveEditorSurface(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const target = findSelectableTarget(e.target);
     if (!target) return;
 
