@@ -88,6 +88,10 @@ The editor keeps session state in plain objects. The central state currently inc
 
 This state is intentionally session-only. Reloading the page discards it unless the user exported HTML.
 
+Agent annotations are deliberately stored on target elements as `data-wfp-edit-annotation-*` attributes rather than as a detached state map. That keeps undo/redo, delete/restore, selection refresh, and export cleanup aligned with the existing live-DOM source of truth.
+
+The user-facing marker is editor chrome, not slide content: compact peach circular markers are rendered in `#wfp-editor-root` against connected annotated elements while edit mode is on. They are omitted from normal and handoff exports with the rest of the editor root.
+
 ## Selection Model
 
 **Decision:** Primary-element selection with move-only multi-select.
@@ -119,6 +123,7 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 - Colour controls.
 - Opacity.
 - Reset inline styles.
+- Agent note save/delete.
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
 
@@ -152,6 +157,14 @@ The editor currently uses live-DOM serialization:
 7. Download the result.
 
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
+
+Normal export remains the production-clean artifact and strips all `data-wfp-edit-*` attributes, including live annotation markers. Agent handoff export runs the same cleanup path, then deliberately adds a narrow handoff layer:
+
+- `data-wfp-agent-annotation-id` on annotated target elements.
+- `script[type="application/json"][data-wfp-agent-annotations]` with user-authored instructions and target context.
+- A short HTML comment pointing agents to the metadata.
+
+The handoff layer is structured metadata, not a hidden prompt. When the editor is injected into a handoff export, matching `data-wfp-agent-annotation-id` targets are rehydrated back into live `data-wfp-edit-annotation-*` attributes and stale unmatched metadata is ignored.
 
 ## Inline-style Merging
 

@@ -34,6 +34,12 @@ Cmd/Ctrl-click active-slide multi-select with group bounding box, per-element ou
 
 Feature brief: `feature-briefs/v2-multi-select-move.md`.
 
+### v2.5 Agent Handoff Annotations
+
+Selected-element agent notes, visible peach circular markers, undoable annotation save/delete, clean normal export, explicit handoff export with structured metadata, and handoff reimport.
+
+Feature brief: `feature-briefs/v2-agent-annotations-handoff.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -67,6 +73,10 @@ Bring forward/send backward shortcuts and possibly a compact layers view.
 ### Add New Elements
 
 Insert text, image, divider, or simple shape elements. This moves the editor closer to authoring, so scope carefully.
+
+### Agent Handoff Evals
+
+Build an eval suite for downstream agents consuming `<basename>-agent-handoff.html`. The editor's Playwright tests verify that handoff metadata is exported correctly; evals should verify that an agent can read the JSON, apply each annotation to the matching `data-wfp-agent-annotation-id` element, avoid unrelated edits, preserve valid HTML/scripts/styles, respect higher-priority user/system instructions, ignore stale metadata, and remove resolved handoff metadata from the final cleaned file.
 
 ## v3 Candidates
 

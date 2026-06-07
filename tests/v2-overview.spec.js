@@ -27,7 +27,7 @@ test.describe('v2.1.0 — Overview activation', () => {
       }));
     });
 
-    expect(buttons.map((b) => b.action)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
+    expect(buttons.map((b) => b.action)).toEqual(['edit', 'overview', 'export', 'handoff', 'undo', 'redo']);
     const overview = buttons.find((b) => b.action === 'overview');
     expect(overview.hasIcon).toBe(true);
     expect(overview.text).toBe('Overview');

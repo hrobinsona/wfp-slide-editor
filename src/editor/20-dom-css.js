@@ -41,7 +41,7 @@
       isolation: isolate;
       /* Always paint above the selection ring + resize handles, which
          live as later DOM siblings under the same root. */
-      z-index: 2;
+      z-index: 4;
     }
     /* Inner highlight overlay — renders the bright top-edge sheen called
        out in the recipe. Pointer-events: none so it doesn't eat clicks. */
@@ -94,6 +94,19 @@
       background-color: rgba(255, 255, 255, 0.18);
       transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn:disabled,
+    #${ROOT_ID} .wfpe-toolbar-btn[aria-disabled="true"] {
+      opacity: 0.44;
+      cursor: default;
+      transform: none;
+      box-shadow: none;
+    }
+    #${ROOT_ID} .wfpe-toolbar-btn:disabled:hover,
+    #${ROOT_ID} .wfpe-toolbar-btn[aria-disabled="true"]:hover {
+      background-color: transparent;
+      transform: none;
+      box-shadow: none;
     }
     #${ROOT_ID} .wfpe-toolbar-btn:active,
     #${ROOT_ID} .wfpe-mode-badge:active {
@@ -165,7 +178,7 @@
       display: none;
       /* Same z-index stratum as the toolbar so neither selection ring
          nor resize handles can paint over the inspector. */
-      z-index: 2;
+      z-index: 4;
       flex-direction: column;
       border-radius: 18px;
       padding: 0;
@@ -491,6 +504,77 @@
     #${ROOT_ID} .wfpe-color-clear:hover {
       background-color: rgba(255, 255, 255, 0.22);
     }
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"] {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding-top: 2px;
+    }
+    #${ROOT_ID} .wfpe-annotation-textarea {
+      appearance: none;
+      -webkit-appearance: none;
+      resize: vertical;
+      min-height: 64px;
+      max-height: 160px;
+      width: 100%;
+      box-sizing: border-box;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      color: #fff;
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      padding: 7px 8px;
+      outline: none;
+    }
+    #${ROOT_ID} .wfpe-annotation-textarea::placeholder {
+      color: rgba(255, 255, 255, 0.45);
+    }
+    #${ROOT_ID} .wfpe-annotation-textarea:focus {
+      border-color: rgba(255, 255, 255, 0.55);
+      background: rgba(255, 255, 255, 0.22);
+    }
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"][data-has-note="true"] .wfpe-annotation-textarea {
+      border-color: rgba(245, 158, 11, 0.72);
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18) inset;
+    }
+    #${ROOT_ID} .wfpe-annotation-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    #${ROOT_ID} .wfpe-annotation-status {
+      margin-right: auto;
+      color: rgba(255, 255, 255, 0.74);
+      font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      min-height: 11px;
+    }
+    #${ROOT_ID} .wfpe-annotation-save-btn,
+    #${ROOT_ID} .wfpe-annotation-delete-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 7px;
+      color: #fff;
+      cursor: pointer;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      padding: 6px 9px;
+      background: rgba(255, 255, 255, 0.12);
+      transition: background-color 120ms ease, opacity 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-annotation-save-btn:hover,
+    #${ROOT_ID} .wfpe-annotation-delete-btn:hover {
+      background-color: rgba(255, 255, 255, 0.22);
+    }
+    #${ROOT_ID} .wfpe-annotation-delete-btn:hover {
+      background-color: rgba(220, 38, 38, 0.28);
+    }
+    #${ROOT_ID} .wfpe-annotation-delete-btn:disabled {
+      opacity: 0.45;
+      cursor: default;
+      background: rgba(255, 255, 255, 0.08);
+    }
     /* Element action row: compact text-link controls for common structural
        actions. They stay in one row to keep the inspector from growing
        vertically as feature actions are added. */
@@ -561,6 +645,60 @@
       /* Sits inside #wfp-editor-root which already pins the editor's
          stacking context above the slide; no need to compete with the
          ring's z-index since they're siblings under the same root. */
+    }
+    #${ROOT_ID} .wfpe-annotation-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 3;
+    }
+    #${ROOT_ID} .wfpe-annotation-badge {
+      position: fixed;
+      pointer-events: auto;
+      appearance: none;
+      -webkit-appearance: none;
+      box-sizing: border-box;
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: 1px solid rgba(255, 214, 196, 0.70);
+      border-radius: 50%;
+      background:
+        radial-gradient(120% 130% at 45% 12%, rgba(255, 221, 198, 0.92) 0%, rgba(252, 170, 139, 0.92) 44%, rgba(244, 132, 123, 0.96) 100%);
+      color: transparent;
+      box-shadow:
+        0 7px 18px rgba(232, 110, 103, 0.34),
+        0 3px 12px rgba(15, 23, 42, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.58),
+        inset 0 -1px 0 rgba(126, 34, 26, 0.13);
+      cursor: pointer;
+      font-size: 0;
+      line-height: 0;
+      user-select: none;
+      transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+    }
+    #${ROOT_ID} .wfpe-annotation-badge::before {
+      content: '';
+      position: absolute;
+      inset: 3px 4px auto 4px;
+      height: 1px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.62);
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-annotation-badge::after {
+      content: none;
+    }
+    #${ROOT_ID} .wfpe-annotation-badge:hover,
+    #${ROOT_ID} .wfpe-annotation-badge[data-selected="true"] {
+      filter: brightness(1.04);
+      transform: translateY(-1px);
+      box-shadow:
+        0 9px 22px rgba(232, 110, 103, 0.42),
+        0 0 0 2px rgba(255, 255, 255, 0.54),
+        0 4px 14px rgba(15, 23, 42, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.66),
+        inset 0 -1px 0 rgba(126, 34, 26, 0.14);
     }
     @media (prefers-color-scheme: dark) {
       /* The inspector now uses the same dark-glass recipe in both
@@ -635,10 +773,9 @@
       background: #ffffff;
       border: 1.5px solid #5b9bd9;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-      /* Sit above the toolbar/inspector (z-index: 2) so resize stays
-         possible when the selected element happens to live behind them
-         (e.g. an item in the slide's top-right corner). */
-      z-index: 3;
+      /* Stay below toolbar/inspector controls so selected elements behind
+         those surfaces cannot steal clicks from editor inputs/buttons. */
+      z-index: 2;
     }
     /* Corners are the visual anchors — solid white circle at full
        handle size with a crisp blue ring. */
@@ -782,12 +919,13 @@
          with neighbouring thumbnails. */
       overflow: hidden !important;
     }
-    /* Suppress the editor's own selection ring + handles + dim bubble
+    /* Suppress the editor's own selection ring + handles + note markers
        while overview is active — they refer to slide-element selection,
        which doesn't exist in overview. */
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-selection-ring,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-handle,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-dim-bubble,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-annotation-layer,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector {
       display: none !important;
     }

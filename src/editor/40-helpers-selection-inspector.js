@@ -187,10 +187,294 @@
     const nodes = [el, ...el.querySelectorAll('*')];
     for (const node of nodes) {
       for (const attr of [...node.attributes]) {
-        if (attr.name.startsWith('data-wfp-edit')) node.removeAttribute(attr.name);
+        if (
+          attr.name.startsWith('data-wfp-edit') ||
+          attr.name === HANDOFF_TARGET_ATTR ||
+          attr.name === HANDOFF_SCRIPT_ATTR
+        ) {
+          node.removeAttribute(attr.name);
+        }
       }
       if (node.hasAttribute('contenteditable')) node.removeAttribute('contenteditable');
     }
+  }
+
+  function collectEditorDataAttributes(el) {
+    const attrs = {};
+    if (!el || !el.attributes) return attrs;
+    for (const attr of [...el.attributes]) {
+      if (attr.name.startsWith('data-wfp-edit')) attrs[attr.name] = attr.value;
+    }
+    return attrs;
+  }
+
+  function applyEditorDataAttributes(el, attrs) {
+    if (!el) return;
+    for (const attr of [...el.attributes]) {
+      if (attr.name.startsWith('data-wfp-edit')) el.removeAttribute(attr.name);
+    }
+    for (const [name, value] of Object.entries(attrs || {})) {
+      el.setAttribute(name, value);
+    }
+  }
+
+  function editorDataAttributesEqual(a, b) {
+    const aKeys = Object.keys(a || {}).sort();
+    const bKeys = Object.keys(b || {}).sort();
+    if (aKeys.length !== bKeys.length) return false;
+    return aKeys.every((key, index) => key === bKeys[index] && a[key] === b[key]);
+  }
+
+  function normalizeAnnotationText(raw) {
+    return typeof raw === 'string' ? raw.trim() : '';
+  }
+
+  function getAnnotationId(el) {
+    return el ? (el.getAttribute(ANNOTATION_ID_ATTR) || '') : '';
+  }
+
+  function getAnnotationText(el) {
+    return normalizeAnnotationText(el ? el.getAttribute(ANNOTATION_TEXT_ATTR) : '');
+  }
+
+  function hasAnnotation(el) {
+    return !!getAnnotationId(el) && !!getAnnotationText(el);
+  }
+
+  function generateAnnotationId() {
+    const time = Date.now().toString(36);
+    const rand = Math.random().toString(36).slice(2, 8);
+    return `ann-${time}-${rand}`;
+  }
+
+  function getAnnotatedElements(rootNode = document) {
+    const rootEl = rootNode.documentElement || rootNode;
+    const nodes = rootEl ? [...rootEl.querySelectorAll(`[${ANNOTATION_ID_ATTR}][${ANNOTATION_TEXT_ATTR}]`)] : [];
+    return nodes.filter((el) => hasAnnotation(el));
+  }
+
+  function findAnnotationElementById(id) {
+    if (!id) return null;
+    return getAnnotatedElements(document).find((el) => getAnnotationId(el) === id) || null;
+  }
+
+  function updateAnnotationDraftStatus(el) {
+    if (!annotationStatus) return;
+    const visible = !!el && getSelectedElements().length === 1;
+    if (!visible) {
+      annotationRow.dataset.hasNote = 'false';
+      annotationRow.dataset.dirty = 'false';
+      annotationStatus.textContent = '';
+      return;
+    }
+    const savedText = getAnnotationText(el);
+    const draftText = normalizeAnnotationText(annotationTextarea.value);
+    const hasSaved = hasAnnotation(el);
+    const dirty = draftText !== savedText;
+    annotationRow.dataset.hasNote = hasSaved ? 'true' : 'false';
+    annotationRow.dataset.dirty = dirty ? 'true' : 'false';
+    if (dirty) {
+      annotationStatus.textContent = draftText ? 'Unsaved' : (hasSaved ? 'Will delete' : '');
+    } else {
+      annotationStatus.textContent = hasSaved ? 'Saved' : '';
+    }
+  }
+
+  function getAnnotationEditorTarget() {
+    const selected = getSelectedElements();
+    if (
+      selected.length === 1 &&
+      selected[0] &&
+      selected[0].isConnected &&
+      !state.overviewMode
+    ) {
+      return selected[0];
+    }
+    return (
+      annotationRow.__wfpeTarget &&
+      annotationRow.__wfpeTarget.isConnected
+    ) ? annotationRow.__wfpeTarget : null;
+  }
+
+  function isAnnotationMarkerVisibleFor(el, activeSlide) {
+    if (!el || !el.isConnected || isInsideEditorRoot(el)) return false;
+    const slide = el.closest('.slide');
+    if (activeSlide && slide && slide !== activeSlide) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 && rect.height <= 0) return false;
+    return rect.right >= 0 && rect.bottom >= 0 && rect.left <= window.innerWidth && rect.top <= window.innerHeight;
+  }
+
+  function positionAnnotationBadge(marker, rect) {
+    const markerWidth = 16;
+    const markerHeight = 16;
+    const left = Math.max(4, Math.min(window.innerWidth - markerWidth - 4, rect.right - markerWidth + 6));
+    const preferredTop = rect.top - 8;
+    const top = preferredTop >= 4 ? preferredTop : Math.min(window.innerHeight - markerHeight - 4, rect.top + 4);
+    marker.style.left = `${left}px`;
+    marker.style.top = `${Math.max(4, top)}px`;
+  }
+
+  function refreshAnnotationMarkers() {
+    if (!annotationLayer) return;
+    if (!state.editMode || state.overviewMode) {
+      annotationLayer.replaceChildren();
+      return;
+    }
+    const activeSlide = getActiveSlide();
+    const annotated = getAnnotatedElements(document).filter((el) => isAnnotationMarkerVisibleFor(el, activeSlide));
+    const existing = new Map(
+      [...annotationLayer.querySelectorAll('.wfpe-annotation-badge')]
+        .map((marker) => [marker.dataset.annotationId || '', marker])
+    );
+    const used = new Set();
+    for (const el of annotated) {
+      const id = getAnnotationId(el);
+      const rect = el.getBoundingClientRect();
+      let marker = existing.get(id);
+      if (!marker) {
+        marker = document.createElement('button');
+        marker.type = 'button';
+        marker.className = 'wfpe-annotation-badge';
+        marker.dataset.annotationId = id;
+        marker.setAttribute('aria-label', 'Agent note');
+        annotationLayer.appendChild(marker);
+      }
+      marker.dataset.selected = el === state.selected ? 'true' : 'false';
+      marker.textContent = '';
+      marker.title = getAnnotationText(el);
+      positionAnnotationBadge(marker, rect);
+      used.add(marker);
+    }
+    for (const marker of existing.values()) {
+      if (!used.has(marker)) marker.remove();
+    }
+  }
+
+  function saveAnnotation(targetEl, rawText) {
+    const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
+    if (!el || hasMultiSelection() || state.overviewMode) return false;
+    const nextText = normalizeAnnotationText(rawText);
+    const currentText = getAnnotationText(el);
+    const currentId = getAnnotationId(el);
+    if (!nextText && !currentText && !currentId) return false;
+    if (nextText && currentText === nextText && currentId) return false;
+
+    const ctx = startInspectorTxn();
+    touchElement(el);
+    if (!nextText) {
+      el.removeAttribute(ANNOTATION_ID_ATTR);
+      el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    } else {
+      el.setAttribute(ANNOTATION_ID_ATTR, currentId || generateAnnotationId());
+      el.setAttribute(ANNOTATION_TEXT_ATTR, nextText);
+    }
+    endInspectorTxn(ctx);
+    populateAnnotation(el, { force: true });
+    refreshHandoffButton();
+    showToast(el, nextText ? 'Agent note saved.' : 'Agent note deleted.');
+    return true;
+  }
+
+  function deleteAnnotation(targetEl) {
+    const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
+    if (!el || (!getAnnotationId(el) && !getAnnotationText(el))) return false;
+    const ctx = startInspectorTxn();
+    touchElement(el);
+    el.removeAttribute(ANNOTATION_ID_ATTR);
+    el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    endInspectorTxn(ctx);
+    populateAnnotation(el, { force: true });
+    refreshHandoffButton();
+    showToast(el, 'Agent note deleted.');
+    return true;
+  }
+
+  function populateAnnotation(el, options = {}) {
+    const visible = !!el && getSelectedElements().length === 1;
+    annotationRow.style.display = visible ? '' : 'none';
+    if (!visible) {
+      annotationRow.__wfpeTarget = null;
+      if (document.activeElement !== annotationTextarea) annotationTextarea.value = '';
+      annotationDeleteBtn.disabled = true;
+      updateAnnotationDraftStatus(null);
+      return;
+    }
+    const preserveDraft = (
+      !options.force &&
+      annotationRow.__wfpeTarget === el &&
+      annotationRow.dataset.dirty === 'true'
+    );
+    annotationRow.__wfpeTarget = el;
+    const text = getAnnotationText(el);
+    if (options.force || (!preserveDraft && document.activeElement !== annotationTextarea)) {
+      annotationTextarea.value = text;
+    }
+    annotationDeleteBtn.disabled = !hasAnnotation(el);
+    updateAnnotationDraftStatus(el);
+  }
+
+  function refreshHandoffButton() {
+    if (!handoffBtn) return;
+    const enabled = getAnnotatedElements(document).length > 0;
+    handoffBtn.disabled = !enabled;
+    handoffBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+    handoffBtn.title = enabled
+      ? 'Export agent handoff HTML'
+      : 'Add an Agent note to enable handoff export';
+    refreshAnnotationMarkers();
+  }
+
+  function parseHandoffPayload() {
+    const script = document.querySelector(`script[${HANDOFF_SCRIPT_ATTR}]`);
+    if (!script) return null;
+    try {
+      const payload = JSON.parse(script.textContent || '{}');
+      return payload && Array.isArray(payload.annotations) ? payload : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function getHandoffTargetsById(rootNode, id) {
+    if (!id) return [];
+    const rootEl = rootNode.documentElement || rootNode;
+    return [...rootEl.querySelectorAll(`[${HANDOFF_TARGET_ATTR}]`)]
+      .filter((el) => el.getAttribute(HANDOFF_TARGET_ATTR) === id);
+  }
+
+  function removeHandoffArtifacts(rootNode) {
+    const rootEl = rootNode.documentElement || rootNode;
+    if (!rootEl) return;
+    rootEl.querySelectorAll(`script[${HANDOFF_SCRIPT_ATTR}]`).forEach((script) => script.remove());
+    [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
+      if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
+    });
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_COMMENT);
+    const comments = [];
+    let node = walker.nextNode();
+    while (node) {
+      if ((node.nodeValue || '').includes('WFP Editor handoff:')) comments.push(node);
+      node = walker.nextNode();
+    }
+    comments.forEach((comment) => comment.remove());
+  }
+
+  function reimportHandoffAnnotations() {
+    const payload = parseHandoffPayload();
+    if (!payload) return;
+    for (const annotation of payload.annotations) {
+      const id = typeof annotation.id === 'string' ? annotation.id : '';
+      const instruction = normalizeAnnotationText(annotation.instruction);
+      if (!id || !instruction) continue;
+      const targets = getHandoffTargetsById(document, id);
+      if (!targets.length) continue;
+      for (const target of targets) {
+        target.setAttribute(ANNOTATION_ID_ATTR, id);
+        target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
+      }
+    }
+    removeHandoffArtifacts(document);
   }
 
   function getCoordinateRootForElement(el) {
@@ -392,6 +676,7 @@
       hideHandles();
       hideDimBubble();
       hideMultiSelection();
+      refreshAnnotationMarkers();
       stopSelectionTracking();
       return;
     }
@@ -403,6 +688,7 @@
       hideDimBubble();
       positionMultiSelection(members);
       populateInspector(null);
+      refreshAnnotationMarkers();
       startSelectionTracking();
     } else if (members.length === 1) {
       hideMultiSelection();
@@ -411,12 +697,14 @@
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
+      refreshAnnotationMarkers();
       startSelectionTracking();
     } else {
       hideRing();
       hideHandles();
       hideDimBubble();
       hideMultiSelection();
+      refreshAnnotationMarkers();
       stopSelectionTracking();
     }
   }
@@ -591,6 +879,7 @@
       fontSizeRow.style.display = 'none';
       textColourRow.row.style.display = 'none';
       populateColours(null);
+      populateAnnotation(null);
       return;
     }
     // Use offset* values so what the user reads matches the box model
@@ -620,6 +909,7 @@
     }
     populateColours(el);
     populateOpacity(el);
+    populateAnnotation(el);
   }
 
   // ---------------------------------------------------------------------------
@@ -830,6 +1120,7 @@
       'aria-label',
       state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
     );
+    refreshHandoffButton();
   }
 
   function setInspectorMinimised(value) {

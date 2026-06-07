@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.2)
+# Requirements: Current Product Contract (v2.5)
 
 ## Goal
 
@@ -11,7 +11,9 @@ Ship a bookmarklet-activated editor that lets a user polish WFP HTML slide decks
 - Copy, paste, and duplicate selected elements within the current editing session.
 - Reorder and delete slides in Overview mode.
 - Insert blank slides from Overview mode.
+- Add selected-element agent annotations for focused cleanup handoff.
 - Export clean standalone HTML that preserves the user's edits and removes all editor chrome.
+- Export annotated agent-handoff HTML as a separate, explicit artifact.
 
 This file is the current product contract. `TASKS.md` and `feature-briefs/` are historical build records.
 
@@ -31,7 +33,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 ### Toolbar
 
 - Fixed liquid-glass toolbar mounted under `#wfp-editor-root`.
-- Controls: Edit, Overview, Export, Undo, Redo.
+- Controls: Edit, Overview, Export, Handoff, Undo, Redo.
 - Toolbar controls never become slide selection targets.
 - All editor UI is removed from exported HTML.
 
@@ -73,6 +75,7 @@ The inspector is visible when an element is selected and supports:
 - Reset inline styles for the selected element.
 - Duplicate selected element.
 - Delete selected element.
+- Agent note save/delete for focused handoff annotations.
 - Minimise/expand state remembered within the editor session.
 
 Inspector clicks must not accidentally select slide content or end inline text editing unless that is the intended control behaviour.
@@ -111,7 +114,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 
 - Cmd/Ctrl+Z undoes the last change.
 - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redoes.
-- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, text edit, element insert/delete, slide reorder, slide delete.
+- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, annotation save/delete, text edit, element insert/delete, slide reorder, slide delete.
 - History persists for the current page session only.
 - History must support at least 50 entries.
 
@@ -146,6 +149,22 @@ Inspector clicks must not accidentally select slide content or end inline text e
   - `contenteditable`.
   - Body/editor state attributes such as overview/edit-mode flags.
   - Selection rings, handles, toasts, overlays, and thumbnail chrome.
+
+### Agent Handoff Export
+
+- An Agent note can be attached to exactly one selected element.
+- Live annotation markers use `data-wfp-edit-annotation-id` and `data-wfp-edit-annotation-text`.
+- Saved annotations show an editor-only peach circular marker on the target element while edit mode is on.
+- The Agent note row makes saved vs unsaved draft state visible.
+- The Handoff toolbar button is disabled when no connected annotations exist.
+- The Handoff toolbar button downloads `<original-name>-agent-handoff.html`.
+- Handoff export uses the normal cleanup pipeline, then intentionally adds:
+  - `data-wfp-agent-annotation-id` markers on annotated targets.
+  - `script[type="application/json"][data-wfp-agent-annotations]` metadata.
+  - A short HTML comment identifying the metadata as user-authored handoff annotations.
+- Handoff metadata must be structured task context, not a hidden prompt that attempts to override agent/system/user instructions.
+- Re-injecting the editor into handoff HTML restores matching annotations into live editor annotation markers.
+- Normal export after reimport must strip all handoff metadata.
 
 ## Constraints From WFP Slides
 
@@ -189,6 +208,7 @@ These are not part of the current product contract. Add them to `ROADMAP.md` or 
 - Asset replacement.
 - Theme variable editing.
 - Overview search/filter or duplicate slide.
+- Text-range annotations, slide-level annotations, pins, comments panel, resolved-state workflow, or hidden agent prompts.
 - Mobile/touch editing.
 
 ## Known Quality Work

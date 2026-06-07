@@ -14,6 +14,12 @@
       '<polyline points="7 10 12 15 17 10" />' +
       '<line x1="12" y1="15" x2="12" y2="3" />' +
       '</svg>',
+    handoff:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />' +
+      '<path d="M8 9h8" />' +
+      '<path d="M8 13h5" />' +
+      '</svg>',
     undo:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<path d="M9 14 4 9l5-5" />' +
@@ -104,10 +110,14 @@
   const overviewBtn = makeToolbarButton('overview', 'Overview', 'Overview (O)', 'overview');
   overviewBtn.dataset.mode = 'off';
   const exportBtn = makeToolbarButton('export', 'Export', 'Export (Cmd/Ctrl+S)', 'export');
+  const handoffBtn = makeToolbarButton('handoff', 'Handoff', 'Add an Agent note to enable handoff export', 'handoff');
+  handoffBtn.disabled = true;
+  handoffBtn.setAttribute('aria-disabled', 'true');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
   toolbar.appendChild(overviewBtn);
   toolbar.appendChild(exportBtn);
+  toolbar.appendChild(handoffBtn);
   toolbar.appendChild(undoBtn);
   toolbar.appendChild(redoBtn);
 
@@ -370,6 +380,48 @@
   inspectorBody.appendChild(opacityRow);
   inspectorInputs.opacity = fieldOpacity.input;
 
+  const annotationRow = document.createElement('div');
+  annotationRow.className = 'wfpe-inspector-row';
+  annotationRow.dataset.wfpeRow = 'annotation';
+
+  const annotationLabel = document.createElement('span');
+  annotationLabel.className = 'wfpe-inspector-row-label';
+  annotationLabel.textContent = 'Agent note';
+  annotationRow.appendChild(annotationLabel);
+
+  const annotationTextarea = document.createElement('textarea');
+  annotationTextarea.className = 'wfpe-annotation-textarea';
+  annotationTextarea.dataset.wfpeProp = 'annotation';
+  annotationTextarea.placeholder = 'Instruction for agent cleanup';
+  annotationTextarea.spellcheck = true;
+  annotationRow.appendChild(annotationTextarea);
+
+  const annotationActions = document.createElement('div');
+  annotationActions.className = 'wfpe-annotation-actions';
+
+  const annotationStatus = document.createElement('span');
+  annotationStatus.className = 'wfpe-annotation-status';
+  annotationActions.appendChild(annotationStatus);
+
+  const annotationDeleteBtn = document.createElement('button');
+  annotationDeleteBtn.type = 'button';
+  annotationDeleteBtn.className = 'wfpe-annotation-delete-btn';
+  annotationDeleteBtn.dataset.action = 'delete-annotation';
+  annotationDeleteBtn.textContent = 'Delete';
+  annotationDeleteBtn.title = 'Delete agent note';
+  annotationActions.appendChild(annotationDeleteBtn);
+
+  const annotationSaveBtn = document.createElement('button');
+  annotationSaveBtn.type = 'button';
+  annotationSaveBtn.className = 'wfpe-annotation-save-btn';
+  annotationSaveBtn.dataset.action = 'save-annotation';
+  annotationSaveBtn.textContent = 'Save';
+  annotationSaveBtn.title = 'Save agent note';
+  annotationActions.appendChild(annotationSaveBtn);
+
+  annotationRow.appendChild(annotationActions);
+  inspectorBody.appendChild(annotationRow);
+
   // Element action row. Duplicate/delete/reset live together to avoid
   // growing the inspector vertically as structural actions are added.
   const actionRow = document.createElement('div');
@@ -411,6 +463,10 @@
   const dimBubble = document.createElement('div');
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
+
+  const annotationLayer = document.createElement('div');
+  annotationLayer.className = 'wfpe-annotation-layer';
+  root.appendChild(annotationLayer);
 
   const multiBox = document.createElement('div');
   multiBox.className = 'wfpe-multi-box';
@@ -473,6 +529,11 @@
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
     exportHTML();
+  });
+  handoffBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (handoffBtn.disabled) return;
+    exportHandoffHTML();
   });
   overviewBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -701,6 +762,41 @@
   wireColourRow(textColourRow, 'text');
   wireColourRow(bgColourRow, 'bg');
 
+  annotationTextarea.addEventListener('focus', () => {
+    annotationTextarea.__wfpeFocusTarget = state.selected || null;
+  });
+  annotationTextarea.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      populateAnnotation(state.selected, { force: true });
+      annotationTextarea.blur();
+    }
+  });
+  annotationSaveBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    saveAnnotation(getAnnotationEditorTarget(), annotationTextarea.value);
+  });
+  annotationTextarea.addEventListener('input', () => {
+    updateAnnotationDraftStatus(getAnnotationEditorTarget());
+  });
+  annotationDeleteBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    deleteAnnotation(getAnnotationEditorTarget());
+  });
+  annotationLayer.addEventListener('click', (e) => {
+    const badgeEl = e.target && e.target.closest ? e.target.closest('.wfpe-annotation-badge') : null;
+    if (!badgeEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = findAnnotationElementById(badgeEl.dataset.annotationId || '');
+    if (!target) return;
+    setEditMode(true);
+    setSelected(target);
+    refreshSelection();
+    refreshInspector();
+  });
+
   // Reset clears the entire inline style attribute as one history entry.
   // Bail when there's nothing to clear so an idle click can't push a
   // no-op entry. The snapshot/endTxn pair captures and restores the
@@ -725,3 +821,5 @@
     deleteSelectedElement();
   });
   applyModeFeatureGating();
+  reimportHandoffAnnotations();
+  refreshHandoffButton();

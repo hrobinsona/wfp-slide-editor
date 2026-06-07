@@ -56,7 +56,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       await page.keyboard.press('e');
     });
 
-    test('toolbar renders Edit/Overview/Export/Undo/Redo with v2 liquid-glass recipe', async ({ page }) => {
+    test('toolbar renders Edit/Overview/Export/Handoff/Undo/Redo with v2 liquid-glass recipe', async ({ page }) => {
       const out = await page.evaluate(() => {
         const tb = document.querySelector('#wfp-editor-root .wfpe-toolbar');
         return {
@@ -66,7 +66,7 @@ for (const fixture of FIXTURES_TO_RUN) {
         };
       });
       // Overview button added in v2.1.0 between Edit and the action triplet.
-      expect(out.buttons).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
+      expect(out.buttons).toEqual(['edit', 'overview', 'export', 'handoff', 'undo', 'redo']);
       // White-text liquid-glass recipe: tint trimmed to 0.12 with the
       // brightness drop carrying the contrast (see toolbar CSS).
       expect(out.bg).toBe('rgba(255, 255, 255, 0.12)');

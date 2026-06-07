@@ -12,8 +12,7 @@
   function snapshotElement(el, options = {}) {
     const snap = {
       style: el.getAttribute('style'),
-      frozen: el.getAttribute('data-wfp-edit-frozen'),
-      flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+      editorAttrs: collectEditorDataAttributes(el),
     };
     if (options.captureHtml) snap.html = el.innerHTML;
     return snap;
@@ -27,10 +26,7 @@
     // properties this change wrote, not preserve them.
     if (snap.style === null) el.removeAttribute('style');
     else el.setAttribute('style', snap.style);
-    if (snap.frozen === null) el.removeAttribute('data-wfp-edit-frozen');
-    else el.setAttribute('data-wfp-edit-frozen', snap.frozen);
-    if (snap.flexFrozen === null) el.removeAttribute('data-wfp-edit-flex-frozen');
-    else el.setAttribute('data-wfp-edit-flex-frozen', snap.flexFrozen);
+    applyEditorDataAttributes(el, snap.editorAttrs || {});
     if (Object.prototype.hasOwnProperty.call(snap, 'html') && el.innerHTML !== snap.html) {
       el.innerHTML = snap.html;
     }
@@ -41,8 +37,7 @@
     const bHasHtml = Object.prototype.hasOwnProperty.call(b, 'html');
     return (
       a.style === b.style &&
-      a.frozen === b.frozen &&
-      a.flexFrozen === b.flexFrozen &&
+      editorDataAttributesEqual(a.editorAttrs, b.editorAttrs) &&
       ((!aHasHtml && !bHasHtml) || a.html === b.html)
     );
   }
@@ -244,6 +239,7 @@
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
     refreshSelection();
+    refreshHandoffButton();
     if (state.overviewMode) buildOverviewOverlay();
   }
 
@@ -258,5 +254,6 @@
     }
     state.historyIndex++;
     refreshSelection();
+    refreshHandoffButton();
     if (state.overviewMode) buildOverviewOverlay();
   }

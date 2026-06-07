@@ -63,6 +63,7 @@
         refreshSelection();
       }
     }
+    refreshAnnotationMarkers();
   });
   function observeSlideClass(slide) {
     if (!slide) return;

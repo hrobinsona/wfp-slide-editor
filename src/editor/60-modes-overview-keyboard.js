@@ -10,6 +10,7 @@
       setSelected(null);
       refreshInspector();
     }
+    refreshAnnotationMarkers();
   }
 
   // ===========================================================================
@@ -56,6 +57,7 @@
     }
     overviewBtn.dataset.mode = state.overviewMode ? 'on' : 'off';
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
+    refreshAnnotationMarkers();
   }
 
   // ---------------------------------------------------------------------------
@@ -655,6 +657,7 @@
     // reference — the next mouseover will re-hydrate.
     if (state.overviewHoveredSlide === slide) state.overviewHoveredSlide = null;
     buildOverviewOverlay();
+    refreshHandoffButton();
   }
 
   function getOverviewDeleteTarget() {

@@ -16,7 +16,7 @@
  *          inline SVG icons (lucide aesthetic), no behavior change.
  * v2.1:    Overview mode for slide reorder/delete.
  * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
- * v2.x:    Cmd/Ctrl-click multi-select for moving elements together.
+ * v2.5:    agent handoff annotations with explicit handoff export.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -24,7 +24,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.4.0';
+  const VERSION = '2.5.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -50,6 +50,11 @@
     w: 'ew-resize',
   };
   const ROOT_ID = 'wfp-editor-root';
+  const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
+  const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
+  const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
+  const HANDOFF_SCRIPT_ATTR = 'data-wfp-agent-annotations';
+  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element, then remove resolved annotation metadata.';
 
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);

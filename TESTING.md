@@ -8,7 +8,7 @@ Fixtures are immutable inputs. Tests may export HTML and screenshots into `tests
 
 ## Current Coverage
 
-The suite now covers the v1 editor, v2 inspector, v2.1 Overview mode, v2.2 copy/paste and blank slide insertion, and v2.3 multi-select move.
+The suite now covers the v1 editor, v2 inspector, v2.1 Overview mode, v2.2 copy/paste and blank slide insertion, v2.3 multi-select move, and v2.5 agent handoff annotations.
 
 ```text
 tests/
@@ -28,7 +28,8 @@ tests/
 ├── v2-0-inspector-*.spec.js       # Inspector controls and edge cases.
 ├── v2-1-6-end-to-end.spec.js      # v2.1 end-to-end coverage.
 ├── v2-overview.spec.js            # Overview grid, reorder, delete, export.
-└── v2-multi-select.spec.js        # Cmd/Ctrl-click multi-select and group movement.
+├── v2-multi-select.spec.js        # Cmd/Ctrl-click multi-select and group movement.
+└── v2-agent-annotations.spec.js   # Agent note authoring, visible circular markers, and handoff export.
 ```
 
 Use `rg --files tests` for the exact current file list.
@@ -90,6 +91,7 @@ Before declaring a feature or refactor done:
 7. Double-click text, edit it, exit with Escape, and undo/redo.
 8. Toggle Overview with `O`, navigate by clicking a thumbnail, reorder slides, delete a slide, and undo/redo both operations.
 9. Export, open the exported HTML in a fresh tab, and confirm edits persist with no editor UI visible.
+10. Add an Agent note, confirm the Saved state and peach circular marker appear, export handoff HTML, re-open it with the editor, and confirm the annotation reloads.
 
 ## Output Artifacts
 

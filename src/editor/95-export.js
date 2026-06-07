@@ -2,10 +2,11 @@
   // Export
   //
   // Clone the live DOM, strip everything the editor injected (root + script
-  // + data-wfp-edit-* + contenteditable), serialize, and trigger a download
-  // named `<basename>-edited.html`.
+  // + data-wfp-edit-* + contenteditable), serialize, and trigger a download.
+  // Normal export stays clean; handoff export intentionally adds structured
+  // user-authored annotation metadata after the cleanup pass.
   // ===========================================================================
-  function deriveExportFilename() {
+  function deriveExportFilename(suffix = '-edited') {
     let path = location.pathname || '';
     try {
       path = decodeURIComponent(path);
@@ -16,7 +17,7 @@
     const m = lastSegment.match(/^(.+?)(\.html?)?$/i);
     const base = (m && m[1]) || 'slide';
     const ext = (m && m[2]) || '.html';
-    return `${base}-edited${ext}`;
+    return `${base}${suffix}${ext}`;
   }
 
   function shouldSkipAssetUrl(raw) {
@@ -154,7 +155,7 @@
     });
   }
 
-  function buildExportHtml() {
+  function buildExportClone() {
     const clone = document.documentElement.cloneNode(true);
 
     const editorRoot = clone.querySelector(`#${ROOT_ID}`);
@@ -173,12 +174,92 @@
     removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
 
+    return clone;
+  }
+
+  function stripEditorArtifactsFromDocument(clone) {
     clone.querySelectorAll('*').forEach((el) => {
       for (const attr of [...el.attributes]) {
         if (attr.name.startsWith('data-wfp-edit')) el.removeAttribute(attr.name);
       }
       if (el.hasAttribute('contenteditable')) el.removeAttribute('contenteditable');
     });
+  }
+
+  function getSlideIndexForHandoffTarget(root, target) {
+    const decks = getExportDeckRoots(root);
+    for (const deck of decks) {
+      const slides = [...deck.querySelectorAll(':scope > .slide')];
+      const slide = target.closest('.slide');
+      if (slide && slides.includes(slide)) return slides.indexOf(slide);
+    }
+    const slides = [...root.querySelectorAll('.slide')];
+    const slide = target.closest('.slide');
+    if (slide && slides.includes(slide)) return slides.indexOf(slide);
+    return 0;
+  }
+
+  function summarizeTargetText(el) {
+    return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  }
+
+  function collectHandoffAnnotations(clone) {
+    const annotations = [];
+    const usedIds = new Set();
+    const targets = getAnnotatedElements(clone);
+    for (const target of targets) {
+      const id = getAnnotationId(target);
+      const instruction = getAnnotationText(target);
+      if (!id || !instruction || usedIds.has(id)) continue;
+      usedIds.add(id);
+      target.setAttribute(HANDOFF_TARGET_ATTR, id);
+      annotations.push({
+        id,
+        instruction,
+        slideIndex: getSlideIndexForHandoffTarget(clone, target),
+        targetText: summarizeTargetText(target),
+      });
+    }
+    return annotations;
+  }
+
+  function safeJsonForScript(value) {
+    return JSON.stringify(value, null, 2).replace(/<\/script/gi, '<\\/script');
+  }
+
+  function appendHandoffMetadata(clone, annotations) {
+    if (!annotations.length) return;
+    const payload = {
+      version: 1,
+      source: 'wfp-slide-editor',
+      kind: 'agent-handoff',
+      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first.',
+      annotations,
+    };
+    const comment = document.createComment(` ${HANDOFF_COMMENT_TEXT} `);
+    const script = document.createElement('script');
+    script.type = 'application/json';
+    script.setAttribute(HANDOFF_SCRIPT_ATTR, '');
+    script.textContent = safeJsonForScript(payload);
+    const targetParent = clone.querySelector('body') || clone;
+    targetParent.appendChild(comment);
+    targetParent.appendChild(script);
+  }
+
+  function buildExportHtml() {
+    const clone = buildExportClone();
+    removeHandoffArtifacts(clone);
+    stripEditorArtifactsFromDocument(clone);
+
+    return '<!DOCTYPE html>\n' + clone.outerHTML;
+  }
+
+  function buildHandoffExportHtml() {
+    const clone = buildExportClone();
+    removeHandoffArtifacts(clone);
+    const annotations = collectHandoffAnnotations(clone);
+    stripEditorArtifactsFromDocument(clone);
+    appendHandoffMetadata(clone, annotations);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
@@ -205,4 +286,18 @@
     const html = buildExportHtml();
     triggerDownload(filename, html);
     showToast(document.body, `Exported to ${filename}`);
+  }
+
+  function exportHandoffHTML() {
+    if (state.editingText) endTextEdit();
+
+    const annotations = getAnnotatedElements(document);
+    if (!annotations.length) {
+      refreshHandoffButton();
+      return;
+    }
+    const filename = deriveExportFilename('-agent-handoff');
+    const html = buildHandoffExportHtml();
+    triggerDownload(filename, html);
+    showToast(document.body, `Exported handoff to ${filename}`);
   }
