@@ -136,7 +136,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - A single Export toolbar button carries a count badge showing the number of connected agent annotations; the badge is hidden when the count is zero.
 - Clicking Export opens a two-row action menu anchored under the toolbar. Escape or a click outside the menu closes it with no side effects.
 - Row 1 is the primary, recommended action (marked `↵` in the menu). Cmd/Ctrl+S always dispatches row 1, whether or not the menu is open; Enter dispatches row 1 while the menu is open, unless a menu row holds keyboard focus, in which case Enter activates the focused row.
-  - With one or more agent annotations: label "Annotated handoff", sublabel "Includes N agent note(s)". The action content is the handoff HTML pipeline (cleanup pass plus handoff metadata).
+  - With one or more agent annotations: label "Annotated copy", sublabel "Includes N agent note(s)". The action content is the handoff HTML pipeline (cleanup pass plus handoff metadata).
   - With zero agent annotations: label "Save", sublabel "Edits only". The action content is the clean HTML pipeline (no annotation metadata).
   - Row 1 is never disabled — the zero-annotation state degrades to a plain save instead of being blocked.
 - In browsers that implement the File System Access API (current Chrome, Edge, Arc), row 1 writes the chosen content over a file on disk instead of downloading it:

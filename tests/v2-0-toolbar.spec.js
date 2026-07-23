@@ -80,7 +80,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
     expect(recipe.boxShadow).toContain('inset');
     expect(recipe.color).toBe('rgb(255, 255, 255)');
     expect(recipe.radius).toBe('12px');
-    expect(recipe.width).toBe(246);
+    expect(recipe.width).toBe(214);
   });
 
   test('ink glass is scheme-invariant: identical surface under prefers-color-scheme dark', async ({ page }) => {

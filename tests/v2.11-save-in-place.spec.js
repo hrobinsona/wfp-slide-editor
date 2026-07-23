@@ -132,8 +132,27 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
     await expect(page.locator(badgeSel)).toHaveText('1');
 
     await page.click(exportBtnSel);
-    await expect(page.locator(`${primarySel} .wfpe-export-menu-label`)).toHaveText('Annotated handoff');
+    await expect(page.locator(`${primarySel} .wfpe-export-menu-label`)).toHaveText('Annotated copy');
     await expect(page.locator(`${primarySel} .wfpe-export-menu-sub`)).toHaveText('Includes 1 agent note');
+  });
+
+  test('two-digit badge counts stay inside the export button', async ({ page }) => {
+    await disableFsa(page);
+    await loadReady(page);
+
+    for (const count of ['14', '23']) {
+      await page.evaluate((value) => {
+        const badge = document.querySelector('#wfp-editor-root .wfpe-export-badge');
+        badge.dataset.count = value;
+        badge.textContent = value;
+      }, count);
+      const badgeBox = await page.locator(badgeSel).boundingBox();
+      const btnBox = await page.locator(exportBtnSel).boundingBox();
+      expect(badgeBox.x).toBeGreaterThanOrEqual(btnBox.x);
+      expect(badgeBox.y).toBeGreaterThanOrEqual(btnBox.y);
+      expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(btnBox.x + btnBox.width + 0.5);
+      expect(badgeBox.y + badgeBox.height).toBeLessThanOrEqual(btnBox.y + btnBox.height + 0.5);
+    }
   });
 
   test('Enter while open runs the primary action', async ({ page }) => {

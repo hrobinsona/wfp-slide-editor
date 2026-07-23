@@ -36,7 +36,9 @@
       position: fixed;
       top: 16px;
       right: 16px;
-      width: 246px;              /* collapsed: 58px via [data-collapsed] */
+      width: 214px;              /* collapsed: 58px via [data-collapsed];
+                                    v2.11.1: 246 - 32 after Handoff merged
+                                    into Export (one 30px button + 2px gap) */
       box-sizing: border-box;
       pointer-events: none;
       display: flex;
@@ -228,16 +230,19 @@
     #${ROOT_ID} .wfpe-toolbar-btn[data-action="export"] { position: relative; }
     #${ROOT_ID} .wfpe-export-badge {
       position: absolute;
-      top: -3px;
-      right: -3px;
-      min-width: 14px;
-      height: 14px;
+      /* Non-negative offsets: the toolbar clips overflow, so a badge
+         hanging outside the button gets cut. Small enough to sit clear
+         of the icon glyph; min-width grows leftward for 2-digit counts. */
+      top: 0;
+      right: 0;
+      min-width: 12px;
+      height: 12px;
       padding: 0 3px;
-      border-radius: 8px;
+      border-radius: 7px;
       background: linear-gradient(180deg, #ff9e8c, #f0685b 70%);
       box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.35);
-      font-size: 8.5px;
-      font-weight: 700;
+      font-size: 7.5px;
+      font-weight: 600;
       line-height: 1;
       color: #fff;
       display: flex;
@@ -265,6 +270,12 @@
       display: none;
       flex-direction: column;
       gap: 2px;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.28);
+      /* Pin the chrome font — menu items use font:inherit, and without
+         this they'd inherit the host deck's typeface instead. */
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      user-select: none;
     }
     #${ROOT_ID} .wfpe-export-menu[data-open="true"] { display: flex; }
     #${ROOT_ID} .wfpe-export-menu-item {
@@ -299,13 +310,22 @@
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
     }
     #${ROOT_ID} .wfpe-export-menu-item[data-action="clean-copy"] .wfpe-export-menu-chip {
-      background: rgba(9,11,16,0.32);
-      border: 1px solid rgba(255,255,255,0.14);
-      box-sizing: border-box;
+      background: #51565e;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
     }
-    #${ROOT_ID} .wfpe-export-menu-chip .wfpe-icon { width: 12px; height: 12px; }
+    /* Chip icons need the stroke treatment explicitly — the toolbar-btn
+       rule doesn't reach them, and un-styled SVG paths render black-filled. */
+    #${ROOT_ID} .wfpe-export-menu-chip .wfpe-icon {
+      width: 12px;
+      height: 12px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
     #${ROOT_ID} .wfpe-export-menu-text { display: flex; flex-direction: column; gap: 1px; }
-    #${ROOT_ID} .wfpe-export-menu-label { font-size: 11px; font-weight: 600; }
+    #${ROOT_ID} .wfpe-export-menu-label { font-size: 11px; font-weight: 500; }
     #${ROOT_ID} .wfpe-export-menu-sub { font-size: 9.5px; color: rgba(255,255,255,0.60); }
     #${ROOT_ID} .wfpe-export-menu-hint {
       margin-left: auto;

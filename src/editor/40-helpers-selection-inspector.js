@@ -443,7 +443,7 @@
     const label = exportPrimaryItem.querySelector('.wfpe-export-menu-label');
     const sub = exportPrimaryItem.querySelector('.wfpe-export-menu-sub');
     if (count > 0) {
-      label.textContent = 'Annotated handoff';
+      label.textContent = 'Annotated copy';
       sub.textContent = `Includes ${count} agent note${count === 1 ? '' : 's'}`;
     } else {
       label.textContent = 'Save';
