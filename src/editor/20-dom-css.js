@@ -336,6 +336,15 @@
     #${ROOT_ID} .wfpe-inspector-fold-inner {
       min-height: 0;
       overflow: hidden;
+      /* Instant on expand; see the delayed hide below. */
+      transition: visibility 0s;
+    }
+    /* The 0fr fold clips paint but not focusability — without this the
+       minimised body's fields/buttons stay Tab-reachable at zero height.
+       Mirrors the dock's delayed visibility hide on deselect. */
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold-inner {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
     }
     #${ROOT_ID} .wfpe-inspector-body {
       border-top: 1px solid rgba(255,255,255,0.14);

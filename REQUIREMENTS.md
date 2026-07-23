@@ -32,7 +32,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 
 ### Toolbar
 
-- Fixed liquid-glass toolbar mounted under `#wfp-editor-root`.
+- Fixed ink-glass toolbar mounted under `#wfp-editor-root`.
 - Controls: Edit, Overview, Export, Handoff, Undo, Redo.
 - Toolbar controls never become slide selection targets.
 - All editor UI is removed from exported HTML.
@@ -121,7 +121,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 ### Overview Mode
 
 - Overview mode displays all slides in a grid without permanently wrapping or cloning the slide deck.
-- Thumbnail grid uses the v2 liquid-glass visual language.
+- Thumbnail grid uses the v2 ink-glass visual language.
 - Click a thumbnail to make that slide active and return to normal slide view.
 - Drag thumbnails to reorder slides.
 - Delete a slide from its thumbnail `x` button, or with Backspace/Delete when a thumbnail delete target is active.
