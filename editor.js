@@ -5524,6 +5524,9 @@
   const HANDLE_DB_NAME = 'wfp-editor';
   const HANDLE_STORE_NAME = 'handles';
   let boundFileHandle = null;
+  // Captured once at init so saveInPlace() can await the same in-flight
+  // rehydration instead of racing it (see the Ready block below).
+  let handleRehydration = null;
 
   function canSaveInPlace() {
     return typeof window.showSaveFilePicker === 'function';
@@ -5547,12 +5550,14 @@
   async function loadStoredHandle() {
     try {
       const db = await openHandleDb();
-      return await new Promise((resolve) => {
+      const result = await new Promise((resolve) => {
         const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
         const req = tx.objectStore(HANDLE_STORE_NAME).get(location.href);
         req.onsuccess = () => resolve(req.result || null);
         req.onerror = () => resolve(null);
       });
+      db.close(); // release the connection once the round-trip settles
+      return result;
     } catch (_) {
       return null;
     }
@@ -5568,6 +5573,7 @@
         tx.onabort = resolve;
         tx.onerror = resolve;
       });
+      db.close(); // release the connection once the round-trip settles
     } catch (_) {
       /* persistence is best-effort */
     }
@@ -5584,6 +5590,7 @@
         tx.onabort = resolve;
         tx.onerror = resolve;
       });
+      db.close(); // release the connection once the round-trip settles
     } catch (_) {
       /* best-effort */
     }
@@ -5624,6 +5631,10 @@
     const noteCount = getAnnotatedElements(document).length;
     const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
     try {
+      // A save fired right after ready can race the still-in-flight
+      // rehydration; wait for it so we reuse the stored handle instead of
+      // opening a needless fresh picker.
+      if (!boundFileHandle && handleRehydration) await handleRehydration;
       let handle = boundFileHandle;
       if (!handle) {
         handle = await pickSourceHandle();
@@ -5961,9 +5972,13 @@
   // Ready
   // ===========================================================================
   if (canSaveInPlace()) {
-    loadStoredHandle().then((handle) => {
-      if (handle) boundFileHandle = handle;
-    });
+    // Capture the promise so saveInPlace() can await this same rehydration
+    // instead of racing it (see the handleRehydration check above).
+    handleRehydration = loadStoredHandle()
+      .then((handle) => {
+        if (handle && !boundFileHandle) boundFileHandle = handle;
+      })
+      .catch(() => {});
   }
   window.__wfpEditorReady = true;
   console.log(`[wfp-editor] ready v${VERSION}`);

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, pickRandomRotationFixture, PINNED_PRIMARIES } from './_helpers.js';
+import { loadFixtureWithEditor, pickRandomRotationFixture, PINNED_PRIMARIES, disableFsa } from './_helpers.js';
 
 // v2.1.6 — End-to-end pass for the v2.1 Overview release.
 //
@@ -67,6 +67,10 @@ test.use({ viewport: { width: 1920, height: 1080 } });
 for (const fixture of FIXTURES) {
   test.describe(`v2.1.6 — Overview end-to-end on ${fixture}`, () => {
     test.beforeEach(async ({ page }) => {
+      // triggerExport() below expects a download event; force the legacy
+      // fallback path so the export in this describe block doesn't hit a
+      // real (headless, dialog-less) File System Access picker.
+      await disableFsa(page);
       await loadFixtureWithEditor(page, fixture);
       // Lock deck scale to 1 so coordinate-dependent assertions (drag
       // thumb math, getBoundingClientRect comparisons) match the

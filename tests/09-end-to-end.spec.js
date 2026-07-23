@@ -6,6 +6,7 @@ import {
   loadFixtureWithEditor,
   pickRandomRotationFixture,
   PINNED_PRIMARIES,
+  disableFsa,
 } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -240,6 +241,8 @@ for (const fixture of FIXTURES_TO_TEST) {
     });
 
     test('8. Cmd+S downloads HTML; opens cleanly in fresh tab', async ({ page, context }) => {
+      // This test expects the legacy download fallback, not a native picker.
+      await disableFsa(page);
       await loadFixtureWithEditor(page, fixture);
       await setDeckScale(page, 1);
       await page.keyboard.press('e');

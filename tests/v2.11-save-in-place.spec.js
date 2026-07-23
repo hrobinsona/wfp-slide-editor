@@ -256,9 +256,7 @@ test.describe('v2.11 — save-in-place engine', () => {
   });
 
   test('no File System Access API: Cmd+S falls back to the legacy download', async ({ page }) => {
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
-    });
+    await disableFsa(page);
     await loadReady(page);
     await page.locator(exportBtnSel).click();
     await expect(page.locator(`${primarySel} .wfpe-export-menu-sub`)).toHaveText('Edits only — Downloads');

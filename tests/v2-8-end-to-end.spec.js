@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, PINNED_PRIMARIES, pickRandomRotationFixture } from './_helpers.js';
+import { loadFixtureWithEditor, PINNED_PRIMARIES, pickRandomRotationFixture, disableFsa } from './_helpers.js';
 
 // v2.8 — end-to-end gate. Walk a representative v2 user journey
 // against both pinned primary fixtures and a randomly chosen rotation
@@ -51,6 +51,11 @@ async function findTextSelector(page) {
 for (const fixture of FIXTURES_TO_RUN) {
   test.describe(`v2.8 end-to-end on ${fixture}`, () => {
     test.beforeEach(async ({ page }) => {
+      // The 'export strips the entire editor' test below clicks the
+      // save-in-place menu row and expects a download event; force the
+      // legacy fallback so it doesn't hit a real (headless, dialog-less)
+      // File System Access picker.
+      await disableFsa(page);
       await loadFixtureWithEditor(page, fixture);
       await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
       await page.keyboard.press('e');
