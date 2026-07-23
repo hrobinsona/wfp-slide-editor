@@ -172,6 +172,10 @@ test.describe('v2.10 — ink-glass instrument states', () => {
     expect(c.headerHeight).toBe(36);
     // Bar (36 + 2px borders) and folded panel (36 + 2px borders) match.
     expect(c.barBottom - 16).toBeCloseTo(38, 0);
+    // The folded body must leave the tab order, not just the paint.
+    expect(await page.evaluate(() =>
+      getComputedStyle(document.querySelector('#wfp-editor-root .wfpe-inspector-fold-inner')).visibility,
+    )).toBe('hidden');
 
     await page.click(`${ROOT} .wfpe-inspector-minimise`);
     c = await chrome(page);

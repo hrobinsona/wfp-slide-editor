@@ -1,6 +1,7 @@
 # v2 Brief — "Ink Glass" Toolbar + Inspector Refresh (design 3b)
 
-> Status: In progress on branch `worktree-ink-glass-ui`.
+> Status: Implemented — PR #10 (`worktree-ink-glass-ui`). Merge gated on a
+> full-suite run on a machine with the private fixtures.
 
 ## Context
 
