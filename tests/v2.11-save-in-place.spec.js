@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH } from './_helpers.js';
+import { EDITOR_PATH, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(path.resolve(__dirname, '..'), 'fixtures', 'foreign-deck.html');
@@ -40,12 +40,7 @@ async function addNote(page, note) {
 // no-FSA/Safari-Firefox fallback path on purpose, so they force the API away
 // — matching the "no File System Access API" test below — rather than
 // accidentally hitting the real (headless, dialog-less) picker, which
-// synchronously aborts.
-async function disableFsa(page) {
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
-  });
-}
+// synchronously aborts. See disableFsa in _helpers.js.
 
 async function readDownloadAsString(download) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });

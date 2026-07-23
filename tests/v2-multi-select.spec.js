@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -307,6 +307,10 @@ test.describe('v2.x multi-select move', () => {
   });
 
   test('mixed flow and absolute selections move together and undo in one step', async ({ page }) => {
+    // v2.11 — force the legacy download fallback; Cmd+S would otherwise
+    // prefer the save-in-place engine on real headless Chromium (file://
+    // and http://localhost both expose showSaveFilePicker).
+    await disableFsa(page);
     await setup(page);
     await commandClick(page, '[data-ms-flow]');
     await commandClick(page, '[data-ms-a]');
@@ -425,6 +429,10 @@ test.describe('v2.x multi-select move', () => {
   });
 
   test('export after group move preserves positions and strips multi-select chrome', async ({ page }) => {
+    // v2.11 — force the legacy download fallback; Cmd+S would otherwise
+    // prefer the save-in-place engine on real headless Chromium (file://
+    // and http://localhost both expose showSaveFilePicker).
+    await disableFsa(page);
     await setup(page);
     await commandClick(page, '[data-ms-a]');
     await commandClick(page, '[data-ms-b]');

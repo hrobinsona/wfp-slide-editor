@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH } from './_helpers.js';
+import { EDITOR_PATH, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -38,9 +38,7 @@ async function loadReady(page) {
   // path explicitly rather than hitting the real (headless, dialog-less)
   // picker, which synchronously aborts. See tests/v2.11-save-in-place.spec.js
   // for save-engine coverage.
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
-  });
+  await disableFsa(page);
   await page.goto(pathToFileURL(FIXTURE_PATH).href);
   await page.locator('.slide.active').first().waitFor({ state: 'attached', timeout: 10_000 });
   await page.addScriptTag({ path: EDITOR_PATH });

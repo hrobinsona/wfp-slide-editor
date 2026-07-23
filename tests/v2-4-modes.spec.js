@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor } from './_helpers.js';
+import { EDITOR_PATH, loadFixtureWithEditor, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -37,6 +37,12 @@ async function saveExportedHtml(download) {
 }
 
 async function loadDocumentWithEditor(page, fixtureName) {
+  // v2.11 — Cmd+S now prefers the save-in-place engine when the File
+  // System Access API is present (real headless Chromium has it on
+  // file:// and http://localhost origins). Every test using this helper
+  // asserts on the legacy download the editor used to always produce, so
+  // force that fallback path explicitly.
+  await disableFsa(page);
   await page.goto(`/fixtures/${fixtureName}`, { timeout: 30_000 });
   await page.addScriptTag({ path: EDITOR_PATH });
   await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -350,6 +350,10 @@ test.describe('v2 copy/paste/duplicate', () => {
   });
 
   test('export after paste includes the clone but no editor markers', async ({ page }) => {
+    // v2.11 — force the legacy download fallback; Cmd+S would otherwise
+    // prefer the save-in-place engine on real headless Chromium (file://
+    // and http://localhost both expose showSaveFilePicker).
+    await disableFsa(page);
     await loadReady(page);
 
     await page.evaluate(() => {

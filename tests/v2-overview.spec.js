@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
 
 // v2.1.0 — Activation + toolbar Overview button.
 // - Hotkey `O` toggles overview from any state (edit on or off).
@@ -1159,6 +1159,15 @@ function extractActiveSlideIdsFromHtml(html) {
 
 test.describe('v2.1.5 — Export round-trip', () => {
   test.use({ viewport: { width: 1920, height: 1080 } });
+
+  // v2.11 — Cmd+S now prefers the save-in-place engine when the File
+  // System Access API is present (real headless Chromium has it on
+  // file:// and http://localhost origins). Every test in this describe
+  // asserts on the legacy download the editor used to always produce, so
+  // force that fallback path explicitly, before each test's own navigation.
+  test.beforeEach(async ({ page }) => {
+    await disableFsa(page);
+  });
 
   test('reorder persists in the exported HTML (slides appear in the new order)', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');

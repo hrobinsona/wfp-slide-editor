@@ -2,12 +2,21 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor } from './_helpers.js';
+import { EDITOR_PATH, loadFixtureWithEditor, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
 test.use({ viewport: { width: 2000, height: 1200 } });
+
+// v2.11 — Cmd+S now prefers the save-in-place engine when the File System
+// Access API is present (real headless Chromium has it on file:// and
+// http://localhost origins). Every test in this file asserts on the legacy
+// download the editor used to always produce, so force that fallback path
+// explicitly, before each test's own navigation.
+test.beforeEach(async ({ page }) => {
+  await disableFsa(page);
+});
 
 async function setDeckScale(page, scale) {
   await page.evaluate((s) => {

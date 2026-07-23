@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { disableFsa } from './_helpers.js';
 
 // v2.10 — "Ink Glass" toolbar + inspector refresh (design 3b).
 //
@@ -305,9 +306,7 @@ test.describe('v2.10 — export stays clean', () => {
     // System Access API is present (real headless Chromium has it on
     // file:// origins). This spec is about export content cleanliness, not
     // the save engine, so force the legacy download fallback explicitly.
-    await page.addInitScript(() => {
-      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
-    });
+    await disableFsa(page);
     await loadHarness(page);
     await page.keyboard.press('e');
     await clickToSelect(page, '.s1 .headline');

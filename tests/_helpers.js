@@ -20,6 +20,15 @@ export async function loadFixtureWithEditor(page, fixtureName) {
   await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
 }
 
+// Forces the File System Access API away so Cmd+S / the export menu's
+// primary action exercises the legacy download fallback. Register BEFORE
+// the page navigates (addInitScript applies from the next navigation).
+export async function disableFsa(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+  });
+}
+
 export function pickRandomRotationFixture() {
   const all = fs.readdirSync(FIXTURES_DIR).filter((f) => f.endsWith('.html'));
   // The editor's contract (DESIGN.md) assumes a .deck wrapper around the
