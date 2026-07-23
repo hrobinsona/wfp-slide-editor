@@ -40,6 +40,12 @@ Selected-element agent notes, visible peach circular markers, undoable annotatio
 
 Feature brief: `feature-briefs/v2-agent-annotations-handoff.md`.
 
+### v2.11 Export Action Menu and Save-in-place
+
+Single Export toolbar button with an agent-annotation count badge (hidden at zero) replacing the separate Handoff button, and a two-row action menu. The primary row (Cmd/Ctrl+S, or Enter while the menu is open) writes straight over the source file on disk via the File System Access API in Chromium-based browsers, using an IndexedDB-backed file handle so only the first save per page load, and one re-grant click per reload, are needed instead of a picker every time. Safari and Firefox fall back to the v2.5 download behaviour. A secondary "Clean copy" row keeps an always-download, notes-stripped path in every browser.
+
+Feature brief: `feature-briefs/v2.11-save-in-place-export.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -52,7 +58,7 @@ Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 ### Persistence
 
-Autosave to localStorage so closing a tab does not lose edits. Key by URL plus a slide/deck hash. Must define restore UX and stale-source behaviour before implementation.
+Autosave to localStorage so closing a tab does not lose edits. Key by URL plus a slide/deck hash. Must define restore UX and stale-source behaviour before implementation. The v2.11 file-handle store (IndexedDB `wfp-editor`/`handles`, keyed by `location.href`) is a candidate foundation for this — it already solves per-URL persistence and reload rehydration — though today it holds only the bound save-file handle, not edit history or a change hash.
 
 ### Multi-select Follow-ups
 

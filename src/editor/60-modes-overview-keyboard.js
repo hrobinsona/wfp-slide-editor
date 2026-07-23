@@ -657,7 +657,7 @@
     // reference — the next mouseover will re-hydrate.
     if (state.overviewHoveredSlide === slide) state.overviewHoveredSlide = null;
     buildOverviewOverlay();
-    refreshHandoffButton();
+    refreshExportUi();
   }
 
   function getOverviewDeleteTarget() {
@@ -742,6 +742,22 @@
   }
 
   function onKeyDown(e) {
+    // v2.11 — while the export menu is open it owns Enter/Escape.
+    if (state.exportMenuOpen) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerPrimaryExport();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeExportMenu();
+        return;
+      }
+    }
+
     // While a text edit is open, only intercept Escape/Tab (commit) and
     // Cmd/Ctrl+S (commit + export). Every other key flows to the
     // contenteditable element for default behavior (typing, caret motion),
@@ -766,7 +782,7 @@
         e.preventDefault();
         e.stopPropagation();
         endTextEdit();
-        exportHTML();
+        triggerPrimaryExport();
         return;
       }
       e.stopPropagation();
@@ -916,7 +932,7 @@
     if (isMod && (e.key === 's' || e.key === 'S') && !e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
-      exportHTML();
+      triggerPrimaryExport();
       return;
     }
   }

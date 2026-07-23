@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.5)
+# Requirements: Current Product Contract (v2.11)
 
 ## Goal
 
@@ -33,7 +33,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 ### Toolbar
 
 - Fixed ink-glass toolbar mounted under `#wfp-editor-root`.
-- Controls: Edit, Overview, Export, Handoff, Undo, Redo.
+- Controls: Edit, Overview, Export, Undo, Redo.
 - Toolbar controls never become slide selection targets.
 - All editor UI is removed from exported HTML.
 
@@ -133,8 +133,21 @@ Inspector clicks must not accidentally select slide content or end inline text e
 
 ### Export
 
-- Cmd/Ctrl+S or the Export toolbar button downloads `<original-name>-edited.html`.
-- Export serializes the current live document after cleaning editor-only artifacts.
+- A single Export toolbar button carries a count badge showing the number of connected agent annotations; the badge is hidden when the count is zero.
+- Clicking Export opens a two-row action menu anchored under the toolbar. Escape or a click outside the menu closes it with no side effects.
+- Row 1 is the primary, recommended action (marked `↵` in the menu). Cmd/Ctrl+S always dispatches row 1, whether or not the menu is open; Enter dispatches row 1 while the menu is open.
+  - With one or more agent annotations: label "Annotated handoff", sublabel "Includes N agent note(s)". The action content is the handoff HTML pipeline (cleanup pass plus handoff metadata).
+  - With zero agent annotations: label "Save", sublabel "Edits only". The action content is the clean HTML pipeline (no annotation metadata).
+  - Row 1 is never disabled — the zero-annotation state degrades to a plain save instead of being blocked.
+- In browsers that implement the File System Access API (current Chrome, Edge, Arc), row 1 writes the chosen content over a file on disk instead of downloading it:
+  - No file bound yet: a native save-file picker opens, suggesting the deck's own filename; whichever file the user picks becomes the bound file for the rest of the session.
+  - A file is already bound: the write happens silently, with no dialog.
+  - The bound file is remembered across a page reload; the next save after a reload costs one click to re-grant file access, not a fresh picker.
+  - If the bound file becomes unwritable (moved, renamed, or deleted), the editor drops it and reopens the picker within the same action, retrying the write once.
+  - Cancelling the picker performs no write and shows a "Save cancelled." toast.
+  - A successful save toasts the actual written filename, e.g. "Saved deck.html" or "Saved deck.html — 3 agent notes".
+- In browsers without the File System Access API (Safari, Firefox), row 1 downloads instead of writing to disk: zero notes downloads `<original-name>-edited.html`; one or more notes downloads `<original-name>-agent-handoff.html` — the same destinations as the prior release. Row 1's sublabel is suffixed " — Downloads" in this mode so the destination is never a surprise.
+- Row 2 ("Clean copy") always downloads `<original-name>-edited.html` from the clean pipeline, in every browser, regardless of annotation count or File System Access availability. Its sublabel reads "Edits only — notes stripped" when annotations exist, or "Download a copy" when there are none.
 - Export must preserve:
   - DOCTYPE, head, scripts, styles, and unchanged slide content.
   - Element style and text edits.
@@ -156,8 +169,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Live annotation markers use `data-wfp-edit-annotation-id` and `data-wfp-edit-annotation-text`.
 - Saved annotations show an editor-only peach circular marker on the target element while edit mode is on.
 - The Agent note row makes saved vs unsaved draft state visible.
-- The Handoff toolbar button is disabled when no connected annotations exist.
-- The Handoff toolbar button downloads `<original-name>-agent-handoff.html`.
+- Annotation count drives the Export button's badge and the Export menu's row-1 label/sublabel (see `### Export`); there is no separate Handoff control.
 - Handoff export uses the normal cleanup pipeline, then intentionally adds:
   - `data-wfp-agent-annotation-id` markers on annotated targets.
   - `script[type="application/json"][data-wfp-agent-annotations]` metadata.

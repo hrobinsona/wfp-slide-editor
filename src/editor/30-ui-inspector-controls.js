@@ -135,9 +135,14 @@
   const overviewBtn = makeToolbarButton('overview', 'Overview', 'Overview (O)', 'overview');
   overviewBtn.dataset.mode = 'off';
   const exportBtn = makeToolbarButton('export', 'Export', 'Export (Cmd/Ctrl+S)', 'export');
-  const handoffBtn = makeToolbarButton('handoff', 'Handoff', 'Add an Agent note to enable handoff export', 'handoff');
-  handoffBtn.disabled = true;
-  handoffBtn.setAttribute('aria-disabled', 'true');
+  // v2.11 — annotation-count badge; hidden at zero via CSS [data-count="0"].
+  const exportBadge = document.createElement('span');
+  exportBadge.className = 'wfpe-export-badge';
+  exportBadge.dataset.count = '0';
+  exportBadge.setAttribute('aria-hidden', 'true');
+  exportBtn.appendChild(exportBadge);
+  exportBtn.setAttribute('aria-haspopup', 'menu');
+  exportBtn.setAttribute('aria-expanded', 'false');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
 
@@ -152,7 +157,6 @@
   toolbarFold.appendChild(toolbarFoldInner);
   toolbarFoldInner.appendChild(overviewBtn);
   toolbarFoldInner.appendChild(exportBtn);
-  toolbarFoldInner.appendChild(handoffBtn);
   toolbarFoldInner.appendChild(undoBtn);
   toolbarFoldInner.appendChild(redoBtn);
   const toolbarDivider = document.createElement('div');
@@ -178,6 +182,37 @@
   }
 
   root.appendChild(toolbar);
+
+  // v2.11 — export action menu (design 4b). Fixed-position flyout under the
+  // toolbar; opened by the Export button. Row 1 is the primary save action
+  // (Enter / Cmd+S), row 2 is the legacy clean-copy download.
+  const exportMenu = document.createElement('div');
+  exportMenu.className = 'wfpe-export-menu';
+  exportMenu.dataset.open = 'false';
+  exportMenu.setAttribute('role', 'menu');
+  function makeExportMenuItem(action, iconKey) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wfpe-export-menu-item';
+    b.dataset.action = action;
+    b.setAttribute('role', 'menuitem');
+    b.innerHTML =
+      `<span class="wfpe-export-menu-chip">${ICONS[iconKey]}</span>` +
+      '<span class="wfpe-export-menu-text">' +
+      '<span class="wfpe-export-menu-label"></span>' +
+      '<span class="wfpe-export-menu-sub"></span>' +
+      '</span>';
+    return b;
+  }
+  const exportPrimaryItem = makeExportMenuItem('save-in-place', 'handoff');
+  const exportHintEl = document.createElement('span');
+  exportHintEl.className = 'wfpe-export-menu-hint';
+  exportHintEl.textContent = '↵';
+  exportPrimaryItem.appendChild(exportHintEl);
+  const exportCleanItem = makeExportMenuItem('clean-copy', 'export');
+  exportMenu.appendChild(exportPrimaryItem);
+  exportMenu.appendChild(exportCleanItem);
+  root.appendChild(exportMenu);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -648,15 +683,62 @@
     e.preventDefault();
     redo();
   });
+  // v2.11 — export action menu (design 4b). Popup opened by the Export
+  // button; row 1 is the primary save action (Enter / Cmd+S), row 2 is the
+  // legacy clean-copy download.
+  function openExportMenu() {
+    state.exportMenuOpen = true;
+    const r = toolbar.getBoundingClientRect();
+    exportMenu.style.top = `${r.bottom + 6}px`;
+    exportMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    exportMenu.dataset.open = 'true';
+    exportBtn.setAttribute('aria-expanded', 'true');
+    refreshExportUi();
+  }
+  function closeExportMenu() {
+    state.exportMenuOpen = false;
+    exportMenu.dataset.open = 'false';
+    exportBtn.setAttribute('aria-expanded', 'false');
+  }
+  // Single dispatcher for menu row 1, Enter-while-open, and Cmd/Ctrl+S.
+  // Task 2: save-in-place is primary; legacy download is the Safari/Firefox
+  // fallback when the File System Access API isn't available. saveInPlace()
+  // is deliberately not awaited here — this fires from a click/keydown
+  // handler and must call the native picker within the same user gesture.
+  function triggerPrimaryExport() {
+    closeExportMenu();
+    if (!canSaveInPlace()) {
+      // Safari/Firefox fallback — v2.5 download behaviour.
+      if (getAnnotatedElements(document).length > 0) exportHandoffHTML();
+      else exportHTML();
+      return;
+    }
+    saveInPlace();
+  }
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    if (state.exportMenuOpen) closeExportMenu();
+    else openExportMenu();
+  });
+  exportPrimaryItem.addEventListener('click', (e) => {
+    e.preventDefault();
+    triggerPrimaryExport();
+  });
+  exportCleanItem.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeExportMenu();
     exportHTML();
   });
-  handoffBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    if (handoffBtn.disabled) return;
-    exportHandoffHTML();
-  });
+  // Click-away (capture so host-page handlers can't swallow it first).
+  document.addEventListener(
+    'mousedown',
+    (e) => {
+      if (!state.exportMenuOpen) return;
+      if (exportMenu.contains(e.target) || exportBtn.contains(e.target)) return;
+      closeExportMenu();
+    },
+    true,
+  );
   overviewBtn.addEventListener('click', (e) => {
     e.preventDefault();
     if (isFlatMode()) return;
@@ -945,4 +1027,4 @@
   });
   applyModeFeatureGating();
   reimportHandoffAnnotations();
-  refreshHandoffButton();
+  refreshExportUi();

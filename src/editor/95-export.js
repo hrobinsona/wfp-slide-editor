@@ -1,4 +1,158 @@
   // ===========================================================================
+  // Save-in-place engine (v2.11)
+  //
+  // Chromium-only File System Access path. First save binds a file handle
+  // via the native picker (the one interaction Chrome's security model
+  // requires); subsequent saves write silently. The handle is persisted to
+  // IndexedDB keyed by the page URL so a reload only costs a one-click
+  // permission re-grant instead of a fresh picker. Storage failures are
+  // swallowed: persistence is an optimisation, never a gate on saving.
+  // ===========================================================================
+  const HANDLE_DB_NAME = 'wfp-editor';
+  const HANDLE_STORE_NAME = 'handles';
+  let boundFileHandle = null;
+  // Captured once at init so saveInPlace() can await the same in-flight
+  // rehydration instead of racing it (see the Ready block below).
+  let handleRehydration = null;
+
+  function canSaveInPlace() {
+    return typeof window.showSaveFilePicker === 'function';
+  }
+
+  function deriveSourceFilename() {
+    return deriveExportFilename('');
+  }
+
+  function openHandleDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(HANDLE_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(HANDLE_STORE_NAME);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function loadStoredHandle() {
+    try {
+      const db = await openHandleDb();
+      const result = await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
+        const req = tx.objectStore(HANDLE_STORE_NAME).get(location.href);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+      db.close(); // release the connection once the round-trip settles
+      return result;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function storeBoundHandle(handle) {
+    try {
+      const db = await openHandleDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+        tx.objectStore(HANDLE_STORE_NAME).put(handle, location.href);
+        tx.oncomplete = resolve;
+        tx.onabort = resolve;
+        tx.onerror = resolve;
+      });
+      db.close(); // release the connection once the round-trip settles
+    } catch (_) {
+      /* persistence is best-effort */
+    }
+  }
+
+  async function forgetBoundHandle() {
+    boundFileHandle = null;
+    try {
+      const db = await openHandleDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+        tx.objectStore(HANDLE_STORE_NAME).delete(location.href);
+        tx.oncomplete = resolve;
+        tx.onabort = resolve;
+        tx.onerror = resolve;
+      });
+      db.close(); // release the connection once the round-trip settles
+    } catch (_) {
+      /* best-effort */
+    }
+  }
+
+  async function ensureHandleWritable(handle) {
+    try {
+      if (typeof handle.queryPermission === 'function') {
+        if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+        if (typeof handle.requestPermission === 'function') {
+          return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+        }
+      }
+      return true; // no permission API on this handle — let the write decide
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function writeHtmlToHandle(handle, html) {
+    const writable = await handle.createWritable();
+    await writable.write(html);
+    await writable.close();
+  }
+
+  async function pickSourceHandle() {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: deriveSourceFilename(),
+      types: [{ description: 'HTML document', accept: { 'text/html': ['.html', '.htm'] } }],
+    });
+    boundFileHandle = handle;
+    await storeBoundHandle(handle);
+    return handle;
+  }
+
+  async function saveInPlace() {
+    if (state.editingText) endTextEdit();
+    const noteCount = getAnnotatedElements(document).length;
+    const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
+    try {
+      // A save fired right after ready can race the still-in-flight
+      // rehydration; wait for it so we reuse the stored handle instead of
+      // opening a needless fresh picker.
+      if (!boundFileHandle && handleRehydration) await handleRehydration;
+      let handle = boundFileHandle;
+      if (!handle) {
+        handle = await pickSourceHandle();
+      } else if (!(await ensureHandleWritable(handle))) {
+        showToast(document.body, 'Save cancelled — file access not granted.');
+        return;
+      }
+      try {
+        await writeHtmlToHandle(handle, html);
+      } catch (err) {
+        // Stale handle (file moved/renamed/deleted): drop it and re-pick
+        // within the same user gesture, then retry once.
+        await forgetBoundHandle();
+        handle = await pickSourceHandle();
+        await writeHtmlToHandle(handle, html);
+      }
+      showToast(
+        document.body,
+        noteCount > 0
+          ? `Saved ${handle.name} — ${noteCount} agent note${noteCount === 1 ? '' : 's'}`
+          : `Saved ${handle.name}`,
+      );
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        showToast(document.body, 'Save cancelled.');
+        return;
+      }
+      showToast(document.body, `Save failed (${(err && err.name) || 'unknown'}) — try Export → Clean copy.`);
+    }
+  }
+  // ===========================================================================
   // Export
   //
   // Clone the live DOM, strip everything the editor injected (root + script
@@ -293,7 +447,7 @@
 
     const annotations = getAnnotatedElements(document);
     if (!annotations.length) {
-      refreshHandoffButton();
+      refreshExportUi();
       return;
     }
     const filename = deriveExportFilename('-agent-handoff');

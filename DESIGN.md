@@ -169,6 +169,40 @@ Normal export remains the production-clean artifact and strips all `data-wfp-edi
 
 The handoff layer is structured metadata, not a hidden prompt. When the editor is injected into a handoff export, matching `data-wfp-agent-annotation-id` targets are rehydrated back into live `data-wfp-edit-annotation-*` attributes and stale unmatched metadata is ignored.
 
+## Save-in-place (v2.11)
+
+**Decision:** Export's primary action writes over the source file on disk via the File System Access API (`showSaveFilePicker` / `FileSystemFileHandle`), rather than only ever downloading a new file.
+
+Alternatives considered:
+
+- A dev-server write endpoint (`localhost` PUT). Rejected — the target workflow is local `file://` decks with no server involved.
+- Download-only export. Rejected as the primary path — the download loop (Cmd+S → `~/Downloads` → manually move/re-upload so an agent can see the edit) was the actual pain point motivating this feature. It stays live as the Safari/Firefox fallback and as the always-download "Clean copy" menu row.
+
+### Handle lifecycle
+
+A `FileSystemFileHandle` is the editor's only reference to the on-disk save target. Its lifecycle:
+
+1. **Bind via the picker.** The first save in a session with no bound handle calls `showSaveFilePicker` directly from the click/keydown handler. Whatever file the user picks — typically the source file, but a new name is an intentional free "save as" branch — becomes the bound handle: held in memory (`boundFileHandle`) and persisted to IndexedDB (database `wfp-editor`, object store `handles`, keyed by `location.href`).
+2. **Reuse in memory.** Every later save in the same session writes to the in-memory handle silently: `queryPermission` → (`requestPermission` if needed) → `createWritable` → `write` → `close`, no dialog.
+3. **Rehydration-await on first save after reload.** On load, if the FSA API is present, the editor kicks off an async IndexedDB lookup (`loadStoredHandle`) for a handle keyed by the current URL and stashes it in `boundFileHandle` once found. That lookup is async, and a save can fire before it resolves, so `saveInPlace()` captures the lookup promise (`handleRehydration`) and awaits it — but only when no handle is bound yet — so an early save reuses the rehydrated handle instead of racing it into a redundant fresh picker.
+4. **Re-grant on reload.** A rehydrated handle has lost its write permission across the reload — the browser's security floor, not a bug. `ensureHandleWritable` calls `queryPermission` and, if the result isn't `'granted'`, `requestPermission` — one click, no new picker.
+5. **Forget-and-repick on stale.** If a write throws (the bound file was moved, renamed, or deleted), the editor drops the handle from memory and IndexedDB (`forgetBoundHandle`) and calls `showSaveFilePicker` again within the same gesture, retrying the write once. A second failure surfaces a toast instead of looping.
+6. **Cancel.** An `AbortError` from `showSaveFilePicker` (the user closed the dialog) leaves all state untouched and shows "Save cancelled." — no handle churn, no write.
+
+### The user-gesture constraint
+
+`showSaveFilePicker` only works while the browser still considers the current event a live user gesture (transient activation). The call path from click/keydown to `showSaveFilePicker` must therefore not contain an unrelated `await` first — any intervening microtask/macrotask can burn the activation window and turn the picker call into a silent rejection. `saveInPlace()` is deliberately not awaited by its own click/keydown handler for the same reason: it must run synchronously up to the picker/write call within that turn.
+
+The one sanctioned exception is the `handleRehydration` await from Decision 3 above: it resolves on a millisecond timescale (a same-origin IndexedDB read against a tiny store), and it only runs at all when no handle is already bound. It is intentionally the single await allowed to stand between "user pressed Cmd+S" and "the picker/write call fires" — no other async work belongs in that path.
+
+### Why storage failures are swallowed
+
+`loadStoredHandle`, `storeBoundHandle`, and `forgetBoundHandle` each wrap their IndexedDB calls in `try/catch` and resolve or return quietly on failure — a full `indexedDB.open` failure, a blocked version upgrade, a private-browsing quota wall, and similar cases all degrade the same way. Persistence is an optimisation — it turns a would-be picker into a one-click re-grant — and must never be a gate: when the browser cannot store or retrieve the handle, `saveInPlace()` still writes correctly, by falling through to a fresh `showSaveFilePicker` call on the next save. A user should never see a save fail because `indexedDB.open` failed.
+
+### Fallback
+
+Feature-detected once via `canSaveInPlace()` (`typeof window.showSaveFilePicker === 'function'`). Safari and Firefox lack the API entirely, so row 1 downgrades to the download behaviour Export already had (`<name>-edited.html` / `<name>-agent-handoff.html`) — no handle, no IndexedDB, no user-gesture care beyond what a normal download already requires. The distinction is surfaced to the user only through the menu sublabel (" — Downloads"), not through different content: both paths reuse the same `buildExportHtml`/`buildHandoffExportHtml` pipelines described above.
+
 ## Inline-style Merging
 
 Many slide elements already carry inline styles for animation and layout. Editor writes must use DOM style APIs:
@@ -220,7 +254,7 @@ Current internal sections include:
 7. History.
 8. Text edit.
 9. Overview.
-10. Export.
+10. Export (clean/handoff pipelines, action menu, save-in-place engine).
 11. Bookmarklet/runtime initialization.
 
 The next refactor should clarify these boundaries. It may first do that within the single file using stronger section APIs, then consider physical source splitting if that can be done without making deployment fragile.

@@ -17,6 +17,7 @@
  * v2.1:    Overview mode for slide reorder/delete.
  * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
  * v2.5:    agent handoff annotations with explicit handoff export.
+ * v2.11:   export action menu; save-in-place via File System Access.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -24,7 +25,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.5.0';
+  const VERSION = '2.11.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;

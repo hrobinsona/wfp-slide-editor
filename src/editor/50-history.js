@@ -239,7 +239,7 @@
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
     refreshSelection();
-    refreshHandoffButton();
+    refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
   }
 
@@ -254,6 +254,6 @@
     }
     state.historyIndex++;
     refreshSelection();
-    refreshHandoffButton();
+    refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
   }

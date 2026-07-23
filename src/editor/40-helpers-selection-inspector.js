@@ -392,7 +392,7 @@
     }
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
-    refreshHandoffButton();
+    refreshExportUi();
     showToast(el, nextText ? 'Agent note saved.' : 'Agent note deleted.');
     return true;
   }
@@ -406,7 +406,7 @@
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
-    refreshHandoffButton();
+    refreshExportUi();
     showToast(el, 'Agent note deleted.');
     return true;
   }
@@ -436,14 +436,26 @@
     updateAnnotationDraftStatus(el);
   }
 
-  function refreshHandoffButton() {
-    if (!handoffBtn) return;
-    const enabled = getAnnotatedElements(document).length > 0;
-    handoffBtn.disabled = !enabled;
-    handoffBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-    handoffBtn.title = enabled
-      ? 'Export agent handoff HTML'
-      : 'Add an Agent note to enable handoff export';
+  function refreshExportUi() {
+    const count = getAnnotatedElements(document).length;
+    exportBadge.dataset.count = String(count);
+    exportBadge.textContent = count > 0 ? String(count) : '';
+    const label = exportPrimaryItem.querySelector('.wfpe-export-menu-label');
+    const sub = exportPrimaryItem.querySelector('.wfpe-export-menu-sub');
+    if (count > 0) {
+      label.textContent = 'Annotated handoff';
+      sub.textContent = `Includes ${count} agent note${count === 1 ? '' : 's'}`;
+    } else {
+      label.textContent = 'Save';
+      sub.textContent = 'Edits only';
+    }
+    if (!canSaveInPlace()) {
+      sub.textContent += ' — Downloads';
+    }
+    const cleanLabel = exportCleanItem.querySelector('.wfpe-export-menu-label');
+    const cleanSub = exportCleanItem.querySelector('.wfpe-export-menu-sub');
+    cleanLabel.textContent = 'Clean copy';
+    cleanSub.textContent = count > 0 ? 'Edits only — notes stripped' : 'Download a copy';
     refreshAnnotationMarkers();
   }
 
@@ -1187,7 +1199,7 @@
       'aria-label',
       state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
     );
-    refreshHandoffButton();
+    refreshExportUi();
   }
 
   function setInspectorMinimised(value) {
