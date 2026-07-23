@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.3: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, and v2.3 move-only multi-select are all in `editor.js`.
+The shipped editor is v2.11: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, and the v2.11 export action menu with save-in-place are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -187,7 +187,7 @@ A `FileSystemFileHandle` is the editor's only reference to the on-disk save targ
 3. **Rehydration-await on first save after reload.** On load, if the FSA API is present, the editor kicks off an async IndexedDB lookup (`loadStoredHandle`) for a handle keyed by the current URL and stashes it in `boundFileHandle` once found. That lookup is async, and a save can fire before it resolves, so `saveInPlace()` captures the lookup promise (`handleRehydration`) and awaits it — but only when no handle is bound yet — so an early save reuses the rehydrated handle instead of racing it into a redundant fresh picker.
 4. **Re-grant on reload.** A rehydrated handle has lost its write permission across the reload — the browser's security floor, not a bug. `ensureHandleWritable` calls `queryPermission` and, if the result isn't `'granted'`, `requestPermission` — one click, no new picker.
 5. **Forget-and-repick on stale.** If a write throws (the bound file was moved, renamed, or deleted), the editor drops the handle from memory and IndexedDB (`forgetBoundHandle`) and calls `showSaveFilePicker` again within the same gesture, retrying the write once. A second failure surfaces a toast instead of looping.
-6. **Cancel.** An `AbortError` from `showSaveFilePicker` (the user closed the dialog) leaves all state untouched and shows "Save cancelled." — no handle churn, no write.
+6. **Cancel.** An `AbortError` from `showSaveFilePicker` (the user closed the dialog) performs no write and shows "Save cancelled.". A first-save or reload-path cancel leaves all state untouched; cancelling the *retry* picker of a forget-and-repick does not restore the already-forgotten stale handle — the next save starts from the picker, which is the desired outcome for a handle known to be bad.
 
 ### The user-gesture constraint
 

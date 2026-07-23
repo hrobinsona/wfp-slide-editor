@@ -142,7 +142,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - In browsers that implement the File System Access API (current Chrome, Edge, Arc), row 1 writes the chosen content over a file on disk instead of downloading it:
   - No file bound yet: a native save-file picker opens, suggesting the deck's own filename; whichever file the user picks becomes the bound file for the rest of the session.
   - A file is already bound: the write happens silently, with no dialog.
-  - The bound file is remembered across a page reload; the next save after a reload costs one click to re-grant file access, not a fresh picker.
+  - The bound file is remembered across a page reload; the next save after a reload costs one click to re-grant file access, not a fresh picker. Declining the re-grant performs no write and shows "Save cancelled — file access not granted.".
   - If the bound file becomes unwritable (moved, renamed, or deleted), the editor drops it and reopens the picker within the same action, retrying the write once.
   - Cancelling the picker performs no write and shows a "Save cancelled." toast.
   - A successful save toasts the actual written filename, e.g. "Saved deck.html" or "Saved deck.html — 3 agent notes".
