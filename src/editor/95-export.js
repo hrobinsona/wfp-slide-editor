@@ -37,14 +37,17 @@
   async function loadStoredHandle() {
     try {
       const db = await openHandleDb();
-      const result = await new Promise((resolve) => {
-        const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
-        const req = tx.objectStore(HANDLE_STORE_NAME).get(location.href);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
-      });
-      db.close(); // release the connection once the round-trip settles
-      return result;
+      try {
+        const result = await new Promise((resolve) => {
+          const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
+          const req = tx.objectStore(HANDLE_STORE_NAME).get(location.href);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+        return result;
+      } finally {
+        db.close(); // release the connection even if the round-trip threw
+      }
     } catch (_) {
       return null;
     }
@@ -53,14 +56,17 @@
   async function storeBoundHandle(handle) {
     try {
       const db = await openHandleDb();
-      await new Promise((resolve) => {
-        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
-        tx.objectStore(HANDLE_STORE_NAME).put(handle, location.href);
-        tx.oncomplete = resolve;
-        tx.onabort = resolve;
-        tx.onerror = resolve;
-      });
-      db.close(); // release the connection once the round-trip settles
+      try {
+        await new Promise((resolve) => {
+          const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+          tx.objectStore(HANDLE_STORE_NAME).put(handle, location.href);
+          tx.oncomplete = resolve;
+          tx.onabort = resolve;
+          tx.onerror = resolve;
+        });
+      } finally {
+        db.close(); // release the connection even if the round-trip threw
+      }
     } catch (_) {
       /* persistence is best-effort */
     }
@@ -70,14 +76,17 @@
     boundFileHandle = null;
     try {
       const db = await openHandleDb();
-      await new Promise((resolve) => {
-        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
-        tx.objectStore(HANDLE_STORE_NAME).delete(location.href);
-        tx.oncomplete = resolve;
-        tx.onabort = resolve;
-        tx.onerror = resolve;
-      });
-      db.close(); // release the connection once the round-trip settles
+      try {
+        await new Promise((resolve) => {
+          const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+          tx.objectStore(HANDLE_STORE_NAME).delete(location.href);
+          tx.oncomplete = resolve;
+          tx.onabort = resolve;
+          tx.onerror = resolve;
+        });
+      } finally {
+        db.close(); // release the connection even if the round-trip threw
+      }
     } catch (_) {
       /* best-effort */
     }

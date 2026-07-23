@@ -61,7 +61,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       await page.keyboard.press('e');
     });
 
-    test('toolbar renders Edit/Overview/Export/Handoff/Undo/Redo with v2 liquid-glass recipe', async ({ page }) => {
+    test('toolbar renders Edit/Overview/Export/Undo/Redo with v2 liquid-glass recipe', async ({ page }) => {
       const out = await page.evaluate(() => {
         const tb = document.querySelector('#wfp-editor-root .wfpe-toolbar');
         return {

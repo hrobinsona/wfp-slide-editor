@@ -55,7 +55,7 @@ async function readDownloadAsString(download) {
 // AbortError), 'stale-once' (first createWritable throws NotFoundError).
 async function installFsaStub(page) {
   await page.addInitScript(() => {
-    window.__fsa = { pickerCalls: [], written: [], mode: 'ok', permission: 'granted', requestCalls: 0, staleUsed: false };
+    window.__fsa = { pickerCalls: [], written: [], mode: 'ok', permission: 'granted', requestCalls: 0, staleUsed: false, denyRegrant: false };
     window.showSaveFilePicker = async (opts) => {
       window.__fsa.pickerCalls.push((opts && opts.suggestedName) || null);
       if (window.__fsa.mode === 'abort') {
@@ -68,6 +68,7 @@ async function installFsaStub(page) {
         queryPermission: async () => window.__fsa.permission,
         requestPermission: async () => {
           window.__fsa.requestCalls += 1;
+          if (window.__fsa.denyRegrant) return 'denied';
           window.__fsa.permission = 'granted';
           return 'granted';
         },
@@ -148,6 +149,22 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
 
     expect(download.suggestedFilename()).toBe('foreign-deck-edited.html');
     await expect(page.locator(menuSel)).toHaveAttribute('data-open', 'false');
+  });
+
+  test('Enter yields to a keyboard-focused clean-copy row instead of hijacking it', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+
+    await page.click(exportBtnSel);
+    await expect(page.locator(menuSel)).toHaveAttribute('data-open', 'true');
+    await page.locator(cleanSel).focus();
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
+    await page.keyboard.press('Enter');
+    const download = await downloadPromise;
+
+    expect(download.suggestedFilename()).toBe('foreign-deck-edited.html');
+    expect(await page.evaluate(() => window.__fsa.written.length)).toBe(0);
   });
 
   test('Cmd+S dispatches primary without opening the menu', async ({ page }) => {
@@ -242,6 +259,18 @@ test.describe('v2.11 — save-in-place engine', () => {
     const fsa = await page.evaluate(() => window.__fsa);
     expect(fsa.requestCalls).toBe(1);
     expect(fsa.pickerCalls.length).toBe(1);
+  });
+
+  test('denied re-grant cancels the save instead of silently re-picking', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    await page.evaluate(() => { window.__fsa.permission = 'prompt'; window.__fsa.denyRegrant = true; });
+    await page.keyboard.press('Meta+s');
+    await expect(page.locator('#wfp-editor-root .wfpe-toast').last()).toHaveText('Save cancelled — file access not granted.');
+    expect(await page.evaluate(() => window.__fsa.written.length)).toBe(1);
+    expect(await page.evaluate(() => window.__fsa.pickerCalls.length)).toBe(1);
   });
 
   test('stale handle re-opens the picker and retries the write', async ({ page }) => {

@@ -745,6 +745,9 @@
     // v2.11 — while the export menu is open it owns Enter/Escape.
     if (state.exportMenuOpen) {
       if (e.key === 'Enter') {
+        // A menu row focused via keyboard owns Enter — let its native
+        // activation (click) fire instead of hijacking it for row 1.
+        if (exportMenu.contains(document.activeElement)) return;
         e.preventDefault();
         e.stopPropagation();
         triggerPrimaryExport();
