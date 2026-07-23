@@ -467,8 +467,12 @@ test.describe('v2.6 — inspector during inline text edit', () => {
     expect(
       await page.evaluate(() => document.querySelector('.wfpe-inspector').dataset.visible)
     ).toBe('true');
+    // Ink-glass 3b: visibility is driven by the dock fold, not display.
     expect(
-      await page.evaluate(() => getComputedStyle(document.querySelector('.wfpe-inspector')).display)
-    ).not.toBe('none');
+      await page.evaluate(() => getComputedStyle(document.querySelector('.wfpe-inspector')).visibility)
+    ).toBe('visible');
+    expect(
+      await page.evaluate(() => document.querySelector('.wfpe-inspector-dock').dataset.visible)
+    ).toBe('true');
   });
 });

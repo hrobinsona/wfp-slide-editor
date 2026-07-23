@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WFP Editor Dev Harness</title>
+<!--
+  Dev-only harness for iterating on editor chrome without re-bookmarking.
+  Mirrors the WFP deck contract the editor targets:
+    - .deck wrapper with transform: scale()
+    - only .slide.active visible
+    - document-level keydown slide navigation
+  Content is synthetic. Serve via `npm run dev` → http://localhost:8080/dev/harness.html
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1d24; overflow: hidden; }
+  .deck {
+    width: 1280px;
+    height: 720px;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.85);
+    transform-origin: center center;
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    overflow: hidden;
+    border-radius: 8px;
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+  .slide.active { display: block; }
+
+  /* Slide 1 — light, busy top-right corner to stress the glass */
+  .s1 { background: linear-gradient(135deg, #f6f1e7 0%, #ffd9a0 45%, #ff9d6c 100%); color: #2a2118; }
+  .s1 .headline { position: absolute; top: 120px; left: 90px; width: 640px; font-size: 64px; line-height: 1.08; margin: 0; }
+  .s1 .standfirst { position: absolute; top: 330px; left: 92px; width: 520px; font-size: 22px; line-height: 1.5; color: #5a4a38; }
+  .s1 .stat-card {
+    position: absolute; right: 110px; bottom: 110px; width: 300px; padding: 28px 32px;
+    background: rgba(255,255,255,0.75); border-radius: 14px; box-shadow: 0 12px 30px rgba(90,60,20,0.18);
+  }
+  .s1 .stat-card .figure { font-size: 52px; margin: 0; }
+  .s1 .stat-card .caption { font-size: 15px; margin: 8px 0 0; color: #6b5942; }
+  .s1 .corner-noise {
+    position: absolute; top: 0; right: 0; width: 420px; height: 300px;
+    background:
+      radial-gradient(140px 140px at 85% 15%, #7a3df0 0%, transparent 70%),
+      radial-gradient(180px 180px at 60% 60%, #0ea5b7 0%, transparent 70%),
+      radial-gradient(120px 120px at 30% 20%, #f43f5e 0%, transparent 70%);
+    opacity: 0.85;
+  }
+
+  /* Slide 2 — dark, flow-layout content */
+  .s2 { background: #10141c; color: #edf2f7; padding: 80px 90px; box-sizing: border-box; }
+  .s2 h2 { font-size: 44px; margin: 0 0 28px; }
+  .s2 .cols { display: flex; gap: 32px; }
+  .s2 .col { flex: 1; background: #1b222e; border-radius: 12px; padding: 26px 28px; }
+  .s2 .col h3 { font-size: 20px; margin: 0 0 12px; color: #93c5fd; }
+  .s2 .col p { font-size: 15px; line-height: 1.55; margin: 0; color: #b8c2cf; }
+
+  /* Slide 3 — mid-tone with an image-ish block */
+  .s3 { background: linear-gradient(180deg, #24303f 0%, #3b4a5c 100%); color: #f4f6f8; }
+  .s3 .kicker { position: absolute; top: 90px; left: 90px; font-size: 15px; letter-spacing: 0.2em; text-transform: uppercase; color: #9fb3c8; }
+  .s3 .title { position: absolute; top: 130px; left: 88px; width: 560px; font-size: 54px; margin: 0; }
+  .s3 .photo {
+    position: absolute; right: 90px; top: 120px; width: 380px; height: 460px; border-radius: 16px;
+    background:
+      linear-gradient(200deg, rgba(255,255,255,0.16) 0%, transparent 40%),
+      repeating-linear-gradient(45deg, #5b7189 0 26px, #4c6076 26px 52px);
+  }
+  .s3 .quote { position: absolute; left: 90px; bottom: 120px; width: 480px; font-size: 24px; font-style: italic; line-height: 1.45; color: #dbe4ec; }
+
+  .hud {
+    position: fixed; left: 14px; bottom: 12px; z-index: 10;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: rgba(255,255,255,0.55); user-select: none;
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+  <section class="slide s1 active">
+    <div class="corner-noise"></div>
+    <h1 class="headline">Quarterly narrative goes right here</h1>
+    <p class="standfirst">A synthetic standfirst paragraph with enough length to exercise text selection, inline editing, and the typography controls.</p>
+    <div class="stat-card">
+      <p class="figure">42%</p>
+      <p class="caption">of placeholder metrics improved this quarter</p>
+    </div>
+  </section>
+  <section class="slide s2">
+    <h2>Three flow-layout columns</h2>
+    <div class="cols">
+      <div class="col"><h3>Alpha</h3><p>Flow content that requires unlock-to-absolute when dragged. Useful for flex-freeze checks.</p></div>
+      <div class="col"><h3>Beta</h3><p>Second column with slightly longer synthetic copy to create uneven natural heights between siblings.</p></div>
+      <div class="col"><h3>Gamma</h3><p>Third column.</p></div>
+    </div>
+  </section>
+  <section class="slide s3">
+    <span class="kicker">Section marker</span>
+    <h2 class="title">A mid-tone slide with an image block</h2>
+    <div class="photo"></div>
+    <p class="quote">"A pull quote long enough to test alignment switches and weight changes at display sizes."</p>
+  </section>
+</div>
+<div class="hud">← / → slides · E edit · O overview — dev harness, synthetic content</div>
+<script>
+  // Mirrors WFP decks' document-level keydown nav (the editor must suppress
+  // this in capture phase while edit/overview modes own the keys).
+  (function () {
+    var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+    var i = 0;
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      slides[i].classList.remove('active');
+      i = (i + (e.key === 'ArrowRight' ? 1 : slides.length - 1)) % slides.length;
+      slides[i].classList.add('active');
+    });
+  })();
+</script>
+<script src="../editor.js"></script>
+</body>
+</html>

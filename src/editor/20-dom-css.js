@@ -12,198 +12,265 @@
 
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    /* ----- Liquid glass surface (toolbar; inspector reuses these tokens
-       in v2.1+). Light variant by default; dark variant via prefers-
-       color-scheme. Recipe values come from feature-briefs/v2-inspector.md. ----- */
+    /* ----- Ink Glass instrument (design 3b, July 2026). One dark-glass
+       surface in the top-right corner made of two segments — a 36px
+       icon-only toolbar and a 246px inspector docked beneath it —
+       separated by a 1px seam. Dark-tinted ("ink") glass keeps white
+       type readable over any host page, so there are deliberately no
+       prefers-color-scheme variants for the instrument.
+
+       Tokens (from the designer handoff wfpe-glass.css):
+       glass bg      linear-gradient(rgba(255,255,255,0.10),rgba(255,255,255,0.03)),
+                     rgba(22,25,31,0.32)
+       glass filter  blur(24px) saturate(170%)
+       glass border  1px solid rgba(255,255,255,0.22)
+       bar shadow    0 8px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.25)
+       panel shadow  inset 0 1px 0 rgba(255,255,255,0.25) — no outer drop;
+                     it would get clipped by the dock fold wrapper and
+                     smudge the corners. Depth comes from the bar.
+       field bg      rgba(9,11,16,0.32); border rgba(255,255,255,0.12)
+       radii         bar/panel 12px · docked corners 6px · buttons 8-9px · fields 7px
+       ease          cubic-bezier(0.32, 0.72, 0, 1)
+       durations     340ms toolbar collapse · 380ms dock/fold + corner morph ----- */
     #${ROOT_ID} .wfpe-toolbar {
       position: fixed;
       top: 16px;
       right: 16px;
+      width: 246px;              /* collapsed: 58px via [data-collapsed] */
+      box-sizing: border-box;
       pointer-events: none;
       display: flex;
-      align-items: stretch;
+      align-items: center;
+      justify-content: space-between;
       gap: 2px;
-      padding: 5px;
-      border-radius: 18px;
-      /* Liquid-glass luminance rule: white text needs the surface to drop
-         brightness, not just blur. White tint kept for the aesthetic, but
-         brightness(0.78) ensures contrast on pale backgrounds (e.g. coral
-         slides). saturate(180%) restores chroma after the brightness drop. */
-      background: rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
-      -webkit-backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
-      border: 1px solid rgba(255, 255, 255, 0.24);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-      font: 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      letter-spacing: 0.005em;
-      user-select: none;
+      padding: 3px;
+      overflow: hidden;
+      border-radius: 12px;       /* docked: 12 12 6 6 via [data-docked] */
+      background:
+        linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)),
+        rgba(22,25,31,0.32);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: 0 8px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.25);
       color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.28);
+      font: 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      user-select: none;
       isolation: isolate;
       /* Always paint above the selection ring + resize handles, which
          live as later DOM siblings under the same root. */
       z-index: 4;
+      transition:
+        border-radius 380ms cubic-bezier(0.32,0.72,0,1),
+        width         340ms cubic-bezier(0.32,0.72,0,1);
     }
-    /* Inner highlight overlay — renders the bright top-edge sheen called
-       out in the recipe. Pointer-events: none so it doesn't eat clicks. */
-    #${ROOT_ID} .wfpe-toolbar::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 40%);
-      pointer-events: none;
-      z-index: -1;
+    /* Inspector docked beneath → square off the shared corners. When
+       nothing is selected the bar must return to a fully rounded 12px
+       capsule — squared bottom corners exist only while docked. */
+    #${ROOT_ID} .wfpe-toolbar[data-docked="true"] {
+      border-radius: 12px 12px 6px 6px;
     }
-    #${ROOT_ID} .wfpe-toolbar-btn,
-    #${ROOT_ID} .wfpe-mode-badge {
+    /* Toolbar collapsed to Edit + chevron */
+    #${ROOT_ID} .wfpe-toolbar[data-collapsed="true"] {
+      width: 58px;
+    }
+    /* Middle button group folds horizontally (grid-template-columns
+       1fr→0fr) so the collapse reads as the bar swallowing its own
+       actions rather than clipping them. */
+    #${ROOT_ID} .wfpe-toolbar-fold {
+      display: grid;
+      grid-template-columns: 1fr;
+      transition: grid-template-columns 340ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-toolbar[data-collapsed="true"] .wfpe-toolbar-fold {
+      grid-template-columns: 0fr;
+    }
+    #${ROOT_ID} .wfpe-toolbar-fold-inner {
+      min-width: 0;
+      overflow: hidden;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+    }
+    /* Icon-only buttons — labels removed from the DOM; title="" supplies
+       the tooltip, aria-label the accessible name. All chrome buttons
+       reset padding: the UA stylesheet gives <button> 1px 6px even under
+       appearance: none, which squeezes flex-shrinkable icons in narrow
+       hit areas (the 20px collapse chevron lost 12px of content box). */
+    #${ROOT_ID} .wfpe-toolbar-btn {
       appearance: none;
       -webkit-appearance: none;
-      background: transparent;
-      border: 0;
-      color: #fff;
-      font: inherit;
-      letter-spacing: inherit;
-      display: inline-flex;
-      flex-direction: column;
+      display: flex;
       align-items: center;
       justify-content: center;
-      gap: 3px;
-      padding: 6px 10px 5px;
-      min-width: 56px;
-      border-radius: 13px;
+      width: 30px;
+      height: 30px;
+      flex: none;
+      padding: 0;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #fff;
       cursor: pointer;
-      white-space: nowrap;
-      transition: background-color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
       pointer-events: auto;
+      transition: background-color 160ms ease;
     }
-    #${ROOT_ID} .wfpe-toolbar-btn .wfpe-icon,
-    #${ROOT_ID} .wfpe-mode-badge .wfpe-icon {
-      width: 18px;
-      height: 18px;
-      flex: 0 0 18px;
+    #${ROOT_ID} .wfpe-toolbar-btn .wfpe-icon {
+      width: 15px;
+      height: 15px;
       stroke: currentColor;
       fill: none;
-      stroke-width: 1.75;
+      stroke-width: 1.8;
       stroke-linecap: round;
       stroke-linejoin: round;
     }
-    #${ROOT_ID} .wfpe-mode-badge {
-      font-weight: 600;
-    }
-    #${ROOT_ID} .wfpe-toolbar-btn:hover,
-    #${ROOT_ID} .wfpe-mode-badge:hover {
-      background-color: rgba(255, 255, 255, 0.18);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-    }
+    #${ROOT_ID} .wfpe-toolbar-btn:hover { background-color: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-toolbar-btn:active { background-color: rgba(255,255,255,0.22); }
     #${ROOT_ID} .wfpe-toolbar-btn:disabled,
     #${ROOT_ID} .wfpe-toolbar-btn[aria-disabled="true"] {
-      opacity: 0.44;
+      color: rgba(255,255,255,0.35);
       cursor: default;
-      transform: none;
-      box-shadow: none;
-    }
-    #${ROOT_ID} .wfpe-toolbar-btn:disabled:hover,
-    #${ROOT_ID} .wfpe-toolbar-btn[aria-disabled="true"]:hover {
       background-color: transparent;
-      transform: none;
-      box-shadow: none;
     }
-    #${ROOT_ID} .wfpe-toolbar-btn:active,
-    #${ROOT_ID} .wfpe-mode-badge:active {
-      background-color: rgba(255, 255, 255, 0.28);
-      transform: translateY(0);
-      box-shadow: none;
-    }
-    #${ROOT_ID} .wfpe-mode-badge[data-mode="on"] {
-      background:
-        radial-gradient(120% 120% at 50% 0%, rgba(255, 200, 175, 0.55) 0%, rgba(244, 132, 123, 0.85) 60%, rgba(232, 110, 103, 0.95) 100%);
+    /* Edit mode badge — coral pill when active */
+    #${ROOT_ID} .wfpe-mode-badge {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      flex: none;
+      padding: 0;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
       color: #fff;
-      box-shadow:
-        0 6px 18px rgba(232, 110, 103, 0.45),
-        inset 0 1px 0 rgba(255, 255, 255, 0.45),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+      cursor: pointer;
+      pointer-events: auto;
+      transition: background-color 160ms ease, filter 160ms ease;
     }
-    /* Overview button active state (v2.1.0). A persistent white-tint
-       highlight in the Liquid Glass dialect — distinct from Edit's coral
-       pill (Edit signals editability; Overview signals a view mode). */
+    #${ROOT_ID} .wfpe-mode-badge .wfpe-icon {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    #${ROOT_ID} .wfpe-mode-badge:hover { background-color: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-mode-badge:active { background-color: rgba(255,255,255,0.22); }
+    #${ROOT_ID} .wfpe-mode-badge[data-mode="on"] {
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 60%, #e55a4e);
+      box-shadow: 0 3px 10px rgba(230,88,76,0.45), inset 0 1px 0 rgba(255,255,255,0.40);
+    }
+    #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 60%, #e55a4e);
+      filter: brightness(1.05);
+    }
+    /* Overview active state keeps the white-tint dialect — distinct from
+       Edit's coral pill (Edit signals editability; Overview a view mode). */
     #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"] {
-      background-color: rgba(255, 255, 255, 0.22);
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+      background-color: rgba(255,255,255,0.22);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
     }
     #${ROOT_ID} .wfpe-toolbar-btn[data-mode="on"]:hover {
-      background-color: rgba(255, 255, 255, 0.28);
+      background-color: rgba(255,255,255,0.28);
     }
     [data-wfp-edit-flat-position-context="true"] {
       position: relative !important;
     }
-    #${ROOT_ID} .wfpe-mode-badge[data-mode="on"]:hover {
-      filter: brightness(1.06);
-      background-color: transparent;
-      transform: translateY(-1px);
-      box-shadow:
-        0 8px 22px rgba(232, 110, 103, 0.55),
-        inset 0 1px 0 rgba(255, 255, 255, 0.5),
-        inset 0 -1px 0 rgba(0, 0, 0, 0.10);
+    /* Divider + collapse chevron */
+    #${ROOT_ID} .wfpe-toolbar-divider {
+      width: 1px;
+      height: 18px;
+      background: rgba(255,255,255,0.16);
+      margin: 0 2px;
+      flex: none;
     }
-    @media (prefers-color-scheme: dark) {
-      #${ROOT_ID} .wfpe-toolbar {
-        background: rgba(255, 255, 255, 0.12);
-        border-color: rgba(255, 255, 255, 0.24);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-      }
-      #${ROOT_ID} .wfpe-toolbar-btn:hover,
-      #${ROOT_ID} .wfpe-mode-badge:hover {
-        background-color: rgba(255, 255, 255, 0.14);
-      }
-      #${ROOT_ID} .wfpe-toolbar-btn:active,
-      #${ROOT_ID} .wfpe-mode-badge:active {
-        background-color: rgba(255, 255, 255, 0.22);
-      }
-    }
-    /* ----- Inspector panel (v2.1+). Same liquid-glass surface as the
-       toolbar, parked top-right beneath it. Empty body in v2.1; subsequent
-       phases populate font-size, position/size, colour, and reset controls.
-       Minimised state collapses to a slim re-open chevron rendered in place
-       of the full panel; the preference persists across selections via
-       state.inspectorMinimised but resets on page reload. ----- */
-    #${ROOT_ID} .wfpe-inspector {
-      position: fixed;
-      /* 16 (top offset) + ~58 (toolbar height: 5+18+3+10+5 + 5×2 padding +
-         2px buffer) + 8 gap = 82. Keeps a clean 8px gutter under the
-         toolbar regardless of slide content. */
-      top: 82px;
-      right: 16px;
-      width: 280px;
-      pointer-events: none;
-      display: none;
-      /* Same z-index stratum as the toolbar so neither selection ring
-         nor resize handles can paint over the inspector. */
-      z-index: 4;
-      flex-direction: column;
-      border-radius: 18px;
+    #${ROOT_ID} .wfpe-toolbar-collapse {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 30px;
+      flex: none;
       padding: 0;
-      /* Same liquid-glass luminance recipe as the toolbar — white text
-         needs the surface to drop brightness, not just blur. */
-      background: rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
-      -webkit-backdrop-filter: blur(20px) saturate(180%) brightness(0.78);
-      border: 1px solid rgba(255, 255, 255, 0.24);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      letter-spacing: 0.005em;
-      user-select: none;
-      color: #fff;
-      isolation: isolate;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: rgba(255,255,255,0.75);
+      cursor: pointer;
+      pointer-events: auto;
     }
-    #${ROOT_ID} .wfpe-inspector::before {
-      content: '';
-      position: absolute;
-      inset: 0;
-      border-radius: inherit;
-      background: linear-gradient(to bottom, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 40%);
+    #${ROOT_ID} .wfpe-toolbar-collapse:hover { background-color: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-toolbar-collapse .wfpe-icon {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      transition: transform 340ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-toolbar[data-collapsed="true"] .wfpe-toolbar-collapse .wfpe-icon {
+      transform: rotate(180deg);
+    }
+    /* ----- Inspector — docked glass segment, 1px seam under the bar.
+       The outer dock wrapper animates the whole segment in/out on
+       select/deselect via grid-template-rows; the panel itself no longer
+       toggles display. ----- */
+    #${ROOT_ID} .wfpe-inspector-dock {
+      position: fixed;
+      top: 53px;                 /* 16 + 36 bar + 1px seam */
+      right: 16px;
+      width: 246px;
+      z-index: 4;
       pointer-events: none;
-      z-index: -1;
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] {
+      grid-template-rows: 0fr;
+    }
+    #${ROOT_ID} .wfpe-inspector-dock-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+    #${ROOT_ID} .wfpe-inspector {
+      display: flex;
+      flex-direction: column;
+      border-radius: 6px 6px 12px 12px;
+      background:
+        linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)),
+        rgba(22,25,31,0.32);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);  /* no outer drop shadow */
+      overflow: hidden;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.28);
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      user-select: none;
+      isolation: isolate;
+      box-sizing: border-box;
+      /* Instant on open; see the delayed hide below. */
+      transition: visibility 0s;
+    }
+    /* While the dock is folded shut the panel still has natural height
+       inside the clipped 0fr row — hide it for focus/AT/tooling once the
+       fold animation completes so it is neither tabbable nor "visible". */
+    #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] .wfpe-inspector {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
     }
     #${ROOT_ID} .wfpe-inspector button,
     #${ROOT_ID} .wfpe-inspector input,
@@ -211,110 +278,127 @@
     #${ROOT_ID} .wfpe-inspector label {
       pointer-events: auto;
     }
-    #${ROOT_ID} .wfpe-inspector[data-visible="true"] {
-      display: flex;
-    }
+    /* Header — 36px, symmetric with the bar when the body is folded */
     #${ROOT_ID} .wfpe-inspector-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      padding: 10px 12px 10px 14px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.14);
-    }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-header {
-      border-bottom: 0;
+      height: 36px;
+      box-sizing: border-box;
+      padding: 0 6px 0 13px;
     }
     #${ROOT_ID} .wfpe-inspector-title {
-      font-weight: 600;
-      font-size: 12px;
-      letter-spacing: 0.04em;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
-      opacity: 0.8;
+      opacity: 0.95;
     }
     #${ROOT_ID} .wfpe-inspector-minimise {
       appearance: none;
       -webkit-appearance: none;
-      background: transparent;
-      border: 0;
-      color: inherit;
-      padding: 4px;
-      border-radius: 8px;
-      cursor: pointer;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
       transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-inspector-minimise:hover {
-      background-color: rgba(255, 255, 255, 0.22);
-    }
+    #${ROOT_ID} .wfpe-inspector-minimise:hover { background-color: rgba(255,255,255,0.14); }
     #${ROOT_ID} .wfpe-inspector-minimise .wfpe-icon {
-      width: 16px;
-      height: 16px;
+      width: 13px;
+      height: 13px;
       stroke: currentColor;
       fill: none;
-      stroke-width: 1.75;
+      stroke-width: 2;
       stroke-linecap: round;
       stroke-linejoin: round;
+      transition: transform 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-minimise .wfpe-icon {
+      transform: rotate(180deg);
+    }
+    /* Body fold (minimise keeps the 36px header row, rolls the body up) */
+    #${ROOT_ID} .wfpe-inspector-fold {
+      display: grid;
+      grid-template-rows: 1fr;
+      transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold {
+      grid-template-rows: 0fr;
+    }
+    #${ROOT_ID} .wfpe-inspector-fold-inner {
+      min-height: 0;
+      overflow: hidden;
     }
     #${ROOT_ID} .wfpe-inspector-body {
-      padding: 12px 14px 14px 14px;
+      border-top: 1px solid rgba(255,255,255,0.14);
+      padding: 11px 13px 12px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
     }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-body {
-      display: none;
-    }
-    /* Inspector form rows (v2.2+): label on the left, paired numeric
-       inputs on the right. Inputs commit on Enter/blur, not per keystroke. */
+    /* Rows: 66px label column + control */
     #${ROOT_ID} .wfpe-inspector-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: 66px 1fr;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
+      gap: 8px;
     }
     #${ROOT_ID} .wfpe-inspector-row-label {
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.04em;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      opacity: 0.7;
+      color: rgba(255,255,255,0.92);
     }
-    #${ROOT_ID} .wfpe-inspector-pair {
-      display: flex;
-      gap: 6px;
+    #${ROOT_ID} .wfpe-inspector-divider {
+      height: 1px;
+      background: rgba(255,255,255,0.13);
+      margin: 2px 0;
     }
+    #${ROOT_ID} .wfpe-inspector-pair { display: flex; gap: 5px; }
+    /* Fields */
     #${ROOT_ID} .wfpe-inspector-field {
+      flex: 1;
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 8px;
-      padding: 3px 6px 3px 8px;
+      height: 24px;
+      box-sizing: border-box;
+      padding: 0 8px;
+      border-radius: 7px;
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.22);
       font-size: 12px;
+      font-variant-numeric: tabular-nums;
       color: #fff;
     }
     #${ROOT_ID} .wfpe-inspector-field-axis {
-      opacity: 0.65;
-      font-size: 10px;
-      font-weight: 600;
+      font-size: 9px;
+      font-weight: 700;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+      color: rgba(255,255,255,0.65);
     }
     #${ROOT_ID} .wfpe-inspector-field input {
       appearance: none;
       -webkit-appearance: none;
       -moz-appearance: textfield;
+      width: 100%;
       background: transparent;
       border: 0;
       color: inherit;
       font: inherit;
       padding: 0;
       margin: 0;
-      width: 48px;
       text-align: right;
       outline: none;
     }
@@ -324,107 +408,95 @@
       margin: 0;
     }
     #${ROOT_ID} .wfpe-inspector-field:focus-within {
-      border-color: rgba(255, 255, 255, 0.55);
-      background: rgba(255, 255, 255, 0.22);
+      border-color: rgba(240,104,91,0.75);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.22), 0 0 0 2px rgba(240,104,91,0.30);
     }
-    /* Font-size row (v2.3): the label sits on its own line above the
-       controls so the sub-row [input · px][−][slider][+] gets the full
-       panel width without the parent label squeezing it. Renders only
-       for text-bearing elements. */
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 8px;
-    }
+    /* Font row — −/field/+ stepper (design 3b drops the slider) */
     #${ROOT_ID} .wfpe-font-control {
       display: flex;
       align-items: center;
-      gap: 6px;
-    }
-    #${ROOT_ID} .wfpe-font-control .wfpe-inspector-field {
-      flex: 0 0 auto;
-      justify-content: flex-end;
-      padding: 4px 8px;
-    }
-    #${ROOT_ID} .wfpe-font-control .wfpe-inspector-field input {
-      width: 38px;
-      text-align: right;
+      gap: 5px;
+      min-width: 0;
     }
     #${ROOT_ID} .wfpe-font-unit {
-      opacity: 0.65;
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.02em;
+      font-size: 9px;
+      color: rgba(255,255,255,0.65);
     }
     #${ROOT_ID} .wfpe-font-btn {
       appearance: none;
       -webkit-appearance: none;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      color: #fff;
       width: 24px;
       height: 24px;
+      flex: none;
+      padding: 0;
       border-radius: 7px;
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: #fff;
+      font-size: 13px;
       cursor: pointer;
-      font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
-      flex: 0 0 24px;
       transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-font-btn:hover {
-      background-color: rgba(255, 255, 255, 0.22);
+    #${ROOT_ID} .wfpe-font-btn:hover { background: rgba(255,255,255,0.16); }
+    /* Segmented control (weight Reg/Med/Bold, align L/C/R) */
+    #${ROOT_ID} .wfpe-seg {
+      display: flex;
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 7px;
+      padding: 2px;
+      gap: 2px;
     }
-    #${ROOT_ID} .wfpe-font-slider {
+    #${ROOT_ID} .wfpe-seg-item {
       appearance: none;
       -webkit-appearance: none;
       flex: 1;
-      min-width: 0;
-      height: 4px;
-      background: rgba(255, 255, 255, 0.22);
-      border-radius: 2px;
-      outline: none;
-      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px 0;
+      border: 0;
+      border-radius: 5px;
+      background: transparent;
+      color: rgba(255,255,255,0.65);
+      font: 10px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      cursor: pointer;
+      transition: background-color 120ms ease, color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-font-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #fff;
-      border: 2px solid rgba(15, 23, 42, 0.85);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      cursor: grab;
+    #${ROOT_ID} .wfpe-seg-item[data-active="true"] {
+      background: rgba(255,255,255,0.22);
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
     }
-    #${ROOT_ID} .wfpe-font-slider::-moz-range-thumb {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #fff;
-      border: 2px solid rgba(15, 23, 42, 0.85);
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-      cursor: grab;
+    #${ROOT_ID} .wfpe-seg-item .wfpe-icon {
+      width: 12px;
+      height: 12px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
     }
-    /* Colour controls (v2.4): row label, then a swatch (showing the
-       current colour), a hex text input, and — for background only —
-       a "transparent" clear button. The native <input type="color">
-       sits behind the swatch as a click-trigger. */
+    /* Colour rows */
     #${ROOT_ID} .wfpe-color-control {
       display: flex;
       align-items: center;
       gap: 6px;
+      min-width: 0;
     }
     #${ROOT_ID} .wfpe-color-swatch {
       position: relative;
       width: 22px;
       height: 22px;
+      flex: none;
       border-radius: 6px;
-      border: 1px solid rgba(255, 255, 255, 0.32);
+      border: 1px solid rgba(255,255,255,0.3);
       background-color: #ffffff;
       cursor: pointer;
-      flex: 0 0 22px;
       padding: 0;
       overflow: hidden;
       isolation: isolate;
@@ -432,12 +504,18 @@
     /* Checkerboard for transparent backgrounds — only painted when the
        swatch carries data-transparent="true". */
     #${ROOT_ID} .wfpe-color-swatch[data-transparent="true"] {
+      background-image: conic-gradient(#c9c9ce 25%, #fff 0 50%, #c9c9ce 0 75%, #fff 0);
+      background-size: 8px 8px;
+    }
+    /* Element has a background-image (e.g. gradient): diagonal stripe so
+       it's obvious why the hex picker can't represent it. */
+    #${ROOT_ID} .wfpe-color-swatch[data-image="true"] {
       background:
-        linear-gradient(45deg, #ccc 25%, transparent 25%) 0 0 / 8px 8px,
-        linear-gradient(-45deg, #ccc 25%, transparent 25%) 0 4px / 8px 8px,
-        linear-gradient(45deg, transparent 75%, #ccc 75%) 4px -4px / 8px 8px,
-        linear-gradient(-45deg, transparent 75%, #ccc 75%) 4px 0 / 8px 8px,
-        #fff;
+        repeating-linear-gradient(
+          45deg,
+          rgba(255, 255, 255, 0.55) 0 4px,
+          rgba(15, 23, 42, 0.35) 4px 8px
+        );
     }
     #${ROOT_ID} .wfpe-color-swatch input[type="color"] {
       position: absolute;
@@ -453,96 +531,109 @@
          was unreliable across Chromium versions. */
       pointer-events: auto;
     }
-    /* Opacity row (v2.9): label on its own line, then a sub-row with
-       a value field (whole percent + "%" suffix) and a slider that
-       takes the remaining width. Mirrors the font-size row layout. */
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="opacity"] {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 8px;
-    }
-    #${ROOT_ID} .wfpe-opacity-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field {
-      flex: 0 0 auto;
-      justify-content: flex-end;
-      padding: 4px 8px;
-    }
-    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field input {
-      width: 38px;
-      text-align: right;
-    }
-    #${ROOT_ID} .wfpe-opacity-unit {
-      opacity: 0.65;
-      font-size: 11px;
-      font-weight: 500;
-      letter-spacing: 0.02em;
-    }
-    /* Element has a background-image (e.g. gradient): show a diagonal
-       stripe so it's obvious why the hex picker can't represent it. */
-    #${ROOT_ID} .wfpe-color-swatch[data-image="true"] {
-      background:
-        repeating-linear-gradient(
-          45deg,
-          rgba(255, 255, 255, 0.55) 0 4px,
-          rgba(15, 23, 42, 0.35) 4px 8px
-        );
-    }
     #${ROOT_ID} .wfpe-color-clear {
       appearance: none;
       -webkit-appearance: none;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      color: #fff;
-      width: 22px;
-      height: 22px;
-      border-radius: 6px;
+      width: 24px;
+      height: 24px;
+      flex: none;
+      padding: 0;
+      border-radius: 7px;
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.12);
+      color: rgba(255,255,255,0.8);
+      font-size: 12px;
       cursor: pointer;
-      font-size: 11px;
-      display: inline-flex;
+      display: flex;
       align-items: center;
       justify-content: center;
-      flex: 0 0 22px;
       transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-color-clear:hover {
-      background-color: rgba(255, 255, 255, 0.22);
+    #${ROOT_ID} .wfpe-color-clear:hover { background: rgba(255,255,255,0.16); }
+    /* Opacity row — native range restyled to the handoff's rail/knob
+       tokens (3px rail at 25% white, 13px white knob). A custom
+       track/knob widget would mean new drag logic for no behavioural
+       gain; the native input keeps the one-entry-per-drag contract. */
+    #${ROOT_ID} .wfpe-opacity-control {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
     }
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"] {
-      flex-direction: column;
-      align-items: stretch;
-      gap: 8px;
-      padding-top: 2px;
+    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field {
+      flex: 0 0 auto;
     }
-    #${ROOT_ID} .wfpe-annotation-textarea {
+    #${ROOT_ID} .wfpe-opacity-control .wfpe-inspector-field input {
+      width: 26px;
+    }
+    #${ROOT_ID} .wfpe-opacity-unit {
+      font-size: 9px;
+      color: rgba(255,255,255,0.65);
+    }
+    #${ROOT_ID} .wfpe-opacity-slider {
       appearance: none;
       -webkit-appearance: none;
-      resize: vertical;
-      min-height: 64px;
+      flex: 1;
+      min-width: 0;
+      height: 3px;
+      background: rgba(255,255,255,0.25);
+      border-radius: 2px;
+      outline: none;
+      margin: 0;
+    }
+    #${ROOT_ID} .wfpe-opacity-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: #fff;
+      border: 0;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      cursor: grab;
+    }
+    #${ROOT_ID} .wfpe-opacity-slider::-moz-range-thumb {
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: #fff;
+      border: 0;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      cursor: grab;
+    }
+    /* Agent note */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"] {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      padding-top: 2px;
+    }
+    #${ROOT_ID} .wfpe-annotation-input {
+      appearance: none;
+      -webkit-appearance: none;
+      min-height: 42px;
       max-height: 160px;
-      width: 100%;
       box-sizing: border-box;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: 8px;
+      width: 100%;
+      padding: 6px 8px;
+      border-radius: 7px;
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.22);
+      font: 11px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: #fff;
-      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      padding: 7px 8px;
+      resize: vertical;
       outline: none;
     }
-    #${ROOT_ID} .wfpe-annotation-textarea::placeholder {
-      color: rgba(255, 255, 255, 0.45);
+    #${ROOT_ID} .wfpe-annotation-input::placeholder { color: rgba(255,255,255,0.55); }
+    #${ROOT_ID} .wfpe-annotation-input:focus {
+      border-color: rgba(240,104,91,0.75);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.22), 0 0 0 2px rgba(240,104,91,0.30);
     }
-    #${ROOT_ID} .wfpe-annotation-textarea:focus {
-      border-color: rgba(255, 255, 255, 0.55);
-      background: rgba(255, 255, 255, 0.22);
-    }
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"][data-has-note="true"] .wfpe-annotation-textarea {
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="annotation"][data-has-note="true"] .wfpe-annotation-input {
       border-color: rgba(245, 158, 11, 0.72);
-      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18) inset;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.22), 0 0 0 1px rgba(245, 158, 11, 0.18) inset;
     }
     #${ROOT_ID} .wfpe-annotation-actions {
       display: flex;
@@ -552,82 +643,75 @@
     }
     #${ROOT_ID} .wfpe-annotation-status {
       margin-right: auto;
-      color: rgba(255, 255, 255, 0.74);
+      color: rgba(255,255,255,0.74);
       font: 600 10px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.02em;
       min-height: 11px;
     }
-    #${ROOT_ID} .wfpe-annotation-save-btn,
+    #${ROOT_ID} .wfpe-annotation-save-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      padding: 4px 12px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.20);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: #fff;
+      font-size: 10.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-annotation-save-btn:hover { background: rgba(255,255,255,0.28); }
     #${ROOT_ID} .wfpe-annotation-delete-btn {
       appearance: none;
       -webkit-appearance: none;
-      border: 1px solid rgba(255, 255, 255, 0.18);
+      padding: 4px 10px;
       border-radius: 7px;
-      color: #fff;
+      background: transparent;
+      border: 0;
+      color: rgba(255,255,255,0.85);
+      font-size: 10.5px;
       cursor: pointer;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      padding: 6px 9px;
-      background: rgba(255, 255, 255, 0.12);
-      transition: background-color 120ms ease, opacity 120ms ease;
+      transition: background-color 120ms ease, color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-annotation-save-btn:hover,
-    #${ROOT_ID} .wfpe-annotation-delete-btn:hover {
-      background-color: rgba(255, 255, 255, 0.22);
-    }
-    #${ROOT_ID} .wfpe-annotation-delete-btn:hover {
+    #${ROOT_ID} .wfpe-annotation-delete-btn:hover:not(:disabled) {
       background-color: rgba(220, 38, 38, 0.28);
     }
     #${ROOT_ID} .wfpe-annotation-delete-btn:disabled {
-      opacity: 0.45;
+      color: rgba(255,255,255,0.4);
       cursor: default;
-      background: rgba(255, 255, 255, 0.08);
     }
-    /* Element action row: compact text-link controls for common structural
-       actions. They stay in one row to keep the inspector from growing
-       vertically as feature actions are added. */
-    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="actions"] {
+    /* Footer actions: Duplicate / Delete / Reset */
+    #${ROOT_ID} .wfpe-action-row {
+      display: flex;
       justify-content: space-between;
-      gap: 6px;
-      padding-top: 4px;
-      flex-wrap: nowrap;
-      width: 100%;
-      box-sizing: border-box;
+      border-top: 1px solid rgba(255,255,255,0.13);
+      padding-top: 9px;
+      margin-top: 1px;
     }
-    #${ROOT_ID} .wfpe-duplicate-btn,
-    #${ROOT_ID} .wfpe-delete-btn,
-    #${ROOT_ID} .wfpe-reset-btn {
+    #${ROOT_ID} .wfpe-action-btn {
       appearance: none;
       -webkit-appearance: none;
+      display: flex;
+      align-items: center;
+      gap: 5px;
       background: transparent;
       border: 0;
-      color: rgba(255, 255, 255, 0.78);
+      color: rgba(255,255,255,0.95);
+      font-size: 10.5px;
+      font-weight: 600;
+      cursor: pointer;
       padding: 4px 6px;
       border-radius: 6px;
-      cursor: pointer;
-      font: 500 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      letter-spacing: 0.01em;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      flex: 1 1 0;
-      min-width: 0;
-      transition: color 120ms ease, background-color 120ms ease;
+      transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-duplicate-btn:hover,
-    #${ROOT_ID} .wfpe-delete-btn:hover,
-    #${ROOT_ID} .wfpe-reset-btn:hover {
-      color: #fff;
-      background-color: rgba(255, 255, 255, 0.10);
-    }
-    #${ROOT_ID} .wfpe-delete-btn:hover {
+    #${ROOT_ID} .wfpe-action-btn:hover { background: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-action-btn.wfpe-delete-btn:hover {
       background-color: rgba(220, 38, 38, 0.28);
     }
-    #${ROOT_ID} .wfpe-duplicate-btn .wfpe-icon,
-    #${ROOT_ID} .wfpe-delete-btn .wfpe-icon,
-    #${ROOT_ID} .wfpe-reset-btn .wfpe-icon {
-      width: 13px;
-      height: 13px;
+    #${ROOT_ID} .wfpe-action-btn .wfpe-icon {
+      width: 12px;
+      height: 12px;
       stroke: currentColor;
       fill: none;
       stroke-width: 1.75;
@@ -933,7 +1017,7 @@
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-handle,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-dim-bubble,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-annotation-layer,
-    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector {
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector-dock {
       display: none !important;
     }
     /* Overlay layer — sits above the deck, below the toolbar. Each thumb

@@ -120,12 +120,15 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 
 - Numeric position and size controls.
 - Font-size controls.
+- Typography weight/align segmented controls (v2.10).
 - Colour controls.
 - Opacity.
 - Reset inline styles.
 - Agent note save/delete.
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
+
+Since the v2.10 "Ink Glass" refresh (design 3b, `feature-briefs/v2-ink-glass-ui.md`), the toolbar and inspector form one two-segment instrument in the top-right corner: the panel lives inside a `.wfpe-inspector-dock` wrapper fixed 1px below the 36px icon-only bar, and selection drives `data-visible` on the dock plus `data-docked` on the toolbar (corner morph) together in `refreshInspector()`. Minimise folds `.wfpe-inspector-fold` via `grid-template-rows`; the bar itself can collapse to 58px via `state.toolbarCollapsed`. Both surfaces use a scheme-invariant dark "ink" glass — there are no `prefers-color-scheme` variants for editor chrome.
 
 ## Overview Mode
 

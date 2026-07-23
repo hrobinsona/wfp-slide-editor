@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { loadFixtureWithEditor } from './_helpers.js';
 
-// v2.3 — font-size triplet (px input + horizontal slider + −/+ buttons),
-// all three bound to the same value. Strict TDD.
+// v2.3 — font-size control (px input + −/+ stepper buttons) bound to the
+// same value. Strict TDD. Restyled by v2.10 "Ink Glass" (design 3b),
+// which drops the slider — the stepper is the whole control.
 //
-// History contract from BRIEF: one input commit = one entry, one slider
-// drag grab→release = one entry, one ± click = one entry.
+// History contract from BRIEF: one input commit = one entry, one ± click
+// = one entry.
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
@@ -27,17 +28,16 @@ async function readFontSize(page, selector) {
   );
 }
 
-async function readFontTriplet(page) {
+async function readFontControl(page) {
   return page.evaluate(() => {
     const ins = document.querySelector('#wfp-editor-root .wfpe-inspector');
     return {
       input: ins.querySelector('input[data-wfpe-prop="fontSize"]')?.value ?? null,
-      slider: ins.querySelector('input[data-wfpe-prop="fontSizeSlider"]')?.value ?? null,
     };
   });
 }
 
-test.describe('v2.3 — font-size triplet', () => {
+test.describe('v2.3 — font-size control', () => {
   test.beforeEach(async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
@@ -86,18 +86,19 @@ test.describe('v2.3 — font-size triplet', () => {
     expect(result.display).toBe('none');
   });
 
-  test('input + slider + ± buttons all bound to the same font-size value', async ({ page }) => {
+  test('input and ± buttons bound to the same font-size value, with no slider (ink-glass 3b)', async ({ page }) => {
     await selectByMouse(page, '.slide.active h1');
     const live = await readFontSize(page, '.slide.active h1');
-    const triplet = await readFontTriplet(page);
+    const control = await readFontControl(page);
     const buttons = await page.evaluate(() => ({
       minus: !!document.querySelector('#wfp-editor-root .wfpe-font-btn[data-action="font-minus"]'),
       plus: !!document.querySelector('#wfp-editor-root .wfpe-font-btn[data-action="font-plus"]'),
+      slider: !!document.querySelector('#wfp-editor-root [data-wfpe-row="font-size"] input[type="range"]'),
     }));
-    expect(Number(triplet.input)).toBe(Math.round(live));
-    expect(Number(triplet.slider)).toBe(Math.round(live));
+    expect(Number(control.input)).toBe(Math.round(live));
     expect(buttons.minus).toBe(true);
     expect(buttons.plus).toBe(true);
+    expect(buttons.slider).toBe(false);
   });
 
   test('typing a font-size into the input and pressing Enter applies as one history entry', async ({ page }) => {
@@ -164,40 +165,14 @@ test.describe('v2.3 — font-size triplet', () => {
     expect(await readFontSize(page, '.slide.active h1')).toBe(8);
   });
 
-  test('slider drag from grab to release = exactly one history entry', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
-    const before = await readFontSize(page, '.slide.active h1');
-
-    // Simulate a slider drag by dispatching mousedown, multiple input
-    // events with synthetic values, then mouseup. Native range-slider
-    // dragging in Playwright is platform-dependent; the editor must
-    // bracket its history entry around mousedown→mouseup regardless of
-    // whether each `input` event ticks during the drag.
-    await page.evaluate((newVal) => {
-      const slider = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSizeSlider"]');
-      slider.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      slider.value = String(newVal);
-      slider.dispatchEvent(new Event('input', { bubbles: true }));
-      slider.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    }, Math.round(before) + 20);
-
-    const after = await readFontSize(page, '.slide.active h1');
-    expect(after).toBeCloseTo(before + 20, 0);
-
-    await page.keyboard.press('Control+z');
-    const undone = await readFontSize(page, '.slide.active h1');
-    expect(undone).toBeCloseTo(before, 0);
-  });
-
-  test('changing font-size via any control updates the readout in the other two controls', async ({ page }) => {
+  test('changing font-size via the ± buttons updates the numeric readout', async ({ page }) => {
     await selectByMouse(page, '.slide.active h1');
     const before = await readFontSize(page, '.slide.active h1');
 
     await page.locator('#wfp-editor-root .wfpe-font-btn[data-action="font-plus"]').click();
-    const after = await readFontTriplet(page);
+    const after = await readFontControl(page);
     const expectedRounded = Math.round(before) + 1;
     expect(Number(after.input)).toBe(expectedRounded);
-    expect(Number(after.slider)).toBe(expectedRounded);
   });
 
   test('clicking + updates the numeric readout even when the font-size input keeps focus', async ({ page }) => {
@@ -206,7 +181,6 @@ test.describe('v2.3 — font-size triplet', () => {
 
     const after = await page.evaluate(() => {
       const input = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSize"]');
-      const slider = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSizeSlider"]');
       const plus = document.querySelector('#wfp-editor-root .wfpe-font-btn[data-action="font-plus"]');
       input.focus();
       const focusedBefore = document.activeElement === input;
@@ -217,7 +191,6 @@ test.describe('v2.3 — font-size triplet', () => {
         focusedAfter: document.activeElement === input,
         live,
         input: Number(input.value),
-        slider: Number(slider.value),
       };
     });
 
@@ -225,7 +198,6 @@ test.describe('v2.3 — font-size triplet', () => {
     expect(after.focusedAfter).toBe(true);
     expect(after.live).toBe(before + 1);
     expect(after.input).toBe(after.live);
-    expect(after.slider).toBe(after.live);
   });
 
   test('font-size keystrokes inside the input do not bubble to the editor (no E toggle, no arrow nudge)', async ({ page }) => {

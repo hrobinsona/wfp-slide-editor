@@ -4,9 +4,18 @@ import { loadFixtureWithEditor } from './_helpers.js';
 // v2.1 — inspector scaffold + minimise. The body is intentionally empty
 // in this phase; subsequent phases populate font / colour / position /
 // size / reset controls. These tests pin the visibility, structure, and
-// minimise behaviour the brief specifies.
+// minimise behaviour the brief specifies. Restyled by v2.10 "Ink Glass"
+// (design 3b): the panel lives inside a .wfpe-inspector-dock wrapper that
+// folds open/shut on selection (grid-template-rows), and minimise folds
+// .wfpe-inspector-fold instead of display-toggling the body.
 
 test.use({ viewport: { width: 2000, height: 1200 } });
+
+// Freeze editor-chrome motion so computed-style assertions read end
+// states, not mid-transition frames (dock/fold/corner morphs are 340-380ms).
+async function freezeMotion(page) {
+  await page.addStyleTag({ content: '#wfp-editor-root * { transition: none !important; }' });
+}
 
 async function selectByMouse(page, selector) {
   const center = await page.evaluate((sel) => {
@@ -22,17 +31,21 @@ async function selectByMouse(page, selector) {
 test.describe('v2.1 — inspector scaffold + minimise', () => {
   test('inspector is hidden by default and on initial editor load', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    await freezeMotion(page);
     const state = await page.evaluate(() => {
       const ins = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const dock = document.querySelector('#wfp-editor-root .wfpe-inspector-dock');
       return {
         present: !!ins,
         visible: ins.dataset.visible,
-        display: getComputedStyle(ins).display,
+        dockVisible: dock.dataset.visible,
+        visibility: getComputedStyle(ins).visibility,
       };
     });
     expect(state.present).toBe(true);
     expect(state.visible).toBe('false');
-    expect(state.display).toBe('none');
+    expect(state.dockVisible).toBe('false');
+    expect(state.visibility).toBe('hidden');
   });
 
   test('inspector appears when an element is selected and hides when selection clears', async ({ page }) => {
@@ -41,21 +54,30 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
     await page.keyboard.press('e');
     await selectByMouse(page, '.slide.active .wfp-badge');
 
+    await freezeMotion(page);
     const onSelect = await page.evaluate(() => ({
       visible: document.querySelector('.wfpe-inspector').dataset.visible,
-      display: getComputedStyle(document.querySelector('.wfpe-inspector')).display,
+      dockVisible: document.querySelector('.wfpe-inspector-dock').dataset.visible,
+      visibility: getComputedStyle(document.querySelector('.wfpe-inspector')).visibility,
+      docked: document.querySelector('.wfpe-toolbar').dataset.docked,
     }));
     expect(onSelect.visible).toBe('true');
-    expect(onSelect.display).toBe('flex');
+    expect(onSelect.dockVisible).toBe('true');
+    expect(onSelect.visibility).toBe('visible');
+    expect(onSelect.docked).toBe('true');
 
     // Clicking the active slide background deselects.
     await page.evaluate(() => document.querySelector('.slide.active').click());
     const onDeselect = await page.evaluate(() => ({
       visible: document.querySelector('.wfpe-inspector').dataset.visible,
-      display: getComputedStyle(document.querySelector('.wfpe-inspector')).display,
+      dockVisible: document.querySelector('.wfpe-inspector-dock').dataset.visible,
+      visibility: getComputedStyle(document.querySelector('.wfpe-inspector')).visibility,
+      docked: document.querySelector('.wfpe-toolbar').dataset.docked,
     }));
     expect(onDeselect.visible).toBe('false');
-    expect(onDeselect.display).toBe('none');
+    expect(onDeselect.dockVisible).toBe('false');
+    expect(onDeselect.visibility).toBe('hidden');
+    expect(onDeselect.docked).toBe('false');
   });
 
   test('inspector hides when edit mode is toggled off', async ({ page }) => {
@@ -98,31 +120,37 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
     expect(header.iconPath).toBe('18 15 12 9 6 15');
   });
 
-  test('clicking minimise collapses the body, swaps icon to chevron-down, and updates the affordance label', async ({ page }) => {
+  test('clicking minimise folds the body, rotates the chevron via CSS, and updates the affordance label', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
     await selectByMouse(page, '.slide.active .wfp-badge');
+    await freezeMotion(page);
 
     await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
     const minimised = await page.evaluate(() => ({
       state: document.querySelector('.wfpe-inspector').dataset.state,
-      bodyDisplay: getComputedStyle(document.querySelector('.wfpe-inspector-body')).display,
+      foldRows: getComputedStyle(document.querySelector('.wfpe-inspector-fold')).gridTemplateRows,
       btnTitle: document.querySelector('.wfpe-inspector-minimise').title,
+      // Single chevron-up polyline, rotated 180° by CSS in this state.
       iconPath: document.querySelector('.wfpe-inspector-minimise polyline').getAttribute('points'),
+      iconTransform: getComputedStyle(document.querySelector('.wfpe-inspector-minimise svg')).transform,
     }));
     expect(minimised.state).toBe('minimised');
-    expect(minimised.bodyDisplay).toBe('none');
+    expect(minimised.foldRows).toBe('0px');
     expect(minimised.btnTitle).toBe('Expand');
-    expect(minimised.iconPath).toBe('6 9 12 15 18 9');
+    expect(minimised.iconPath).toBe('18 15 12 9 6 15');
+    expect(minimised.iconTransform).toBe('matrix(-1, 0, 0, -1, 0, 0)');
 
     await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
     const expanded = await page.evaluate(() => ({
       state: document.querySelector('.wfpe-inspector').dataset.state,
+      foldRows: getComputedStyle(document.querySelector('.wfpe-inspector-fold')).gridTemplateRows,
       bodyDisplay: getComputedStyle(document.querySelector('.wfpe-inspector-body')).display,
       btnTitle: document.querySelector('.wfpe-inspector-minimise').title,
     }));
     expect(expanded.state).toBe('expanded');
+    expect(expanded.foldRows).not.toBe('0px');
     expect(expanded.bodyDisplay).toBe('flex');
     expect(expanded.btnTitle).toBe('Minimise');
   });
@@ -170,7 +198,7 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
     expect(ringAfter.top).toBe(ringBefore.top);
   });
 
-  test('inspector applies the same liquid-glass recipe as the toolbar', async ({ page }) => {
+  test('inspector applies the same ink-glass recipe as the toolbar, minus the outer drop shadow', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.emulateMedia({ colorScheme: 'light' });
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
@@ -185,21 +213,24 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
         backdrop: cs.backdropFilter || cs.webkitBackdropFilter,
         shadow: cs.boxShadow,
         color: cs.color,
+        radius: cs.borderRadius,
       };
     });
-    // Inspector now uses the same white-text liquid-glass recipe as the
-    // toolbar — tint trimmed and brightness(0.78) doing the contrast lift.
-    expect(recipe.bg).toBe('rgba(255, 255, 255, 0.12)');
-    expect(recipe.border).toBe('rgba(255, 255, 255, 0.24)');
-    expect(recipe.backdrop).toMatch(/blur\(20px\)/);
-    expect(recipe.backdrop).toMatch(/saturate\((1\.8|180%)\)/);
-    expect(recipe.backdrop).toMatch(/brightness\(0\.78\)/);
-    expect(recipe.shadow).toContain('rgba(0, 0, 0, 0.25)');
-    expect(recipe.shadow).toContain('8px 24px');
+    // Ink glass: dark tint under a white sheen gradient, same surface as
+    // the bar. Depth comes from the bar's shadow — the panel carries only
+    // the inset top sheen (an outer drop would be clipped by the dock
+    // fold wrapper and smudge the corners).
+    expect(recipe.bg).toBe('rgba(22, 25, 31, 0.32)');
+    expect(recipe.border).toBe('rgba(255, 255, 255, 0.22)');
+    expect(recipe.backdrop).toMatch(/blur\(24px\)/);
+    expect(recipe.backdrop).toMatch(/saturate\((1\.7|170%)\)/);
+    expect(recipe.shadow).toContain('inset');
+    expect(recipe.shadow).not.toContain('8px 22px');
     expect(recipe.color).toBe('rgb(255, 255, 255)');
+    expect(recipe.radius).toBe('6px 6px 12px 12px');
   });
 
-  test('inspector switches to dark glass under prefers-color-scheme: dark', async ({ page }) => {
+  test('ink glass is scheme-invariant: identical surface under prefers-color-scheme: dark', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
@@ -210,9 +241,9 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
       const cs = getComputedStyle(document.querySelector('.wfpe-inspector'));
       return { bg: cs.backgroundColor, color: cs.color };
     });
-    // Same dark-glass recipe in both schemes (white text needs the
-    // brightness drop regardless of host preference).
-    expect(recipe.bg).toBe('rgba(255, 255, 255, 0.12)');
+    // Same ink-glass recipe in both schemes — the dark tint keeps white
+    // text readable regardless of host preference.
+    expect(recipe.bg).toBe('rgba(22, 25, 31, 0.32)');
     expect(recipe.color).toBe('rgb(255, 255, 255)');
   });
 
