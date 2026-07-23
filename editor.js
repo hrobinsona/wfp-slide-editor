@@ -84,6 +84,7 @@
     clipboard: null, // { outerHTML } session-only element copy/paste payload
     inspectorMinimised: false, // persists across selections within session; resets on reload
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
+    exportMenuOpen: false, // v2.11 — export action menu (4b) open/closed
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
@@ -313,6 +314,97 @@
     }
     #${ROOT_ID} .wfpe-toolbar[data-collapsed="true"] .wfpe-toolbar-collapse .wfpe-icon {
       transform: rotate(180deg);
+    }
+    /* v2.11 — export action menu (design 4b): count badge on the Export
+       button + the popup itself. The badge needs the button to be a
+       positioning context (toolbar buttons are static by default). */
+    #${ROOT_ID} .wfpe-toolbar-btn[data-action="export"] { position: relative; }
+    #${ROOT_ID} .wfpe-export-badge {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      min-width: 14px;
+      height: 14px;
+      padding: 0 3px;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 70%);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.35);
+      font-size: 8.5px;
+      font-weight: 700;
+      line-height: 1;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-export-badge[data-count="0"] { display: none; }
+    #${ROOT_ID} .wfpe-export-menu {
+      position: fixed;
+      z-index: 2147483646;
+      /* root is pointer-events:none (click-through by default); this is a
+         real popup that needs its own hit-testing, inherited by children. */
+      pointer-events: auto;
+      min-width: 208px;
+      border-radius: 12px 6px 12px 12px;
+      background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)), rgba(22,25,31,0.32);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: 0 8px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.25);
+      padding: 5px;
+      box-sizing: border-box;
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+    #${ROOT_ID} .wfpe-export-menu[data-open="true"] { display: flex; }
+    #${ROOT_ID} .wfpe-export-menu-item {
+      display: flex;
+      gap: 9px;
+      align-items: center;
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 8px;
+      background: transparent;
+      border: 0;
+      color: #fff;
+      text-align: left;
+      cursor: pointer;
+      box-sizing: border-box;
+      font: inherit;
+    }
+    #${ROOT_ID} .wfpe-export-menu-item:hover { background: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-export-menu-item[data-action="save-in-place"] { background: rgba(255,255,255,0.12); }
+    #${ROOT_ID} .wfpe-export-menu-item[data-action="save-in-place"]:hover { background: rgba(255,255,255,0.20); }
+    #${ROOT_ID} .wfpe-export-menu-chip {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      flex: none;
+    }
+    #${ROOT_ID} .wfpe-export-menu-item[data-action="save-in-place"] .wfpe-export-menu-chip {
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 60%, #e55a4e);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
+    }
+    #${ROOT_ID} .wfpe-export-menu-item[data-action="clean-copy"] .wfpe-export-menu-chip {
+      background: rgba(9,11,16,0.32);
+      border: 1px solid rgba(255,255,255,0.14);
+      box-sizing: border-box;
+    }
+    #${ROOT_ID} .wfpe-export-menu-chip .wfpe-icon { width: 12px; height: 12px; }
+    #${ROOT_ID} .wfpe-export-menu-text { display: flex; flex-direction: column; gap: 1px; }
+    #${ROOT_ID} .wfpe-export-menu-label { font-size: 11px; font-weight: 600; }
+    #${ROOT_ID} .wfpe-export-menu-sub { font-size: 9.5px; color: rgba(255,255,255,0.60); }
+    #${ROOT_ID} .wfpe-export-menu-hint {
+      margin-left: auto;
+      font-size: 9px;
+      color: rgba(255,255,255,0.45);
+      font-family: ui-monospace, Menlo, monospace;
     }
     /* ----- Inspector — docked glass segment, 1px seam under the bar.
        The outer dock wrapper animates the whole segment in/out on
@@ -1439,9 +1531,14 @@
   const overviewBtn = makeToolbarButton('overview', 'Overview', 'Overview (O)', 'overview');
   overviewBtn.dataset.mode = 'off';
   const exportBtn = makeToolbarButton('export', 'Export', 'Export (Cmd/Ctrl+S)', 'export');
-  const handoffBtn = makeToolbarButton('handoff', 'Handoff', 'Add an Agent note to enable handoff export', 'handoff');
-  handoffBtn.disabled = true;
-  handoffBtn.setAttribute('aria-disabled', 'true');
+  // v2.11 — annotation-count badge; hidden at zero via CSS [data-count="0"].
+  const exportBadge = document.createElement('span');
+  exportBadge.className = 'wfpe-export-badge';
+  exportBadge.dataset.count = '0';
+  exportBadge.setAttribute('aria-hidden', 'true');
+  exportBtn.appendChild(exportBadge);
+  exportBtn.setAttribute('aria-haspopup', 'menu');
+  exportBtn.setAttribute('aria-expanded', 'false');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
 
@@ -1456,7 +1553,6 @@
   toolbarFold.appendChild(toolbarFoldInner);
   toolbarFoldInner.appendChild(overviewBtn);
   toolbarFoldInner.appendChild(exportBtn);
-  toolbarFoldInner.appendChild(handoffBtn);
   toolbarFoldInner.appendChild(undoBtn);
   toolbarFoldInner.appendChild(redoBtn);
   const toolbarDivider = document.createElement('div');
@@ -1482,6 +1578,37 @@
   }
 
   root.appendChild(toolbar);
+
+  // v2.11 — export action menu (design 4b). Fixed-position flyout under the
+  // toolbar; opened by the Export button. Row 1 is the primary save action
+  // (Enter / Cmd+S), row 2 is the legacy clean-copy download.
+  const exportMenu = document.createElement('div');
+  exportMenu.className = 'wfpe-export-menu';
+  exportMenu.dataset.open = 'false';
+  exportMenu.setAttribute('role', 'menu');
+  function makeExportMenuItem(action, iconKey) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wfpe-export-menu-item';
+    b.dataset.action = action;
+    b.setAttribute('role', 'menuitem');
+    b.innerHTML =
+      `<span class="wfpe-export-menu-chip">${ICONS[iconKey]}</span>` +
+      '<span class="wfpe-export-menu-text">' +
+      '<span class="wfpe-export-menu-label"></span>' +
+      '<span class="wfpe-export-menu-sub"></span>' +
+      '</span>';
+    return b;
+  }
+  const exportPrimaryItem = makeExportMenuItem('save-in-place', 'handoff');
+  const exportHintEl = document.createElement('span');
+  exportHintEl.className = 'wfpe-export-menu-hint';
+  exportHintEl.textContent = '↵';
+  exportPrimaryItem.appendChild(exportHintEl);
+  const exportCleanItem = makeExportMenuItem('clean-copy', 'export');
+  exportMenu.appendChild(exportPrimaryItem);
+  exportMenu.appendChild(exportCleanItem);
+  root.appendChild(exportMenu);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -1952,15 +2079,58 @@
     e.preventDefault();
     redo();
   });
+  // v2.11 — export action menu (design 4b). Popup opened by the Export
+  // button; row 1 is the primary save action (Enter / Cmd+S), row 2 is the
+  // legacy clean-copy download.
+  function openExportMenu() {
+    state.exportMenuOpen = true;
+    const r = toolbar.getBoundingClientRect();
+    exportMenu.style.top = `${r.bottom + 6}px`;
+    exportMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    exportMenu.dataset.open = 'true';
+    exportBtn.setAttribute('aria-expanded', 'true');
+    refreshExportUi();
+  }
+  function closeExportMenu() {
+    state.exportMenuOpen = false;
+    exportMenu.dataset.open = 'false';
+    exportBtn.setAttribute('aria-expanded', 'false');
+  }
+  // Single dispatcher for menu row 1, Enter-while-open, and Cmd/Ctrl+S.
+  // Task 1: legacy destinations (downloads). Task 2 reroutes this to the
+  // save-in-place engine.
+  function triggerPrimaryExport() {
+    closeExportMenu();
+    if (getAnnotatedElements(document).length > 0) {
+      exportHandoffHTML();
+    } else {
+      exportHTML();
+    }
+  }
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    if (state.exportMenuOpen) closeExportMenu();
+    else openExportMenu();
+  });
+  exportPrimaryItem.addEventListener('click', (e) => {
+    e.preventDefault();
+    triggerPrimaryExport();
+  });
+  exportCleanItem.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeExportMenu();
     exportHTML();
   });
-  handoffBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    if (handoffBtn.disabled) return;
-    exportHandoffHTML();
-  });
+  // Click-away (capture so host-page handlers can't swallow it first).
+  document.addEventListener(
+    'mousedown',
+    (e) => {
+      if (!state.exportMenuOpen) return;
+      if (exportMenu.contains(e.target) || exportBtn.contains(e.target)) return;
+      closeExportMenu();
+    },
+    true,
+  );
   overviewBtn.addEventListener('click', (e) => {
     e.preventDefault();
     if (isFlatMode()) return;
@@ -2249,7 +2419,7 @@
   });
   applyModeFeatureGating();
   reimportHandoffAnnotations();
-  refreshHandoffButton();
+  refreshExportUi();
   // ===========================================================================
   // Helpers
   // ===========================================================================
@@ -2644,7 +2814,7 @@
     }
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
-    refreshHandoffButton();
+    refreshExportUi();
     showToast(el, nextText ? 'Agent note saved.' : 'Agent note deleted.');
     return true;
   }
@@ -2658,7 +2828,7 @@
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
-    refreshHandoffButton();
+    refreshExportUi();
     showToast(el, 'Agent note deleted.');
     return true;
   }
@@ -2688,14 +2858,23 @@
     updateAnnotationDraftStatus(el);
   }
 
-  function refreshHandoffButton() {
-    if (!handoffBtn) return;
-    const enabled = getAnnotatedElements(document).length > 0;
-    handoffBtn.disabled = !enabled;
-    handoffBtn.setAttribute('aria-disabled', enabled ? 'false' : 'true');
-    handoffBtn.title = enabled
-      ? 'Export agent handoff HTML'
-      : 'Add an Agent note to enable handoff export';
+  function refreshExportUi() {
+    const count = getAnnotatedElements(document).length;
+    exportBadge.dataset.count = String(count);
+    exportBadge.textContent = count > 0 ? String(count) : '';
+    const label = exportPrimaryItem.querySelector('.wfpe-export-menu-label');
+    const sub = exportPrimaryItem.querySelector('.wfpe-export-menu-sub');
+    if (count > 0) {
+      label.textContent = 'Annotated handoff';
+      sub.textContent = `Includes ${count} agent note${count === 1 ? '' : 's'}`;
+    } else {
+      label.textContent = 'Save';
+      sub.textContent = 'Edits only';
+    }
+    const cleanLabel = exportCleanItem.querySelector('.wfpe-export-menu-label');
+    const cleanSub = exportCleanItem.querySelector('.wfpe-export-menu-sub');
+    cleanLabel.textContent = 'Clean copy';
+    cleanSub.textContent = count > 0 ? 'Edits only — notes stripped' : 'Download a copy';
     refreshAnnotationMarkers();
   }
 
@@ -3439,7 +3618,7 @@
       'aria-label',
       state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
     );
-    refreshHandoffButton();
+    refreshExportUi();
   }
 
   function setInspectorMinimised(value) {
@@ -3687,7 +3866,7 @@
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
     refreshSelection();
-    refreshHandoffButton();
+    refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
   }
 
@@ -3702,7 +3881,7 @@
     }
     state.historyIndex++;
     refreshSelection();
-    refreshHandoffButton();
+    refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
   }
   // ===========================================================================
@@ -4364,7 +4543,7 @@
     // reference — the next mouseover will re-hydrate.
     if (state.overviewHoveredSlide === slide) state.overviewHoveredSlide = null;
     buildOverviewOverlay();
-    refreshHandoffButton();
+    refreshExportUi();
   }
 
   function getOverviewDeleteTarget() {
@@ -4449,6 +4628,22 @@
   }
 
   function onKeyDown(e) {
+    // v2.11 — while the export menu is open it owns Enter/Escape.
+    if (state.exportMenuOpen) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerPrimaryExport();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeExportMenu();
+        return;
+      }
+    }
+
     // While a text edit is open, only intercept Escape/Tab (commit) and
     // Cmd/Ctrl+S (commit + export). Every other key flows to the
     // contenteditable element for default behavior (typing, caret motion),
@@ -4473,7 +4668,7 @@
         e.preventDefault();
         e.stopPropagation();
         endTextEdit();
-        exportHTML();
+        triggerPrimaryExport();
         return;
       }
       e.stopPropagation();
@@ -4623,7 +4818,7 @@
     if (isMod && (e.key === 's' || e.key === 'S') && !e.shiftKey) {
       e.preventDefault();
       e.stopPropagation();
-      exportHTML();
+      triggerPrimaryExport();
       return;
     }
   }
@@ -5604,7 +5799,7 @@
 
     const annotations = getAnnotatedElements(document);
     if (!annotations.length) {
-      refreshHandoffButton();
+      refreshExportUi();
       return;
     }
     const filename = deriveExportFilename('-agent-handoff');

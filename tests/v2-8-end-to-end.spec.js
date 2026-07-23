@@ -66,7 +66,8 @@ for (const fixture of FIXTURES_TO_RUN) {
         };
       });
       // Overview button added in v2.1.0 between Edit and the action triplet.
-      expect(out.buttons).toEqual(['edit', 'overview', 'export', 'handoff', 'undo', 'redo']);
+      // v2.11 merges the former Handoff button into Export (badge + menu).
+      expect(out.buttons).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
       // White-text liquid-glass recipe: tint trimmed to 0.12 with the
       // brightness drop carrying the contrast (see toolbar CSS).
       expect(out.bg).toBe('rgba(255, 255, 255, 0.12)');
@@ -154,8 +155,11 @@ for (const fixture of FIXTURES_TO_RUN) {
       await fs.fill('72');
       await fs.press('Enter');
 
+      // v2.11 — Export opens the action menu instead of downloading
+      // directly; row 1 (no annotations here) is the equivalent clean save.
       const downloadPromise = page.waitForEvent('download', { timeout: 10_000 });
       await page.locator('#wfp-editor-root .wfpe-toolbar-btn[data-action="export"]').click();
+      await page.locator('#wfp-editor-root .wfpe-export-menu-item[data-action="save-in-place"]').click();
       const download = await downloadPromise;
       const stream = await download.createReadStream();
       const chunks = [];

@@ -15,7 +15,15 @@ const rowSel = '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]
 const textareaSel = '#wfp-editor-root .wfpe-annotation-input';
 const saveSel = '#wfp-editor-root .wfpe-annotation-save-btn';
 const deleteSel = '#wfp-editor-root .wfpe-annotation-delete-btn';
-const handoffSel = '#wfp-editor-root button[data-action="handoff"]';
+// v2.11 — the standalone Handoff button was merged into Export (badge +
+// action menu). "handoffDisabled" below is kept as a field name for
+// minimal diff, but now reflects the export badge's zero/non-zero count
+// (row 1 is never actually disabled post-merge — it degrades to a plain
+// save at zero annotations).
+const exportBtnSel = '#wfp-editor-root button[data-action="export"]';
+const exportPrimarySel = '#wfp-editor-root .wfpe-export-menu-item[data-action="save-in-place"]';
+const exportCleanSel = '#wfp-editor-root .wfpe-export-menu-item[data-action="clean-copy"]';
+const exportBadgeSel = '#wfp-editor-root .wfpe-export-badge';
 const markerSel = '#wfp-editor-root .wfpe-annotation-badge';
 const statusSel = '#wfp-editor-root .wfpe-annotation-status';
 
@@ -60,7 +68,7 @@ async function readAnnotation(page, selector = '.slide.active h1') {
       id: el?.getAttribute('data-wfp-edit-annotation-id') || '',
       text: el?.getAttribute('data-wfp-edit-annotation-text') || '',
       annotatedCount: document.querySelectorAll('[data-wfp-edit-annotation-id]').length,
-      handoffDisabled: document.querySelector('#wfp-editor-root button[data-action="handoff"]')?.disabled,
+      handoffDisabled: (document.querySelector('#wfp-editor-root .wfpe-export-badge')?.dataset.count || '0') === '0',
       markerCount: document.querySelectorAll('#wfp-editor-root .wfpe-annotation-badge').length,
       rowDirty: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.dirty || '',
       rowHasNote: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.hasNote || '',
@@ -78,15 +86,23 @@ async function readDownloadAsString(download) {
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
 }
 
+// v2.11 — Cmd/Ctrl+S is now a macro for the export menu's row 1 (the
+// "primary"/recommended action), which performs the *handoff* save when
+// annotations exist (see triggerPrimaryExport in editor.js). A guaranteed
+// clean/no-annotations export is therefore row 2 ("Clean copy") in the
+// menu, not the keyboard shortcut — both existing call sites below fire
+// while an annotation is present, so they're rerouted through the menu.
 async function triggerNormalExport(page) {
   const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
-  await page.keyboard.press('ControlOrMeta+s');
+  await page.locator(exportBtnSel).click();
+  await page.locator(exportCleanSel).click();
   return downloadPromise;
 }
 
 async function triggerHandoffExport(page) {
   const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
-  await page.locator(handoffSel).click();
+  await page.locator(exportBtnSel).click();
+  await page.locator(exportPrimarySel).click();
   return downloadPromise;
 }
 
@@ -101,7 +117,7 @@ test.describe('v2.5 — agent handoff annotations', () => {
     await loadReady(page);
 
     expect(await page.locator('#wfp-editor-root .wfpe-inspector').getAttribute('data-visible')).toBe('false');
-    await expect(page.locator(handoffSel)).toBeDisabled();
+    await expect(page.locator(exportBadgeSel)).toHaveAttribute('data-count', '0');
     await expect(page.locator(markerSel)).toHaveCount(0);
 
     await clickToSelect(page, '.slide.active h1');
@@ -244,7 +260,7 @@ test.describe('v2.5 — agent handoff annotations', () => {
       markerCount: document.querySelectorAll('#wfp-editor-root .wfpe-annotation-badge').length,
       headingNote: document.querySelector('.slide.active h1')?.getAttribute('data-wfp-edit-annotation-text') || '',
       paragraphNote: document.querySelector('.slide.active .foreign-note')?.getAttribute('data-wfp-edit-annotation-text') || '',
-      handoffDisabled: document.querySelector('#wfp-editor-root button[data-action="handoff"]')?.disabled,
+      handoffDisabled: (document.querySelector('#wfp-editor-root .wfpe-export-badge')?.dataset.count || '0') === '0',
     }));
 
     expect(state.annotatedCount).toBe(2);

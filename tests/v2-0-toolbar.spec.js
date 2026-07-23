@@ -9,8 +9,9 @@ const FIXTURE_PATH = path.join(PROJECT_ROOT, 'fixtures', 'foreign-deck.html');
 
 // v2.0 toolbar contract, restyled by v2.10 "Ink Glass" (design 3b):
 // icon-only 36px bar, dark-tinted glass identical in both colour schemes,
-// button order Edit · Overview · Export · Handoff · Undo · Redo · collapse
-// chevron. Behavioural parity with v1 is covered by the existing v1 suite;
+// button order Edit · Overview · Export · Undo · Redo · collapse chevron
+// (v2.11 merges the former Handoff button into Export — badge + action
+// menu). Behavioural parity with v1 is covered by the existing v1 suite;
 // these tests pin the visual contract from the designer handoff
 // (feature-briefs/v2-ink-glass-ui.md).
 
@@ -22,7 +23,7 @@ async function loadToolbarFixture(page) {
 }
 
 test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
-  test('toolbar buttons render in order Edit · Overview · Export · Handoff · Undo · Redo · collapse, icon-only with aria-labels', async ({ page }) => {
+  test('toolbar buttons render in order Edit · Overview · Export · Undo · Redo · collapse, icon-only with aria-labels', async ({ page }) => {
     await loadToolbarFixture(page);
 
     const buttons = await page.evaluate(() => {
@@ -37,7 +38,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
     });
 
     expect(buttons.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'export', 'handoff', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
     for (const b of buttons) {
       expect(b.hasIcon).toBe(true);
@@ -136,7 +137,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
 
     expect(visibilityOn.every((b) => b.display !== 'none')).toBe(true);
     expect(visibilityOn.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'export', 'handoff', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
   });
 
@@ -152,7 +153,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
       });
     });
 
-    expect(iconStats).toHaveLength(6);
+    expect(iconStats).toHaveLength(5);
     for (const s of iconStats) {
       expect(s.width).toBe('15px');
       expect(s.height).toBe('15px');
