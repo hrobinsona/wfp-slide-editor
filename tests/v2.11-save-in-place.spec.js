@@ -34,12 +34,64 @@ async function addNote(page, note) {
   await page.locator('#wfp-editor-root .wfpe-annotation-save-btn').click();
 }
 
+// Real Chromium (even headless) implements showSaveFilePicker on file:// and
+// http://localhost, so canSaveInPlace() is true by default in these tests
+// unless explicitly disabled. Legacy-destination tests exercise the
+// no-FSA/Safari-Firefox fallback path on purpose, so they force the API away
+// — matching the "no File System Access API" test below — rather than
+// accidentally hitting the real (headless, dialog-less) picker, which
+// synchronously aborts.
+async function disableFsa(page) {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+  });
+}
+
 async function readDownloadAsString(download) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}-${download.suggestedFilename()}`;
   const out = path.join(OUTPUT_DIR, unique);
   await download.saveAs(out);
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
+}
+
+// Installs a controllable fake File System Access API. Must be registered
+// before page.goto. Modes: 'ok' (default), 'abort' (picker throws
+// AbortError), 'stale-once' (first createWritable throws NotFoundError).
+async function installFsaStub(page) {
+  await page.addInitScript(() => {
+    window.__fsa = { pickerCalls: [], written: [], mode: 'ok', permission: 'granted', requestCalls: 0, staleUsed: false };
+    window.showSaveFilePicker = async (opts) => {
+      window.__fsa.pickerCalls.push((opts && opts.suggestedName) || null);
+      if (window.__fsa.mode === 'abort') {
+        const err = new Error('user cancelled');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return {
+        name: (opts && opts.suggestedName) || 'stub.html',
+        queryPermission: async () => window.__fsa.permission,
+        requestPermission: async () => {
+          window.__fsa.requestCalls += 1;
+          window.__fsa.permission = 'granted';
+          return 'granted';
+        },
+        createWritable: async () => {
+          if (window.__fsa.mode === 'stale-once' && !window.__fsa.staleUsed) {
+            window.__fsa.staleUsed = true;
+            const err = new Error('file moved');
+            err.name = 'NotFoundError';
+            throw err;
+          }
+          let buf = '';
+          return {
+            write: async (data) => { buf += String(data); },
+            close: async () => { window.__fsa.written.push(buf); },
+          };
+        },
+      };
+    };
+  });
 }
 
 test.describe('v2.11 — export action menu (legacy destinations)', () => {
@@ -89,6 +141,7 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
   });
 
   test('Enter while open runs the primary action', async ({ page }) => {
+    await disableFsa(page);
     await loadReady(page);
 
     await page.click(exportBtnSel);
@@ -103,6 +156,7 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
   });
 
   test('Cmd+S dispatches primary without opening the menu', async ({ page }) => {
+    await disableFsa(page);
     await loadReady(page);
     await addNote(page, 'CMD S NOTE');
     await expect(page.locator(menuSel)).toHaveAttribute('data-open', 'false');
@@ -130,5 +184,108 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
     const { content } = await readDownloadAsString(download);
     expect(content).not.toContain('wfpe-export-menu');
     expect(content).not.toContain('data-wfp-edit');
+  });
+});
+
+test.describe('v2.11 — save-in-place engine', () => {
+  test('Cmd+S writes the clean document over the source file via the picker', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    const fsa = await page.evaluate(() => window.__fsa);
+    expect(fsa.pickerCalls).toEqual(['foreign-deck.html']);
+    expect(fsa.written[0].startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(fsa.written[0]).not.toContain('data-wfp-edit');
+    expect(fsa.written[0]).not.toContain('wfp-editor-root');
+    expect(fsa.written[0]).not.toContain('data-wfp-agent-annotations');
+  });
+
+  test('second save is silent — no second picker call', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 2);
+    expect(await page.evaluate(() => window.__fsa.pickerCalls.length)).toBe(1);
+  });
+
+  test('annotated save writes handoff metadata and toasts the note count', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await addNote(page, 'SAVE ENGINE NOTE');
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    const written = await page.evaluate(() => window.__fsa.written[0]);
+    expect(written).toContain('data-wfp-agent-annotations');
+    expect(written).toContain('SAVE ENGINE NOTE');
+    await expect(page.locator('#wfp-editor-root .wfpe-toast').last()).toHaveText('Saved foreign-deck.html — 1 agent note');
+  });
+
+  test('cancelled picker saves nothing and recovers on retry', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.evaluate(() => { window.__fsa.mode = 'abort'; });
+    await page.keyboard.press('Meta+s');
+    await expect(page.locator('#wfp-editor-root .wfpe-toast')).toHaveText('Save cancelled.');
+    expect(await page.evaluate(() => window.__fsa.written.length)).toBe(0);
+    await page.evaluate(() => { window.__fsa.mode = 'ok'; });
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    expect(await page.evaluate(() => window.__fsa.pickerCalls.length)).toBe(2);
+  });
+
+  test('permission re-grant path: prompt state triggers requestPermission, not a picker', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    await page.evaluate(() => { window.__fsa.permission = 'prompt'; });
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 2);
+    const fsa = await page.evaluate(() => window.__fsa);
+    expect(fsa.requestCalls).toBe(1);
+    expect(fsa.pickerCalls.length).toBe(1);
+  });
+
+  test('stale handle re-opens the picker and retries the write', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    await page.evaluate(() => { window.__fsa.mode = 'stale-once'; });
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 2);
+    expect(await page.evaluate(() => window.__fsa.pickerCalls.length)).toBe(2);
+  });
+
+  test('no File System Access API: Cmd+S falls back to the legacy download', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+    });
+    await loadReady(page);
+    await page.locator(exportBtnSel).click();
+    await expect(page.locator(`${primarySel} .wfpe-export-menu-sub`)).toHaveText('Edits only — Downloads');
+    await page.keyboard.press('Escape');
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
+    await page.keyboard.press('Meta+s');
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('foreign-deck-edited.html');
+  });
+
+  test('menu Enter and clean-copy row behave with the engine active', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.locator(exportBtnSel).click();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    await page.locator(exportBtnSel).click();
+    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
+    await page.locator(cleanSel).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe('foreign-deck-edited.html');
+    expect(await page.evaluate(() => window.__fsa.written.length)).toBe(1);
   });
 });

@@ -30,6 +30,17 @@ const statusSel = '#wfp-editor-root .wfpe-annotation-status';
 test.use({ viewport: { width: 2000, height: 1200 } });
 
 async function loadReady(page) {
+  // v2.11 — Cmd+S / the export menu's row 1 now prefer the save-in-place
+  // engine when the File System Access API is present (real headless
+  // Chromium has it on file:// origins). This spec is about the
+  // annotation/handoff system, not the save engine, and asserts on the
+  // legacy download it used to always produce — so force that fallback
+  // path explicitly rather than hitting the real (headless, dialog-less)
+  // picker, which synchronously aborts. See tests/v2.11-save-in-place.spec.js
+  // for save-engine coverage.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+  });
   await page.goto(pathToFileURL(FIXTURE_PATH).href);
   await page.locator('.slide.active').first().waitFor({ state: 'attached', timeout: 10_000 });
   await page.addScriptTag({ path: EDITOR_PATH });

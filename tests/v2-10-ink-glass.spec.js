@@ -301,6 +301,13 @@ test.describe('v2.10 — typography section', () => {
 
 test.describe('v2.10 — export stays clean', () => {
   test('exported HTML carries no editor chrome, wrappers, or typography controls', async ({ page }) => {
+    // v2.11 — Cmd+S now prefers the save-in-place engine when the File
+    // System Access API is present (real headless Chromium has it on
+    // file:// origins). This spec is about export content cleanliness, not
+    // the save engine, so force the legacy download fallback explicitly.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+    });
     await loadHarness(page);
     await page.keyboard.press('e');
     await clickToSelect(page, '.s1 .headline');

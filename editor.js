@@ -2097,15 +2097,19 @@
     exportBtn.setAttribute('aria-expanded', 'false');
   }
   // Single dispatcher for menu row 1, Enter-while-open, and Cmd/Ctrl+S.
-  // Task 1: legacy destinations (downloads). Task 2 reroutes this to the
-  // save-in-place engine.
+  // Task 2: save-in-place is primary; legacy download is the Safari/Firefox
+  // fallback when the File System Access API isn't available. saveInPlace()
+  // is deliberately not awaited here — this fires from a click/keydown
+  // handler and must call the native picker within the same user gesture.
   function triggerPrimaryExport() {
     closeExportMenu();
-    if (getAnnotatedElements(document).length > 0) {
-      exportHandoffHTML();
-    } else {
-      exportHTML();
+    if (!canSaveInPlace()) {
+      // Safari/Firefox fallback — v2.5 download behaviour.
+      if (getAnnotatedElements(document).length > 0) exportHandoffHTML();
+      else exportHTML();
+      return;
     }
+    saveInPlace();
   }
   exportBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -2870,6 +2874,9 @@
     } else {
       label.textContent = 'Save';
       sub.textContent = 'Edits only';
+    }
+    if (!canSaveInPlace()) {
+      sub.textContent += ' — Downloads';
     }
     const cleanLabel = exportCleanItem.querySelector('.wfpe-export-menu-label');
     const cleanSub = exportCleanItem.querySelector('.wfpe-export-menu-sub');
@@ -5505,6 +5512,149 @@
 
   document.addEventListener('mousedown', onMouseDown, true);
   // ===========================================================================
+  // Save-in-place engine (v2.11)
+  //
+  // Chromium-only File System Access path. First save binds a file handle
+  // via the native picker (the one interaction Chrome's security model
+  // requires); subsequent saves write silently. The handle is persisted to
+  // IndexedDB keyed by the page URL so a reload only costs a one-click
+  // permission re-grant instead of a fresh picker. Storage failures are
+  // swallowed: persistence is an optimisation, never a gate on saving.
+  // ===========================================================================
+  const HANDLE_DB_NAME = 'wfp-editor';
+  const HANDLE_STORE_NAME = 'handles';
+  let boundFileHandle = null;
+
+  function canSaveInPlace() {
+    return typeof window.showSaveFilePicker === 'function';
+  }
+
+  function deriveSourceFilename() {
+    return deriveExportFilename('');
+  }
+
+  function openHandleDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(HANDLE_DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore(HANDLE_STORE_NAME);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function loadStoredHandle() {
+    try {
+      const db = await openHandleDb();
+      return await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readonly');
+        const req = tx.objectStore(HANDLE_STORE_NAME).get(location.href);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function storeBoundHandle(handle) {
+    try {
+      const db = await openHandleDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+        tx.objectStore(HANDLE_STORE_NAME).put(handle, location.href);
+        tx.oncomplete = resolve;
+        tx.onabort = resolve;
+        tx.onerror = resolve;
+      });
+    } catch (_) {
+      /* persistence is best-effort */
+    }
+  }
+
+  async function forgetBoundHandle() {
+    boundFileHandle = null;
+    try {
+      const db = await openHandleDb();
+      await new Promise((resolve) => {
+        const tx = db.transaction(HANDLE_STORE_NAME, 'readwrite');
+        tx.objectStore(HANDLE_STORE_NAME).delete(location.href);
+        tx.oncomplete = resolve;
+        tx.onabort = resolve;
+        tx.onerror = resolve;
+      });
+    } catch (_) {
+      /* best-effort */
+    }
+  }
+
+  async function ensureHandleWritable(handle) {
+    try {
+      if (typeof handle.queryPermission === 'function') {
+        if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+        if (typeof handle.requestPermission === 'function') {
+          return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+        }
+      }
+      return true; // no permission API on this handle — let the write decide
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function writeHtmlToHandle(handle, html) {
+    const writable = await handle.createWritable();
+    await writable.write(html);
+    await writable.close();
+  }
+
+  async function pickSourceHandle() {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: deriveSourceFilename(),
+      types: [{ description: 'HTML document', accept: { 'text/html': ['.html', '.htm'] } }],
+    });
+    boundFileHandle = handle;
+    await storeBoundHandle(handle);
+    return handle;
+  }
+
+  async function saveInPlace() {
+    if (state.editingText) endTextEdit();
+    const noteCount = getAnnotatedElements(document).length;
+    const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
+    try {
+      let handle = boundFileHandle;
+      if (!handle) {
+        handle = await pickSourceHandle();
+      } else if (!(await ensureHandleWritable(handle))) {
+        showToast(document.body, 'Save cancelled — file access not granted.');
+        return;
+      }
+      try {
+        await writeHtmlToHandle(handle, html);
+      } catch (err) {
+        // Stale handle (file moved/renamed/deleted): drop it and re-pick
+        // within the same user gesture, then retry once.
+        await forgetBoundHandle();
+        handle = await pickSourceHandle();
+        await writeHtmlToHandle(handle, html);
+      }
+      showToast(
+        document.body,
+        noteCount > 0
+          ? `Saved ${handle.name} — ${noteCount} agent note${noteCount === 1 ? '' : 's'}`
+          : `Saved ${handle.name}`,
+      );
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        showToast(document.body, 'Save cancelled.');
+        return;
+      }
+      showToast(document.body, `Save failed (${(err && err.name) || 'unknown'}) — try Export → Clean copy.`);
+    }
+  }
+  // ===========================================================================
   // Export
   //
   // Clone the live DOM, strip everything the editor injected (root + script
@@ -5810,6 +5960,11 @@
   // ===========================================================================
   // Ready
   // ===========================================================================
+  if (canSaveInPlace()) {
+    loadStoredHandle().then((handle) => {
+      if (handle) boundFileHandle = handle;
+    });
+  }
   window.__wfpEditorReady = true;
   console.log(`[wfp-editor] ready v${VERSION}`);
 })();
