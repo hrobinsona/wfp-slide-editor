@@ -893,12 +893,24 @@
     setSelectedElements(el ? [el] : [], el || null);
   }
 
+  // The typography rows and their bracketing dividers show/hide as one
+  // unit so non-text selections don't render a doubled rule between
+  // Size and the colour rows.
+  function setTypographyRowsVisible(visible) {
+    const d = visible ? '' : 'none';
+    typographyDividerTop.style.display = d;
+    fontSizeRow.style.display = d;
+    weightRow.row.style.display = d;
+    alignRow.row.style.display = d;
+    typographyDividerBottom.style.display = d;
+  }
+
   function populateInspector(el) {
     if (!el) {
       for (const k of ['x', 'y', 'w', 'h', 'fontSize', 'opacity']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
       }
-      fontSizeRow.style.display = 'none';
+      setTypographyRowsVisible(false);
       textColourRow.row.style.display = 'none';
       populateColours(null);
       populateAnnotation(null);
@@ -918,15 +930,17 @@
       if (document.activeElement === inspectorInputs[k]) continue;
       inspectorInputs[k].value = values[k];
     }
-    // Font-size + text-colour rows render only for text-bearing elements
-    // (matching BRIEF "Conditional content by selection type").
-    // Background colour and position/size render for any selection.
+    // Typography (font/weight/align) + text-colour rows render only for
+    // text-bearing elements (matching BRIEF "Conditional content by
+    // selection type"). Background colour and position/size render for
+    // any selection.
     if (isTextBearing(el)) {
-      fontSizeRow.style.display = '';
+      setTypographyRowsVisible(true);
       textColourRow.row.style.display = '';
       populateFontSize(el);
+      populateTypography(el);
     } else {
-      fontSizeRow.style.display = 'none';
+      setTypographyRowsVisible(false);
       textColourRow.row.style.display = 'none';
     }
     populateColours(el);
@@ -1046,10 +1060,33 @@
     if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
-    // Slider snaps to its [min, max] range — clamp the displayed value.
-    const sliderMax = Number(fontSlider.max) || 200;
-    const sliderMin = Number(fontSlider.min) || FONT_SIZE_MIN_PX;
-    fontSlider.value = String(Math.max(sliderMin, Math.min(sliderMax, px)));
+  }
+
+  // Typography seg-state (ink-glass 3b). Computed font-weight normalises
+  // to a number string; anything that isn't exactly one of the three
+  // offered stops (400/500/700) lights no segment rather than lying
+  // about the nearest one. text-align's 'start'/'end' resolve by
+  // direction; the editor targets ltr decks so start→left, end→right.
+  function normalizeFontWeight(raw) {
+    const map = { normal: '400', bold: '700' };
+    return map[raw] || String(parseInt(raw, 10) || '');
+  }
+
+  function normalizeTextAlign(raw) {
+    const map = { start: 'left', end: 'right', '-webkit-auto': 'left' };
+    return map[raw] || raw;
+  }
+
+  function populateTypography(el) {
+    const cs = el ? getComputedStyle(el) : null;
+    const weight = cs ? normalizeFontWeight(cs.fontWeight) : '';
+    const align = cs ? normalizeTextAlign(cs.textAlign) : '';
+    for (const b of weightRow.buttons) {
+      b.dataset.active = b.dataset.wfpeValue === weight ? 'true' : 'false';
+    }
+    for (const b of alignRow.buttons) {
+      b.dataset.active = b.dataset.wfpeValue === align ? 'true' : 'false';
+    }
   }
 
   function populateOpacity(el) {
@@ -1134,9 +1171,17 @@
   // ===========================================================================
   function refreshInspector() {
     const visible = getSelectedElements().length === 1 && !!state.selected;
+    // Ink-glass 3b: selection drives the dock fold and the toolbar's
+    // bottom-corner morph together — they must never disagree, or the
+    // seam breaks (squared bar over no panel, or panel under a capsule).
+    inspectorDock.dataset.visible = visible ? 'true' : 'false';
+    toolbar.dataset.docked = visible ? 'true' : 'false';
+    // Legacy mirror — no CSS keys off this any more, but it's a stable
+    // hook existing tests/tooling query.
     inspector.dataset.visible = visible ? 'true' : 'false';
     inspector.dataset.state = state.inspectorMinimised ? 'minimised' : 'expanded';
-    inspectorMinimiseBtn.innerHTML = state.inspectorMinimised ? ICONS.chevronDown : ICONS.chevronUp;
+    // The minimise chevron is a single icon rotated by CSS; only the
+    // accessible naming changes with state.
     inspectorMinimiseBtn.title = state.inspectorMinimised ? 'Expand' : 'Minimise';
     inspectorMinimiseBtn.setAttribute(
       'aria-label',

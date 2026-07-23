@@ -29,7 +29,8 @@ tests/
 ├── v2-1-6-end-to-end.spec.js      # v2.1 end-to-end coverage.
 ├── v2-overview.spec.js            # Overview grid, reorder, delete, export.
 ├── v2-multi-select.spec.js        # Cmd/Ctrl-click multi-select and group movement.
-└── v2-agent-annotations.spec.js   # Agent note authoring, visible circular markers, and handoff export.
+├── v2-agent-annotations.spec.js   # Agent note authoring, visible circular markers, and handoff export.
+└── v2-10-ink-glass.spec.js        # Ink-glass instrument states (dock/collapse/minimise) + typography section. Runs against dev/harness.html, no private fixtures needed.
 ```
 
 Use `rg --files tests` for the exact current file list.

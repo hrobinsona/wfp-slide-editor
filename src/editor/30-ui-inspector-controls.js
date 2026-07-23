@@ -30,15 +30,11 @@
       '<path d="m15 14 5-5-5-5" />' +
       '<path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5v0A5.5 5.5 0 0 0 9.5 20H13" />' +
       '</svg>',
-    // Chevron-up: shown on the inspector header when expanded (click → minimise)
+    // Chevron-up: inspector minimise control. CSS rotates it 180° in the
+    // minimised state (ink-glass 3b) — no swap to a down variant.
     chevronUp:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="18 15 12 9 6 15" />' +
-      '</svg>',
-    // Chevron-down: shown on the inspector header when minimised (click → expand)
-    chevronDown:
-      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
-      '<polyline points="6 9 12 15 18 9" />' +
       '</svg>',
     // Counter-clockwise refresh — paired with "Reset" in the inspector.
     refresh:
@@ -68,6 +64,31 @@
       '<rect x="3" y="14" width="7" height="7" rx="1" />' +
       '<rect x="14" y="14" width="7" height="7" rx="1" />' +
       '</svg>',
+    // Chevron-right: toolbar collapse control (ink-glass 3b). CSS rotates
+    // it 180° while the bar is collapsed — no innerHTML swapping.
+    chevronRight:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="9 18 15 12 9 6" />' +
+      '</svg>',
+    // Text-align triplet — inspector Align segmented control (ink-glass 3b).
+    alignLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="3" y1="6" x2="21" y2="6" />' +
+      '<line x1="3" y1="12" x2="15" y2="12" />' +
+      '<line x1="3" y1="18" x2="17" y2="18" />' +
+      '</svg>',
+    alignCenter:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="3" y1="6" x2="21" y2="6" />' +
+      '<line x1="6" y1="12" x2="18" y2="12" />' +
+      '<line x1="5" y1="18" x2="19" y2="18" />' +
+      '</svg>',
+    alignRight:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="3" y1="6" x2="21" y2="6" />' +
+      '<line x1="9" y1="12" x2="21" y2="12" />' +
+      '<line x1="7" y1="18" x2="21" y2="18" />' +
+      '</svg>',
     // Small × — overview thumbnail delete button (v2.1.4). No wfpe-icon
     // class here because the delete button stamps its own size via CSS
     // (10px) rather than the toolbar's 18px.
@@ -81,17 +102,20 @@
   const toolbar = document.createElement('div');
   toolbar.className = 'wfpe-toolbar';
   toolbar.dataset.mode = 'off';
+  toolbar.dataset.docked = 'false';
+  toolbar.dataset.collapsed = 'false';
 
-  // The mode badge IS the Edit toggle. Label is the constant "Edit"; the
-  // active state is signalled by data-mode (peach fill) rather than by
-  // text mutation.
+  // The mode badge IS the Edit toggle. Icon-only (ink-glass 3b); the
+  // active state is signalled by data-mode (coral fill). title/aria-label
+  // carry the text the removed label span used to provide.
   const badge = document.createElement('button');
   badge.type = 'button';
   badge.className = 'wfpe-mode-badge';
   badge.dataset.mode = 'off';
   badge.dataset.action = 'edit';
   badge.title = 'Toggle edit mode (E)';
-  badge.innerHTML = ICONS.edit + '<span class="wfpe-mode-label">Edit</span>';
+  badge.setAttribute('aria-label', 'Toggle edit mode');
+  badge.innerHTML = ICONS.edit;
   toolbar.appendChild(badge);
 
   function makeToolbarButton(action, label, hint, iconKey) {
@@ -100,7 +124,8 @@
     b.className = 'wfpe-toolbar-btn';
     b.dataset.action = action;
     b.title = hint;
-    b.innerHTML = ICONS[iconKey] + `<span>${label}</span>`;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = ICONS[iconKey];
     return b;
   }
 
@@ -115,17 +140,58 @@
   handoffBtn.setAttribute('aria-disabled', 'true');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
-  toolbar.appendChild(overviewBtn);
-  toolbar.appendChild(exportBtn);
-  toolbar.appendChild(handoffBtn);
-  toolbar.appendChild(undoBtn);
-  toolbar.appendChild(redoBtn);
+
+  // Ink-glass 3b: Overview→Redo (+ trailing divider) fold away when the
+  // bar collapses; Edit and the chevron stay. The fold wrapper animates
+  // grid-template-columns 1fr↔0fr (see CSS) so the group visually
+  // compresses instead of being clipped mid-icon.
+  const toolbarFold = document.createElement('div');
+  toolbarFold.className = 'wfpe-toolbar-fold';
+  const toolbarFoldInner = document.createElement('div');
+  toolbarFoldInner.className = 'wfpe-toolbar-fold-inner';
+  toolbarFold.appendChild(toolbarFoldInner);
+  toolbarFoldInner.appendChild(overviewBtn);
+  toolbarFoldInner.appendChild(exportBtn);
+  toolbarFoldInner.appendChild(handoffBtn);
+  toolbarFoldInner.appendChild(undoBtn);
+  toolbarFoldInner.appendChild(redoBtn);
+  const toolbarDivider = document.createElement('div');
+  toolbarDivider.className = 'wfpe-toolbar-divider';
+  toolbarFoldInner.appendChild(toolbarDivider);
+  toolbar.appendChild(toolbarFold);
+
+  const toolbarCollapseBtn = document.createElement('button');
+  toolbarCollapseBtn.type = 'button';
+  toolbarCollapseBtn.className = 'wfpe-toolbar-collapse';
+  toolbarCollapseBtn.dataset.action = 'toolbar-collapse';
+  toolbarCollapseBtn.title = 'Collapse toolbar';
+  toolbarCollapseBtn.setAttribute('aria-label', 'Collapse toolbar');
+  toolbarCollapseBtn.innerHTML = ICONS.chevronRight;
+  toolbar.appendChild(toolbarCollapseBtn);
+
+  function setToolbarCollapsed(value) {
+    state.toolbarCollapsed = !!value;
+    toolbar.dataset.collapsed = state.toolbarCollapsed ? 'true' : 'false';
+    const label = state.toolbarCollapsed ? 'Expand toolbar' : 'Collapse toolbar';
+    toolbarCollapseBtn.title = label;
+    toolbarCollapseBtn.setAttribute('aria-label', label);
+  }
 
   root.appendChild(toolbar);
 
-  // Inspector panel (v2.1 scaffold). Hidden by default; shown when an
-  // element is selected. The body is intentionally empty in v2.1 — phases
-  // v2.2-v2.6 plug in the position/size/font/colour/reset controls.
+  // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
+  // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
+  // top: 53px = 16 + 36 bar + 1px seam) animates the whole segment open/
+  // shut on select/deselect via grid-template-rows, replacing the old
+  // display:none toggle on the panel itself. The panel's data-visible
+  // attribute is kept in sync purely as a stable hook for tests.
+  const inspectorDock = document.createElement('div');
+  inspectorDock.className = 'wfpe-inspector-dock';
+  inspectorDock.dataset.visible = 'false';
+  const inspectorDockInner = document.createElement('div');
+  inspectorDockInner.className = 'wfpe-inspector-dock-inner';
+  inspectorDock.appendChild(inspectorDockInner);
+
   const inspector = document.createElement('div');
   inspector.className = 'wfpe-inspector';
   inspector.dataset.visible = 'false';
@@ -145,14 +211,24 @@
   inspectorMinimiseBtn.dataset.action = 'minimise';
   inspectorMinimiseBtn.title = 'Minimise';
   inspectorMinimiseBtn.setAttribute('aria-label', 'Minimise inspector');
+  // Single chevron; CSS rotates it 180° in the minimised state.
   inspectorMinimiseBtn.innerHTML = ICONS.chevronUp;
   inspectorHeader.appendChild(inspectorMinimiseBtn);
 
   inspector.appendChild(inspectorHeader);
 
+  // Minimise folds the body via the same grid-rows trick as the dock,
+  // leaving the 36px header as a capsule symmetric with the toolbar.
+  const inspectorFold = document.createElement('div');
+  inspectorFold.className = 'wfpe-inspector-fold';
+  const inspectorFoldInner = document.createElement('div');
+  inspectorFoldInner.className = 'wfpe-inspector-fold-inner';
+  inspectorFold.appendChild(inspectorFoldInner);
+  inspector.appendChild(inspectorFold);
+
   const inspectorBody = document.createElement('div');
   inspectorBody.className = 'wfpe-inspector-body';
-  inspector.appendChild(inspectorBody);
+  inspectorFoldInner.appendChild(inspectorBody);
 
   // Position + size rows (v2.2). Each input commits on Enter or blur and
   // produces one history entry via the txn machinery; live drag/resize
@@ -202,31 +278,21 @@
     opacity: null, // assigned after the opacity row is built below
   };
 
-  // Font-size row (v2.3): label on its own line, then a single control
-  // sub-row [input·px][−][slider][+]. Renders only for text-bearing
-  // elements. History contract: input commit (Enter/blur) = one entry,
-  // ± click = one entry, slider drag (mousedown→mouseup) = one entry.
+  // Font row (v2.3, restyled for ink-glass 3b): a standard 66px-label
+  // grid row with a −/field/+ stepper. Design 3b drops the slider.
+  // Renders only for text-bearing elements. History contract: input
+  // commit (Enter/blur) = one entry, ± click = one entry.
   const fontSizeRow = document.createElement('div');
   fontSizeRow.className = 'wfpe-inspector-row';
   fontSizeRow.dataset.wfpeRow = 'font-size';
 
   const fontSizeRowLabel = document.createElement('span');
   fontSizeRowLabel.className = 'wfpe-inspector-row-label';
-  fontSizeRowLabel.textContent = 'Font size';
+  fontSizeRowLabel.textContent = 'Font';
   fontSizeRow.appendChild(fontSizeRowLabel);
 
   const fontControl = document.createElement('div');
   fontControl.className = 'wfpe-font-control';
-
-  const fieldFontSize = makeInspectorField('fontSize', '');
-  // The font-size input has no axis label — the row label says "Font size".
-  fieldFontSize.wrap.querySelector('.wfpe-inspector-field-axis').remove();
-  fieldFontSize.input.min = String(FONT_SIZE_MIN_PX);
-  const fontUnit = document.createElement('span');
-  fontUnit.className = 'wfpe-font-unit';
-  fontUnit.textContent = 'px';
-  fieldFontSize.wrap.appendChild(fontUnit);
-  fontControl.appendChild(fieldFontSize.wrap);
 
   const fontMinusBtn = document.createElement('button');
   fontMinusBtn.type = 'button';
@@ -237,17 +303,15 @@
   fontMinusBtn.textContent = '−';
   fontControl.appendChild(fontMinusBtn);
 
-  const fontSlider = document.createElement('input');
-  fontSlider.type = 'range';
-  fontSlider.className = 'wfpe-font-slider';
-  fontSlider.dataset.wfpeProp = 'fontSizeSlider';
-  fontSlider.min = String(FONT_SIZE_MIN_PX);
-  // Cap somewhere generous but bounded — v1 has no max for the keyboard
-  // nudge, but the slider needs a finite range. 200px covers any
-  // realistic display heading size.
-  fontSlider.max = '200';
-  fontSlider.step = '1';
-  fontControl.appendChild(fontSlider);
+  const fieldFontSize = makeInspectorField('fontSize', '');
+  // The font-size input has no axis label — the row label says "Font".
+  fieldFontSize.wrap.querySelector('.wfpe-inspector-field-axis').remove();
+  fieldFontSize.input.min = String(FONT_SIZE_MIN_PX);
+  const fontUnit = document.createElement('span');
+  fontUnit.className = 'wfpe-font-unit';
+  fontUnit.textContent = 'px';
+  fieldFontSize.wrap.appendChild(fontUnit);
+  fontControl.appendChild(fieldFontSize.wrap);
 
   const fontPlusBtn = document.createElement('button');
   fontPlusBtn.type = 'button';
@@ -259,11 +323,68 @@
   fontControl.appendChild(fontPlusBtn);
 
   fontSizeRow.appendChild(fontControl);
-  inspectorBody.appendChild(fontSizeRow);
   inspectorInputs.fontSize = fieldFontSize.input;
+
+  // Typography section (ink-glass 3b): Weight + Align segmented controls.
+  // Both follow the font row's text-bearing visibility rule and commit
+  // through the same inspector-txn path (one history entry per click).
+  function makeSegRow(rowKey, label, items) {
+    const row = document.createElement('div');
+    row.className = 'wfpe-inspector-row';
+    row.dataset.wfpeRow = rowKey;
+    const lab = document.createElement('span');
+    lab.className = 'wfpe-inspector-row-label';
+    lab.textContent = label;
+    row.appendChild(lab);
+    const seg = document.createElement('div');
+    seg.className = 'wfpe-seg';
+    const buttons = items.map((item) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'wfpe-seg-item';
+      b.dataset.action = item.action;
+      b.dataset.wfpeValue = item.value;
+      b.dataset.active = 'false';
+      b.title = item.hint;
+      b.setAttribute('aria-label', item.hint);
+      if (item.iconKey) b.innerHTML = ICONS[item.iconKey];
+      else b.textContent = item.label;
+      seg.appendChild(b);
+      return b;
+    });
+    row.appendChild(seg);
+    return { row, buttons };
+  }
+
+  const weightRow = makeSegRow('font-weight', 'Weight', [
+    { action: 'font-weight', value: '400', label: 'Reg', hint: 'Regular (400)' },
+    { action: 'font-weight', value: '500', label: 'Med', hint: 'Medium (500)' },
+    { action: 'font-weight', value: '700', label: 'Bold', hint: 'Bold (700)' },
+  ]);
+  const alignRow = makeSegRow('text-align', 'Align', [
+    { action: 'text-align', value: 'left', iconKey: 'alignLeft', hint: 'Align left' },
+    { action: 'text-align', value: 'center', iconKey: 'alignCenter', hint: 'Align center' },
+    { action: 'text-align', value: 'right', iconKey: 'alignRight', hint: 'Align right' },
+  ]);
+
+  // Dividers bracket the typography section (Size ▸ | Font/Weight/Align | ▸
+  // colours). They hide with the section for non-text selections so the
+  // panel doesn't show a doubled rule.
+  function makeInspectorDivider() {
+    const d = document.createElement('div');
+    d.className = 'wfpe-inspector-divider';
+    return d;
+  }
+  const typographyDividerTop = makeInspectorDivider();
+  const typographyDividerBottom = makeInspectorDivider();
 
   inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
   inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
+  inspectorBody.appendChild(typographyDividerTop);
+  inspectorBody.appendChild(fontSizeRow);
+  inspectorBody.appendChild(weightRow.row);
+  inspectorBody.appendChild(alignRow.row);
+  inspectorBody.appendChild(typographyDividerBottom);
 
   // Colour rows (v2.4). Text colour for text-bearing only; background
   // colour for any selection. Each row composes a swatch (clickable
@@ -369,7 +490,7 @@
 
   const opacitySlider = document.createElement('input');
   opacitySlider.type = 'range';
-  opacitySlider.className = 'wfpe-font-slider';
+  opacitySlider.className = 'wfpe-opacity-slider';
   opacitySlider.dataset.wfpeProp = 'opacitySlider';
   opacitySlider.min = '0';
   opacitySlider.max = '100';
@@ -390,7 +511,7 @@
   annotationRow.appendChild(annotationLabel);
 
   const annotationTextarea = document.createElement('textarea');
-  annotationTextarea.className = 'wfpe-annotation-textarea';
+  annotationTextarea.className = 'wfpe-annotation-input';
   annotationTextarea.dataset.wfpeProp = 'annotation';
   annotationTextarea.placeholder = 'Instruction for agent cleanup';
   annotationTextarea.spellcheck = true;
@@ -425,11 +546,11 @@
   // Element action row. Duplicate/delete/reset live together to avoid
   // growing the inspector vertically as structural actions are added.
   const actionRow = document.createElement('div');
-  actionRow.className = 'wfpe-inspector-row';
+  actionRow.className = 'wfpe-action-row';
   actionRow.dataset.wfpeRow = 'actions';
   const duplicateBtn = document.createElement('button');
   duplicateBtn.type = 'button';
-  duplicateBtn.className = 'wfpe-duplicate-btn';
+  duplicateBtn.className = 'wfpe-action-btn wfpe-duplicate-btn';
   duplicateBtn.dataset.action = 'duplicate-element';
   duplicateBtn.innerHTML = ICONS.copy + '<span>Duplicate</span>';
   duplicateBtn.title = 'Duplicate selected element';
@@ -437,7 +558,7 @@
 
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
-  deleteBtn.className = 'wfpe-delete-btn';
+  deleteBtn.className = 'wfpe-action-btn wfpe-delete-btn';
   deleteBtn.dataset.action = 'delete-element';
   deleteBtn.innerHTML = ICONS.trash + '<span>Delete</span>';
   deleteBtn.title = 'Delete selected element';
@@ -449,14 +570,15 @@
   // inline style to clear.
   const resetBtn = document.createElement('button');
   resetBtn.type = 'button';
-  resetBtn.className = 'wfpe-reset-btn';
+  resetBtn.className = 'wfpe-action-btn wfpe-reset-btn';
   resetBtn.dataset.action = 'reset-styles';
   resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
   resetBtn.title = 'Clear all inline style overrides on the selected element';
   actionRow.appendChild(resetBtn);
   inspectorBody.appendChild(actionRow);
 
-  root.appendChild(inspector);
+  inspectorDockInner.appendChild(inspector);
+  root.appendChild(inspectorDock);
 
   // Dimension bubble (v2.2): floating "W × H" chip above the selection
   // ring. Tracks the same lifecycle as the ring.
@@ -588,43 +710,44 @@
     });
   }
 
-  // Font-size slider — one history entry per drag (mousedown→mouseup).
-  // Uses the inspector-txn isolation helpers so a slider drag during
-  // an open text-edit produces its own entry, separate from the typing.
-  let fontSliderTarget = null;
-  let fontSliderRestoreCtx = null;
-  fontSlider.addEventListener('mousedown', () => {
+  // Toolbar collapse chevron (ink-glass 3b) — pure chrome state, no
+  // interaction with edit/overview modes or history.
+  toolbarCollapseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    setToolbarCollapsed(!state.toolbarCollapsed);
+  });
+
+  // Typography segmented controls (ink-glass 3b). Same commit contract
+  // as the font-size ± buttons: one history entry per click via the
+  // inspector-txn isolation helpers, no-op guarded against the computed
+  // style so re-clicking the active segment doesn't pollute history.
+  function commitSegStyle(styleProp, value) {
     const el = state.selected;
     if (!el || !isTextBearing(el)) return;
-    fontSliderTarget = el;
-    fontSliderRestoreCtx = startInspectorTxn();
+    const cs = getComputedStyle(el);
+    const current = styleProp === 'fontWeight'
+      ? normalizeFontWeight(cs.fontWeight)
+      : normalizeTextAlign(cs.textAlign);
+    if (current === value) return;
+    const ctx = startInspectorTxn();
     touchElement(el);
-  });
-  fontSlider.addEventListener('input', () => {
-    // Bail if the slider is being driven without an open drag (e.g. by
-    // assistive tech keyboard navigation that didn't fire mousedown).
-    // The mousedown→mouseup bracket owns the txn; firing input outside
-    // it would create a per-tick history entry instead of one-per-drag.
-    if (!fontSliderTarget) return;
-    const el = fontSliderTarget;
-    if (!isTextBearing(el)) return;
-    const v = Math.max(FONT_SIZE_MIN_PX, parseFloat(fontSlider.value) || FONT_SIZE_MIN_PX);
-    el.style.fontSize = `${v}px`;
-    populateFontSize(el);
-  });
-  // Both mouseup (mouse drag) and change (keyboard / touch end) can end
-  // the drag; both close the inspector txn (which restores the text-
-  // edit txn if one was active). Idempotent on a no-op drag.
-  const endSliderDrag = () => {
-    if (!fontSliderTarget) return;
-    fontSliderTarget = null;
-    const ctx = fontSliderRestoreCtx;
-    fontSliderRestoreCtx = null;
+    el.style[styleProp] = value;
     endInspectorTxn(ctx);
-  };
-  fontSlider.addEventListener('mouseup', endSliderDrag);
-  fontSlider.addEventListener('change', endSliderDrag);
-  fontSlider.addEventListener('keydown', (e) => e.stopPropagation());
+    populateTypography(el);
+    refreshSelection();
+  }
+  for (const b of weightRow.buttons) {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      commitSegStyle('fontWeight', b.dataset.wfpeValue);
+    });
+  }
+  for (const b of alignRow.buttons) {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      commitSegStyle('textAlign', b.dataset.wfpeValue);
+    });
+  }
 
   // Opacity slider — same one-entry-per-drag contract as font-size.
   let opacitySliderTarget = null;

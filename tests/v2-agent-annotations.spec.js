@@ -12,7 +12,7 @@ const NOTE = 'ANNOTATION TEST UNIQUE: review this rewritten subsection for clari
 const NOTE_EDITED = 'ANNOTATION TEST UNIQUE: make this sharper and call out the missing point.';
 
 const rowSel = '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]';
-const textareaSel = '#wfp-editor-root .wfpe-annotation-textarea';
+const textareaSel = '#wfp-editor-root .wfpe-annotation-input';
 const saveSel = '#wfp-editor-root .wfpe-annotation-save-btn';
 const deleteSel = '#wfp-editor-root .wfpe-annotation-delete-btn';
 const handoffSel = '#wfp-editor-root button[data-action="handoff"]';
@@ -65,7 +65,7 @@ async function readAnnotation(page, selector = '.slide.active h1') {
       rowDirty: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.dirty || '',
       rowHasNote: document.querySelector('#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]')?.dataset.hasNote || '',
       status: document.querySelector('#wfp-editor-root .wfpe-annotation-status')?.textContent || '',
-      textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-textarea')?.value || '',
+      textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-input')?.value || '',
     };
   }, selector);
 }
@@ -260,12 +260,14 @@ test.describe('v2.5 — agent handoff annotations', () => {
     await expect(page.locator(rowSel)).toBeVisible();
 
     const layers = await page.evaluate(() => {
-      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      // Ink-glass 3b: the inspector's stacking stratum lives on its dock
+      // wrapper — the panel itself is z-index:auto inside the dock.
+      const inspectorDock = document.querySelector('#wfp-editor-root .wfpe-inspector-dock');
       const toolbar = document.querySelector('#wfp-editor-root .wfpe-toolbar');
       const annotationLayer = document.querySelector('#wfp-editor-root .wfpe-annotation-layer');
       const handle = document.querySelector('#wfp-editor-root .wfpe-handle');
       return {
-        inspector: Number(getComputedStyle(inspector).zIndex),
+        inspector: Number(getComputedStyle(inspectorDock).zIndex),
         toolbar: Number(getComputedStyle(toolbar).zIndex),
         annotationLayer: Number(getComputedStyle(annotationLayer).zIndex),
         handle: Number(getComputedStyle(handle).zIndex),
@@ -302,7 +304,7 @@ test.describe('v2.5 — agent handoff annotations', () => {
         annotatedCount: document.querySelectorAll('[data-wfp-edit-annotation-id]').length,
         cloneId: clone?.getAttribute('data-wfp-edit-annotation-id') || '',
         cloneText: clone?.getAttribute('data-wfp-edit-annotation-text') || '',
-        textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-textarea')?.value || '',
+        textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-input')?.value || '',
       };
     });
 
@@ -323,7 +325,7 @@ test.describe('v2.5 — agent handoff annotations', () => {
         cloneId: clone?.getAttribute('data-wfp-edit-annotation-id') || '',
         cloneText: clone?.getAttribute('data-wfp-edit-annotation-text') || '',
         cloneHandoffId: clone?.getAttribute('data-wfp-agent-annotation-id') || '',
-        textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-textarea')?.value || '',
+        textarea: document.querySelector('#wfp-editor-root .wfpe-annotation-input')?.value || '',
       };
     });
 

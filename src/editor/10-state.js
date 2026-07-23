@@ -14,6 +14,7 @@
     txn: null, // { snapshots: Map<Element, BeforeSnap>, captureHtml } when an op is in progress
     clipboard: null, // { outerHTML } session-only element copy/paste payload
     inspectorMinimised: false, // persists across selections within session; resets on reload
+    toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)

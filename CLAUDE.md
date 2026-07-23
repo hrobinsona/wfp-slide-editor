@@ -24,10 +24,12 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 - `npm install` - install dev dependencies.
 - `npm test` - run all Playwright tests.
 - `npm run dev` - serve the repo on port 8080 for local fixture testing.
-- `npm run build:bookmarklet` - generate `bookmarklet.txt`.
+- `npm run build:editor` - assemble `editor.js` from `src/editor/` fragments.
+- `npm run build:bookmarklet` - generate `bookmarklet.txt` (fails if `editor.js` is out of sync with `src/editor/`).
 
 ## Conventions
 
+- `editor.js` is **generated** — it is assembled by concatenating `src/editor/*.js` in order. Edit the fragments, then run `npm run build:editor`. Never let the two drift; `build:bookmarklet --check` enforces sync.
 - `editor.js` must work as a self-contained injected script.
 - Keep production runtime dependency-free.
 - All editor-injected DOM lives inside `#wfp-editor-root`.
