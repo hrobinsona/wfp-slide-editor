@@ -32,13 +32,28 @@
        radii         bar/panel 12px · docked corners 6px · buttons 8-9px · fields 7px
        ease          cubic-bezier(0.32, 0.72, 0, 1)
        durations     340ms toolbar collapse · 380ms dock/fold + corner morph ----- */
-    #${ROOT_ID} .wfpe-toolbar {
+    /* v2.11.2 — design 5b: toolbar, export-menu dock, and inspector dock
+       are segments of ONE fixed flex column with 1px seam gaps. The menu
+       docks in as the middle segment, pushing the inspector down with the
+       same 380ms grid fold both docks share. align-items keeps the
+       narrower toolbar hugged to the right edge over the 246px panels. */
+    #${ROOT_ID} .wfpe-stack {
       position: fixed;
       top: 16px;
       right: 16px;
+      width: 246px;
+      z-index: 4;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;                  /* the seams */
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-toolbar {
       width: 214px;              /* collapsed: 58px via [data-collapsed];
                                     v2.11.1: 246 - 32 after Handoff merged
                                     into Export (one 30px button + 2px gap) */
+      flex: none;
       box-sizing: border-box;
       pointer-events: none;
       display: flex;
@@ -252,22 +267,40 @@
       pointer-events: none;
     }
     #${ROOT_ID} .wfpe-export-badge[data-count="0"] { display: none; }
+    /* 5b: the menu is a stack segment, not a flyout — an outer grid-fold
+       dock (0fr ↔ 1fr, same recipe as the inspector dock) animates it in,
+       pushing the inspector down instead of overlaying it. */
+    #${ROOT_ID} .wfpe-export-dock {
+      width: 246px;
+      pointer-events: none;
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-export-dock[data-visible="true"] {
+      grid-template-rows: 1fr;
+    }
+    #${ROOT_ID} .wfpe-export-dock-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
     #${ROOT_ID} .wfpe-export-menu {
-      position: fixed;
-      z-index: 2147483646;
       /* root is pointer-events:none (click-through by default); this is a
          real popup that needs its own hit-testing, inherited by children. */
       pointer-events: auto;
-      min-width: 208px;
-      border-radius: 12px 6px 12px 12px;
+      /* Straight 6px top always (it sits below the bar); the bottom rounds
+         to 12px only when the menu is the last segment — an inspector
+         docked below squares it via [data-above-panel]. */
+      border-radius: 6px 6px 12px 12px;
       background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)), rgba(22,25,31,0.32);
       backdrop-filter: blur(24px) saturate(170%);
       -webkit-backdrop-filter: blur(24px) saturate(170%);
       border: 1px solid rgba(255,255,255,0.22);
-      box-shadow: 0 8px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.25);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);  /* no outer drop —
+        seams would smudge; depth comes from the bar, as the inspector. */
       padding: 5px;
       box-sizing: border-box;
-      display: none;
+      display: flex;
       flex-direction: column;
       gap: 2px;
       color: #fff;
@@ -276,8 +309,17 @@
          this they'd inherit the host deck's typeface instead. */
       font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       user-select: none;
+      transition:
+        border-radius 380ms cubic-bezier(0.32,0.72,0,1),
+        visibility 0s;
     }
-    #${ROOT_ID} .wfpe-export-menu[data-open="true"] { display: flex; }
+    #${ROOT_ID} .wfpe-export-menu[data-above-panel="true"] { border-radius: 6px; }
+    /* Folded shut: hide for focus/AT once the fold completes, mirroring
+       the inspector dock's rule. */
+    #${ROOT_ID} .wfpe-export-dock[data-visible="false"] .wfpe-export-menu {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
+    }
     #${ROOT_ID} .wfpe-export-menu-item {
       display: flex;
       gap: 9px;
@@ -338,11 +380,7 @@
        select/deselect via grid-template-rows; the panel itself no longer
        toggles display. ----- */
     #${ROOT_ID} .wfpe-inspector-dock {
-      position: fixed;
-      top: 53px;                 /* 16 + 36 bar + 1px seam */
-      right: 16px;
-      width: 246px;
-      z-index: 4;
+      width: 246px;              /* last stack segment; seam = stack gap */
       pointer-events: none;
       display: grid;
       grid-template-rows: 1fr;
@@ -374,8 +412,14 @@
       isolation: isolate;
       box-sizing: border-box;
       /* Instant on open; see the delayed hide below. */
-      transition: visibility 0s;
+      transition:
+        visibility 0s,
+        opacity 380ms cubic-bezier(0.32,0.72,0,1);
     }
+    /* 5b focus fold: while the export menu is docked above, the inspector
+       recedes — dimmed, body folded to its 36px header. Dismissing the
+       menu restores it. Shares the minimised fold/chevron mechanics. */
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] { opacity: 0.55; }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
@@ -432,7 +476,8 @@
       stroke-linejoin: round;
       transition: transform 380ms cubic-bezier(0.32,0.72,0,1);
     }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-minimise .wfpe-icon {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-minimise .wfpe-icon,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-minimise .wfpe-icon {
       transform: rotate(180deg);
     }
     /* Body fold (minimise keeps the 36px header row, rolls the body up) */
@@ -441,7 +486,8 @@
       grid-template-rows: 1fr;
       transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
     }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-fold {
       grid-template-rows: 0fr;
     }
     #${ROOT_ID} .wfpe-inspector-fold-inner {
@@ -453,7 +499,8 @@
     /* The 0fr fold clips paint but not focusability — without this the
        minimised body's fields/buttons stay Tab-reachable at zero height.
        Mirrors the dock's delayed visibility hide on deselect. */
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold-inner {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold-inner,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-fold-inner {
       visibility: hidden;
       transition: visibility 0s 380ms;
     }

@@ -285,22 +285,20 @@ test.describe('v2.5 — agent handoff annotations', () => {
     await expect(page.locator(rowSel)).toBeVisible();
 
     const layers = await page.evaluate(() => {
-      // Ink-glass 3b: the inspector's stacking stratum lives on its dock
-      // wrapper — the panel itself is z-index:auto inside the dock.
-      const inspectorDock = document.querySelector('#wfp-editor-root .wfpe-inspector-dock');
-      const toolbar = document.querySelector('#wfp-editor-root .wfpe-toolbar');
+      // Ink-glass 5b: toolbar + export dock + inspector dock are segments
+      // of one fixed column, so the chrome's stacking stratum lives on the
+      // .wfpe-stack wrapper — the segments are z-index:auto inside it.
+      const stack = document.querySelector('#wfp-editor-root .wfpe-stack');
       const annotationLayer = document.querySelector('#wfp-editor-root .wfpe-annotation-layer');
       const handle = document.querySelector('#wfp-editor-root .wfpe-handle');
       return {
-        inspector: Number(getComputedStyle(inspectorDock).zIndex),
-        toolbar: Number(getComputedStyle(toolbar).zIndex),
+        stack: Number(getComputedStyle(stack).zIndex),
         annotationLayer: Number(getComputedStyle(annotationLayer).zIndex),
         handle: Number(getComputedStyle(handle).zIndex),
       };
     });
 
-    expect(layers.inspector).toBeGreaterThan(layers.handle);
-    expect(layers.toolbar).toBeGreaterThan(layers.handle);
+    expect(layers.stack).toBeGreaterThan(layers.handle);
     expect(layers.annotationLayer).toBeGreaterThan(layers.handle);
 
     await page.locator(textareaSel).fill(NOTE_EDITED);

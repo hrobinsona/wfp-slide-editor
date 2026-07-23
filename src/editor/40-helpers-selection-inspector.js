@@ -1183,11 +1183,13 @@
   // ===========================================================================
   function refreshInspector() {
     const visible = getSelectedElements().length === 1 && !!state.selected;
-    // Ink-glass 3b: selection drives the dock fold and the toolbar's
-    // bottom-corner morph together — they must never disagree, or the
-    // seam breaks (squared bar over no panel, or panel under a capsule).
+    // Ink-glass 3b/5b: selection drives the dock fold, then the shared
+    // seam refresh reconciles the toolbar corner morph, the menu's
+    // bottom radius, and inspector suppression in one place — the three
+    // must never disagree, or a seam breaks (squared bar over no panel,
+    // or panel under a capsule).
     inspectorDock.dataset.visible = visible ? 'true' : 'false';
-    toolbar.dataset.docked = visible ? 'true' : 'false';
+    refreshStackSeams();
     // Legacy mirror — no CSS keys off this any more, but it's a stable
     // hook existing tests/tooling query.
     inspector.dataset.visible = visible ? 'true' : 'false';

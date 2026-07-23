@@ -181,11 +181,18 @@
     toolbarCollapseBtn.setAttribute('aria-label', label);
   }
 
-  root.appendChild(toolbar);
+  // v2.11.2 — design 5b: toolbar, export-menu dock, and inspector dock are
+  // segments of ONE fixed flex column (1px seam gaps). The menu docking in
+  // as a middle segment makes the inspector's offset dynamic, which a
+  // shared column handles for free — independently fixed elements can't.
+  const stack = document.createElement('div');
+  stack.className = 'wfpe-stack';
+  stack.appendChild(toolbar);
+  root.appendChild(stack);
 
-  // v2.11 — export action menu (design 4b). Fixed-position flyout under the
-  // toolbar; opened by the Export button. Row 1 is the primary save action
-  // (Enter / Cmd+S), row 2 is the legacy clean-copy download.
+  // v2.11 — export action menu (design 4b rows, 5b docking). Grid-fold
+  // segment under the toolbar; opened by the Export button. Row 1 is the
+  // primary save action (Enter / Cmd+S), row 2 is the clean-copy download.
   const exportMenu = document.createElement('div');
   exportMenu.className = 'wfpe-export-menu';
   exportMenu.dataset.open = 'false';
@@ -212,7 +219,17 @@
   const exportCleanItem = makeExportMenuItem('clean-copy', 'export');
   exportMenu.appendChild(exportPrimaryItem);
   exportMenu.appendChild(exportCleanItem);
-  root.appendChild(exportMenu);
+  // Middle segment of the stack: a grid-fold dock (0fr ↔ 1fr) identical in
+  // mechanism to the inspector dock below, so the menu pushes the inspector
+  // down with the same 380ms ease instead of overlaying it.
+  const exportDock = document.createElement('div');
+  exportDock.className = 'wfpe-export-dock';
+  exportDock.dataset.visible = 'false';
+  const exportDockInner = document.createElement('div');
+  exportDockInner.className = 'wfpe-export-dock-inner';
+  exportDockInner.appendChild(exportMenu);
+  exportDock.appendChild(exportDockInner);
+  stack.appendChild(exportDock);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -613,7 +630,7 @@
   inspectorBody.appendChild(actionRow);
 
   inspectorDockInner.appendChild(inspector);
-  root.appendChild(inspectorDock);
+  stack.appendChild(inspectorDock);
 
   // Dimension bubble (v2.2): floating "W × H" chip above the selection
   // ring. Tracks the same lifecycle as the ring.
@@ -683,22 +700,34 @@
     e.preventDefault();
     redo();
   });
-  // v2.11 — export action menu (design 4b). Popup opened by the Export
+  // v2.11 — export action menu (4b rows, 5b docking). Opened by the Export
   // button; row 1 is the primary save action (Enter / Cmd+S), row 2 is the
   // legacy clean-copy download.
+  //
+  // Seam bookkeeping (5b): the toolbar squares its bottom corners while ANY
+  // segment is docked below it; the menu keeps a straight 6px top always and
+  // rounds its bottom only when it is the LAST segment (no inspector below);
+  // the inspector dims + folds to its header while the menu is open.
+  function refreshStackSeams() {
+    const inspectorVisible = inspectorDock.dataset.visible === 'true';
+    toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
+    exportMenu.dataset.abovePanel = String(inspectorVisible);
+    inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
+  }
   function openExportMenu() {
     state.exportMenuOpen = true;
-    const r = toolbar.getBoundingClientRect();
-    exportMenu.style.top = `${r.bottom + 6}px`;
-    exportMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
-    exportMenu.dataset.open = 'true';
+    exportDock.dataset.visible = 'true';
+    exportMenu.dataset.open = 'true'; // stable hook for tests
     exportBtn.setAttribute('aria-expanded', 'true');
+    refreshStackSeams();
     refreshExportUi();
   }
   function closeExportMenu() {
     state.exportMenuOpen = false;
+    exportDock.dataset.visible = 'false';
     exportMenu.dataset.open = 'false';
     exportBtn.setAttribute('aria-expanded', 'false');
+    refreshStackSeams();
   }
   // Single dispatcher for menu row 1, Enter-while-open, and Cmd/Ctrl+S.
   // Task 2: save-in-place is primary; legacy download is the Safari/Firefox
@@ -730,11 +759,20 @@
     exportHTML();
   });
   // Click-away (capture so host-page handlers can't swallow it first).
+  // The suppressed inspector is excluded: closing here on mousedown would
+  // race its header chevron's click handler (mousedown fires first), which
+  // has its own dismiss-the-menu behaviour (5b).
   document.addEventListener(
     'mousedown',
     (e) => {
       if (!state.exportMenuOpen) return;
-      if (exportMenu.contains(e.target) || exportBtn.contains(e.target)) return;
+      if (
+        exportMenu.contains(e.target) ||
+        exportBtn.contains(e.target) ||
+        inspectorDock.contains(e.target)
+      ) {
+        return;
+      }
       closeExportMenu();
     },
     true,
@@ -746,6 +784,12 @@
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    // 5b: while the export menu suppresses the inspector, the header
+    // chevron reads as "restore" — it dismisses the menu, not the panel.
+    if (state.exportMenuOpen) {
+      closeExportMenu();
+      return;
+    }
     setInspectorMinimised(!state.inspectorMinimised);
   });
 

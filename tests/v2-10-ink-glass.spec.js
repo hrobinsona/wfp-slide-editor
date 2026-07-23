@@ -117,9 +117,12 @@ test.describe('v2.10 — ink-glass instrument states', () => {
     const c = await chrome(page);
     expect(c.dockVisible).toBe('true');
     expect(c.docked).toBe('true');
-    // Shared hairline: the panel's top border row overlaps the bar's
-    // bottom border row (dock top 53 = 16 + 36 bar + 1px seam).
-    expect(c.dockTop).toBe(53);
+    // 5b seams: true air gaps between segments (stack gap 1px), replacing
+    // the old overlapped border rows. With the export dock folded shut
+    // between bar and panel, its two flanking gaps read as one 2px seam
+    // (dock top 56 = 16 + 38 bar + 2px) — measured identical in the 5b
+    // reference implementation.
+    expect(c.dockTop).toBe(56);
     expect(c.barBottom).toBe(54);
     expect(c.inspWidth).toBe(246);
     expect(c.headerHeight).toBe(36);

@@ -25,7 +25,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.11.1';
+  const VERSION = '2.11.2';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -126,13 +126,28 @@
        radii         bar/panel 12px · docked corners 6px · buttons 8-9px · fields 7px
        ease          cubic-bezier(0.32, 0.72, 0, 1)
        durations     340ms toolbar collapse · 380ms dock/fold + corner morph ----- */
-    #${ROOT_ID} .wfpe-toolbar {
+    /* v2.11.2 — design 5b: toolbar, export-menu dock, and inspector dock
+       are segments of ONE fixed flex column with 1px seam gaps. The menu
+       docks in as the middle segment, pushing the inspector down with the
+       same 380ms grid fold both docks share. align-items keeps the
+       narrower toolbar hugged to the right edge over the 246px panels. */
+    #${ROOT_ID} .wfpe-stack {
       position: fixed;
       top: 16px;
       right: 16px;
+      width: 246px;
+      z-index: 4;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 1px;                  /* the seams */
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-toolbar {
       width: 214px;              /* collapsed: 58px via [data-collapsed];
                                     v2.11.1: 246 - 32 after Handoff merged
                                     into Export (one 30px button + 2px gap) */
+      flex: none;
       box-sizing: border-box;
       pointer-events: none;
       display: flex;
@@ -346,22 +361,40 @@
       pointer-events: none;
     }
     #${ROOT_ID} .wfpe-export-badge[data-count="0"] { display: none; }
+    /* 5b: the menu is a stack segment, not a flyout — an outer grid-fold
+       dock (0fr ↔ 1fr, same recipe as the inspector dock) animates it in,
+       pushing the inspector down instead of overlaying it. */
+    #${ROOT_ID} .wfpe-export-dock {
+      width: 246px;
+      pointer-events: none;
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-export-dock[data-visible="true"] {
+      grid-template-rows: 1fr;
+    }
+    #${ROOT_ID} .wfpe-export-dock-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
     #${ROOT_ID} .wfpe-export-menu {
-      position: fixed;
-      z-index: 2147483646;
       /* root is pointer-events:none (click-through by default); this is a
          real popup that needs its own hit-testing, inherited by children. */
       pointer-events: auto;
-      min-width: 208px;
-      border-radius: 12px 6px 12px 12px;
+      /* Straight 6px top always (it sits below the bar); the bottom rounds
+         to 12px only when the menu is the last segment — an inspector
+         docked below squares it via [data-above-panel]. */
+      border-radius: 6px 6px 12px 12px;
       background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)), rgba(22,25,31,0.32);
       backdrop-filter: blur(24px) saturate(170%);
       -webkit-backdrop-filter: blur(24px) saturate(170%);
       border: 1px solid rgba(255,255,255,0.22);
-      box-shadow: 0 8px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.25);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);  /* no outer drop —
+        seams would smudge; depth comes from the bar, as the inspector. */
       padding: 5px;
       box-sizing: border-box;
-      display: none;
+      display: flex;
       flex-direction: column;
       gap: 2px;
       color: #fff;
@@ -370,8 +403,17 @@
          this they'd inherit the host deck's typeface instead. */
       font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       user-select: none;
+      transition:
+        border-radius 380ms cubic-bezier(0.32,0.72,0,1),
+        visibility 0s;
     }
-    #${ROOT_ID} .wfpe-export-menu[data-open="true"] { display: flex; }
+    #${ROOT_ID} .wfpe-export-menu[data-above-panel="true"] { border-radius: 6px; }
+    /* Folded shut: hide for focus/AT once the fold completes, mirroring
+       the inspector dock's rule. */
+    #${ROOT_ID} .wfpe-export-dock[data-visible="false"] .wfpe-export-menu {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
+    }
     #${ROOT_ID} .wfpe-export-menu-item {
       display: flex;
       gap: 9px;
@@ -432,11 +474,7 @@
        select/deselect via grid-template-rows; the panel itself no longer
        toggles display. ----- */
     #${ROOT_ID} .wfpe-inspector-dock {
-      position: fixed;
-      top: 53px;                 /* 16 + 36 bar + 1px seam */
-      right: 16px;
-      width: 246px;
-      z-index: 4;
+      width: 246px;              /* last stack segment; seam = stack gap */
       pointer-events: none;
       display: grid;
       grid-template-rows: 1fr;
@@ -468,8 +506,14 @@
       isolation: isolate;
       box-sizing: border-box;
       /* Instant on open; see the delayed hide below. */
-      transition: visibility 0s;
+      transition:
+        visibility 0s,
+        opacity 380ms cubic-bezier(0.32,0.72,0,1);
     }
+    /* 5b focus fold: while the export menu is docked above, the inspector
+       recedes — dimmed, body folded to its 36px header. Dismissing the
+       menu restores it. Shares the minimised fold/chevron mechanics. */
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] { opacity: 0.55; }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
@@ -526,7 +570,8 @@
       stroke-linejoin: round;
       transition: transform 380ms cubic-bezier(0.32,0.72,0,1);
     }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-minimise .wfpe-icon {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-minimise .wfpe-icon,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-minimise .wfpe-icon {
       transform: rotate(180deg);
     }
     /* Body fold (minimise keeps the 36px header row, rolls the body up) */
@@ -535,7 +580,8 @@
       grid-template-rows: 1fr;
       transition: grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1);
     }
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-fold {
       grid-template-rows: 0fr;
     }
     #${ROOT_ID} .wfpe-inspector-fold-inner {
@@ -547,7 +593,8 @@
     /* The 0fr fold clips paint but not focusability — without this the
        minimised body's fields/buttons stay Tab-reachable at zero height.
        Mirrors the dock's delayed visibility hide on deselect. */
-    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold-inner {
+    #${ROOT_ID} .wfpe-inspector[data-state="minimised"] .wfpe-inspector-fold-inner,
+    #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] .wfpe-inspector-fold-inner {
       visibility: hidden;
       transition: visibility 0s 380ms;
     }
@@ -1598,11 +1645,18 @@
     toolbarCollapseBtn.setAttribute('aria-label', label);
   }
 
-  root.appendChild(toolbar);
+  // v2.11.2 — design 5b: toolbar, export-menu dock, and inspector dock are
+  // segments of ONE fixed flex column (1px seam gaps). The menu docking in
+  // as a middle segment makes the inspector's offset dynamic, which a
+  // shared column handles for free — independently fixed elements can't.
+  const stack = document.createElement('div');
+  stack.className = 'wfpe-stack';
+  stack.appendChild(toolbar);
+  root.appendChild(stack);
 
-  // v2.11 — export action menu (design 4b). Fixed-position flyout under the
-  // toolbar; opened by the Export button. Row 1 is the primary save action
-  // (Enter / Cmd+S), row 2 is the legacy clean-copy download.
+  // v2.11 — export action menu (design 4b rows, 5b docking). Grid-fold
+  // segment under the toolbar; opened by the Export button. Row 1 is the
+  // primary save action (Enter / Cmd+S), row 2 is the clean-copy download.
   const exportMenu = document.createElement('div');
   exportMenu.className = 'wfpe-export-menu';
   exportMenu.dataset.open = 'false';
@@ -1629,7 +1683,17 @@
   const exportCleanItem = makeExportMenuItem('clean-copy', 'export');
   exportMenu.appendChild(exportPrimaryItem);
   exportMenu.appendChild(exportCleanItem);
-  root.appendChild(exportMenu);
+  // Middle segment of the stack: a grid-fold dock (0fr ↔ 1fr) identical in
+  // mechanism to the inspector dock below, so the menu pushes the inspector
+  // down with the same 380ms ease instead of overlaying it.
+  const exportDock = document.createElement('div');
+  exportDock.className = 'wfpe-export-dock';
+  exportDock.dataset.visible = 'false';
+  const exportDockInner = document.createElement('div');
+  exportDockInner.className = 'wfpe-export-dock-inner';
+  exportDockInner.appendChild(exportMenu);
+  exportDock.appendChild(exportDockInner);
+  stack.appendChild(exportDock);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -2030,7 +2094,7 @@
   inspectorBody.appendChild(actionRow);
 
   inspectorDockInner.appendChild(inspector);
-  root.appendChild(inspectorDock);
+  stack.appendChild(inspectorDock);
 
   // Dimension bubble (v2.2): floating "W × H" chip above the selection
   // ring. Tracks the same lifecycle as the ring.
@@ -2100,22 +2164,34 @@
     e.preventDefault();
     redo();
   });
-  // v2.11 — export action menu (design 4b). Popup opened by the Export
+  // v2.11 — export action menu (4b rows, 5b docking). Opened by the Export
   // button; row 1 is the primary save action (Enter / Cmd+S), row 2 is the
   // legacy clean-copy download.
+  //
+  // Seam bookkeeping (5b): the toolbar squares its bottom corners while ANY
+  // segment is docked below it; the menu keeps a straight 6px top always and
+  // rounds its bottom only when it is the LAST segment (no inspector below);
+  // the inspector dims + folds to its header while the menu is open.
+  function refreshStackSeams() {
+    const inspectorVisible = inspectorDock.dataset.visible === 'true';
+    toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
+    exportMenu.dataset.abovePanel = String(inspectorVisible);
+    inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
+  }
   function openExportMenu() {
     state.exportMenuOpen = true;
-    const r = toolbar.getBoundingClientRect();
-    exportMenu.style.top = `${r.bottom + 6}px`;
-    exportMenu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
-    exportMenu.dataset.open = 'true';
+    exportDock.dataset.visible = 'true';
+    exportMenu.dataset.open = 'true'; // stable hook for tests
     exportBtn.setAttribute('aria-expanded', 'true');
+    refreshStackSeams();
     refreshExportUi();
   }
   function closeExportMenu() {
     state.exportMenuOpen = false;
+    exportDock.dataset.visible = 'false';
     exportMenu.dataset.open = 'false';
     exportBtn.setAttribute('aria-expanded', 'false');
+    refreshStackSeams();
   }
   // Single dispatcher for menu row 1, Enter-while-open, and Cmd/Ctrl+S.
   // Task 2: save-in-place is primary; legacy download is the Safari/Firefox
@@ -2147,11 +2223,20 @@
     exportHTML();
   });
   // Click-away (capture so host-page handlers can't swallow it first).
+  // The suppressed inspector is excluded: closing here on mousedown would
+  // race its header chevron's click handler (mousedown fires first), which
+  // has its own dismiss-the-menu behaviour (5b).
   document.addEventListener(
     'mousedown',
     (e) => {
       if (!state.exportMenuOpen) return;
-      if (exportMenu.contains(e.target) || exportBtn.contains(e.target)) return;
+      if (
+        exportMenu.contains(e.target) ||
+        exportBtn.contains(e.target) ||
+        inspectorDock.contains(e.target)
+      ) {
+        return;
+      }
       closeExportMenu();
     },
     true,
@@ -2163,6 +2248,12 @@
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
     e.preventDefault();
+    // 5b: while the export menu suppresses the inspector, the header
+    // chevron reads as "restore" — it dismisses the menu, not the panel.
+    if (state.exportMenuOpen) {
+      closeExportMenu();
+      return;
+    }
     setInspectorMinimised(!state.inspectorMinimised);
   });
 
@@ -3630,11 +3721,13 @@
   // ===========================================================================
   function refreshInspector() {
     const visible = getSelectedElements().length === 1 && !!state.selected;
-    // Ink-glass 3b: selection drives the dock fold and the toolbar's
-    // bottom-corner morph together — they must never disagree, or the
-    // seam breaks (squared bar over no panel, or panel under a capsule).
+    // Ink-glass 3b/5b: selection drives the dock fold, then the shared
+    // seam refresh reconciles the toolbar corner morph, the menu's
+    // bottom radius, and inspector suppression in one place — the three
+    // must never disagree, or a seam breaks (squared bar over no panel,
+    // or panel under a capsule).
     inspectorDock.dataset.visible = visible ? 'true' : 'false';
-    toolbar.dataset.docked = visible ? 'true' : 'false';
+    refreshStackSeams();
     // Legacy mirror — no CSS keys off this any more, but it's a stable
     // hook existing tests/tooling query.
     inspector.dataset.visible = visible ? 'true' : 'false';

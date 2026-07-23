@@ -118,6 +118,55 @@ test.describe('v2.11 — export action menu (legacy destinations)', () => {
     await expect(page.locator(menuSel)).toBeHidden();
   });
 
+  test('5b stack: menu docks as middle segment and suppresses the inspector', async ({ page }) => {
+    await loadReady(page);
+    await addNote(page, 'STACK TEST NOTE'); // selects an element → inspector docked
+
+    const inspectorSel = '#wfp-editor-root .wfpe-inspector';
+    await page.click(exportBtnSel);
+
+    // Animated grid fold is wired on both docks (the 5b signature motion).
+    const transitions = await page.evaluate(() => ({
+      menuDock: getComputedStyle(document.querySelector('#wfp-editor-root .wfpe-export-dock')).transition,
+      inspectorDock: getComputedStyle(document.querySelector('#wfp-editor-root .wfpe-inspector-dock')).transition,
+    }));
+    expect(transitions.menuDock).toContain('grid-template-rows 0.38s');
+    expect(transitions.inspectorDock).toContain('grid-template-rows 0.38s');
+
+    // While open: inspector dims + folds to its header; menu sits between
+    // bar and inspector with 1px seams; menu top is straight (6px).
+    await expect(page.locator(inspectorSel)).toHaveAttribute('data-suppressed', 'true');
+    await expect(page.locator(menuSel)).toHaveAttribute('data-above-panel', 'true');
+    await page.waitForTimeout(450); // let the 380ms folds settle
+    const geo = await page.evaluate(() => {
+      const q = (s) => document.querySelector('#wfp-editor-root ' + s).getBoundingClientRect();
+      const bar = q('.wfpe-toolbar');
+      const menu = q('.wfpe-export-menu');
+      const insp = q('.wfpe-inspector');
+      return {
+        gapBarMenu: menu.top - bar.bottom,
+        gapMenuInsp: insp.top - menu.bottom,
+        inspHeight: insp.height,
+        menuRadius: getComputedStyle(document.querySelector('#wfp-editor-root .wfpe-export-menu')).borderRadius,
+      };
+    });
+    expect(geo.gapBarMenu).toBe(1);
+    expect(geo.gapMenuInsp).toBe(1);
+    expect(geo.inspHeight).toBeLessThan(48); // folded to its 36px header (+borders)
+    expect(geo.menuRadius).toBe('6px'); // squared against the panel below
+
+    // The suppressed inspector's chevron dismisses the menu and restores it.
+    await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
+    await expect(page.locator(menuSel)).toHaveAttribute('data-open', 'false');
+    await expect(page.locator(inspectorSel)).toHaveAttribute('data-suppressed', 'false');
+    await expect(page.locator(inspectorSel)).toHaveAttribute('data-state', 'expanded');
+    await page.waitForTimeout(450);
+    const restored = await page.evaluate(() =>
+      document.querySelector('#wfp-editor-root .wfpe-inspector').getBoundingClientRect().height,
+    );
+    expect(restored).toBeGreaterThan(200);
+  });
+
   test('labels and badge track annotation count', async ({ page }) => {
     await loadReady(page);
 
