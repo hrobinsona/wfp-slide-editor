@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.12.2';
+  const VERSION = '2.12.3';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -1076,13 +1076,15 @@
       user-select: none;
       transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
     }
+    /* Emphasis stays coral-native (glow + brightness, like the Edit button
+       and Export badge) — no white halo ring; the legacy ring dominated the
+       13px dot and made the 6b restyle read as the old glossy sphere. */
     #${ROOT_ID} .wfpe-annotation-badge:hover,
     #${ROOT_ID} .wfpe-annotation-badge[data-selected="true"] {
-      filter: brightness(1.05);
+      filter: brightness(1.06);
       transform: translateY(-1px);
       box-shadow:
-        0 4px 10px rgba(230, 88, 76, 0.65),
-        0 0 0 2px rgba(255, 255, 255, 0.5),
+        0 4px 12px rgba(230, 88, 76, 0.7),
         inset 0 1px 1px rgba(255, 255, 255, 0.5);
     }
     @media (prefers-color-scheme: dark) {
