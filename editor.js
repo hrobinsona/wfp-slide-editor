@@ -27,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.12.0';
+  const VERSION = '2.12.1';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -1951,7 +1951,10 @@
   // colour for any selection. Each row composes a swatch (clickable
   // trigger for the hidden native picker), a hex text input, and — for
   // background only — a "transparent" clear button.
-  function makeColourRow({ label, target, prop, includeClear }) {
+  // `label` must fit the 66px label column at 10px/700/0.06em uppercase
+  // (~9 chars) — longer strings overflow under the swatch. `pickerHint`
+  // carries the full descriptive wording for the swatch tooltip.
+  function makeColourRow({ label, pickerHint, target, prop, includeClear }) {
     const row = document.createElement('div');
     row.className = 'wfpe-inspector-row';
     row.dataset.wfpeRow = target === 'text' ? 'text-color' : 'bg-color';
@@ -1968,7 +1971,7 @@
     swatch.type = 'button';
     swatch.className = 'wfpe-color-swatch';
     swatch.dataset.wfpeTarget = target;
-    swatch.title = `${label} — pick`;
+    swatch.title = `${pickerHint || label} — pick`;
 
     // Native colour picker behind the swatch. The swatch's own click
     // triggers the picker programmatically; the picker itself is
@@ -2007,13 +2010,15 @@
   }
 
   const textColourRow = makeColourRow({
-    label: 'Text colour',
+    label: 'Text',
+    pickerHint: 'Text colour',
     target: 'text',
     prop: 'textColorHex',
     includeClear: false,
   });
   const bgColourRow = makeColourRow({
-    label: 'Background',
+    label: 'Fill',
+    pickerHint: 'Background colour',
     target: 'bg',
     prop: 'bgColorHex',
     includeClear: true,
