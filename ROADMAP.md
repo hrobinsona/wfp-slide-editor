@@ -46,6 +46,12 @@ Single Export toolbar button with an agent-annotation count badge (hidden at zer
 
 Feature brief: `feature-briefs/v2.11-save-in-place-export.md`.
 
+### v2.13 Live Agent Round-trip
+
+When an agent rewrites the bound save-in-place file, the editor refreshes the document in place (document swap plus editor re-injection — no reload, no bookmarklet re-click, no re-grant), restoring edit mode, active slide, fold states, and the file handle. Refreshes defer while an interaction is open, the editor's own saves never self-trigger, and permission loss pauses the watch with a re-link on the next save. The handoff guidance now carries an agent results contract (`script[data-wfp-agent-results]`, statuses done/skipped/needs-input); import reconciles results — done resolves even sloppy leftovers, replies render as amber/slate badges plus a read-only inspector line, and a summary toast reports the round. Feasibility spike: `feature-briefs/spike-live-refresh-findings.md`.
+
+Feature brief: `feature-briefs/v2.13-live-agent-roundtrip.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -55,6 +61,14 @@ The editor is now feature-rich but structurally heavy: `editor.js` is about 3.4k
 Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 ## v2.x Candidates
+
+### Handoff Ground Truth: Edit Ledger and Measurements
+
+Raised 2026-07-24 during a product review of the agent-annotation loop. Manual edits reach the agent as anonymous inline styles — impossible to propagate ("make slides 3, 4, 6, 10 match what I did here") and unprotected against agent rewrites of a slide. Candidate: serialize a net edit ledger into the handoff payload — per touched element, pristine pre-edit style (already retained in `state.originalStyles` for reset) versus current, plus recorded slide reorder/insert/delete ops — labelled so unlock/freeze pinning styles read as editor mechanics, not user intent. Add measurements per annotation and ledger entry: bounding box, key computed styles, parent box, overflow flag — cheap at save time, expensive for an agent to reconstruct from raw HTML. Guidance gains "these edits are intentional; preserve them". Open question: signal-to-noise of style-string diffs after flow unlock; first step is serializing a real session's ledger and reading it.
+
+### Slide- and Deck-scoped Agent Notes
+
+Raised 2026-07-24, same review. Notes attach only to a single selected element in the active slide (`saveAnnotation` refuses multi-select and Overview mode), so deck-scoped intent — the stated main purpose of annotations — gets smuggled through an arbitrary element's note. Candidate: a `scope` field in the handoff payload (`element` | `slide` | `deck`), a note affordance on Overview slide cards, and a single deck-level note reachable from the export menu. Revisits the v2.5 "slide-level annotations" non-goal. Deliberately excludes typed/relational annotations — freeform text plus scope covers the gap.
 
 ### Persistence
 
@@ -82,7 +96,7 @@ Insert text, image, divider, or simple shape elements. This moves the editor clo
 
 ### Agent Handoff Evals
 
-Build an eval suite for downstream agents consuming `<basename>-agent-handoff.html`. The editor's Playwright tests verify that handoff metadata is exported correctly; evals should verify that an agent can read the JSON, apply each annotation to the matching `data-wfp-agent-annotation-id` element, avoid unrelated edits, preserve valid HTML/scripts/styles, respect higher-priority user/system instructions, ignore stale metadata, and remove resolved handoff metadata from the final cleaned file.
+Build an eval suite for downstream agents consuming `<basename>-agent-handoff.html`. The editor's Playwright tests verify that handoff metadata is exported correctly; evals should verify that an agent can read the JSON, apply each annotation to the matching `data-wfp-agent-annotation-id` element, avoid unrelated edits, preserve valid HTML/scripts/styles, respect higher-priority user/system instructions, ignore stale metadata, and remove resolved handoff metadata from the final cleaned file. The v2.13 results contract (`script[data-wfp-agent-results]`) gives these evals an objective per-annotation target: did the agent record accurate statuses, strip done metadata, and keep skipped/needs-input notes anchored.
 
 ## v3 Candidates
 

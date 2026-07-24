@@ -832,6 +832,24 @@
       letter-spacing: 0.02em;
       min-height: 11px;
     }
+    /* v2.13 — read-only agent reply under the note textarea. Amber for
+       needs-input (the row's existing has-note accent), slate for skipped. */
+    #${ROOT_ID} .wfpe-annotation-reply {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 7px;
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.38);
+      color: rgba(255, 234, 200, 0.96);
+      font: 500 10.5px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.01em;
+      overflow-wrap: break-word;
+    }
+    #${ROOT_ID} .wfpe-annotation-reply[data-status="skipped"] {
+      background: rgba(148, 163, 178, 0.16);
+      border-color: rgba(148, 163, 178, 0.4);
+      color: rgba(226, 232, 240, 0.92);
+    }
     #${ROOT_ID} .wfpe-annotation-save-btn {
       appearance: none;
       -webkit-appearance: none;
@@ -989,6 +1007,33 @@
       transform: translateY(-1px);
       box-shadow:
         0 4px 12px rgba(230, 88, 76, 0.7),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    /* v2.13 agent-reply states in the same coral-glass vocabulary:
+       needs-input renders amber, skipped renders muted slate. Emphasis
+       keeps each state's own glow rather than reverting to coral. */
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"] {
+      background: radial-gradient(circle at 35% 30%, #ffe6b8, #f0a83b 62%, #d8892a);
+      box-shadow:
+        0 2px 7px rgba(240, 168, 59, 0.55),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"]:hover,
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"][data-selected="true"] {
+      box-shadow:
+        0 4px 12px rgba(240, 168, 59, 0.7),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"] {
+      background: radial-gradient(circle at 35% 30%, #e2e8ee, #9aa6b2 62%, #7d8a97);
+      box-shadow:
+        0 2px 7px rgba(122, 135, 148, 0.5),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"]:hover,
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"][data-selected="true"] {
+      box-shadow:
+        0 4px 12px rgba(122, 135, 148, 0.65),
         inset 0 1px 1px rgba(255, 255, 255, 0.5);
     }
     @media (prefers-color-scheme: dark) {

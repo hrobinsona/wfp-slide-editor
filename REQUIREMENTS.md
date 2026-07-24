@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.12)
+# Requirements: Current Product Contract (v2.13)
 
 ## Goal
 
@@ -14,6 +14,7 @@ Ship a bookmarklet-activated editor that lets a user polish WFP HTML slide decks
 - Add selected-element agent annotations for focused cleanup handoff.
 - Export clean standalone HTML that preserves the user's edits and removes all editor chrome.
 - Export annotated agent-handoff HTML as a separate, explicit artifact.
+- Watch the saved file and refresh in place when an agent rewrites it, reconciling per-note outcomes.
 
 This file is the current product contract. `TASKS.md` and `feature-briefs/` are historical build records.
 
@@ -198,6 +199,23 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Handoff metadata must be structured task context, not a hidden prompt that attempts to override agent/system/user instructions.
 - Re-injecting the editor into handoff HTML restores matching annotations into live editor annotation markers.
 - Normal export after reimport must strip all handoff metadata.
+- The embedded guidance documents the agent results contract (v2.13): agents record per-annotation outcomes in a `script[type="application/json"][data-wfp-agent-results]` block as `{id, status: done|skipped|needs-input, note}`, remove annotation metadata for done items, and keep it for skipped/needs-input items so those notes stay anchored.
+- On any load of an agent-processed file, the editor reconciles results: a done result resolves its note even when the agent left the metadata behind (stale annotations never re-import); skipped/needs-input results re-import as open notes carrying the agent's reply; annotations without a result entry import unchanged.
+- Replied notes render distinctly: the badge is amber for needs-input and slate for skipped (title includes the reply), and the inspector's Agent note row shows a read-only "Agent …" line.
+- Saving a new instruction or deleting a note clears the agent status/reply in the same undoable history entry.
+- A reconciliation summary (e.g. "Agent update: 2 done, 1 needs input.") is toasted once at ready whenever results were parsed.
+- All handoff artifacts, the results block included, are stripped from the live DOM after import and by both export pipelines.
+
+### Live Agent Round-trip
+
+- In File System Access browsers with a bound save file, the editor polls the file (about every 1.2 seconds) and refreshes the document in place when it changes externally — no reload, no bookmarklet re-click, no permission re-grant.
+- The refresh replaces the document wholesale, re-executes the deck's own scripts exactly once against the new markup, and re-mounts the editor.
+- Restored across a refresh: edit mode, active slide (index clamped to the new deck), inspector minimised state, toolbar collapsed state, and the bound file handle. Selection is cleared, and undo history restarts — a refresh is a new history generation.
+- After a refresh the editor owns plain-view arrow navigation (the same takeover used after slide reorder/delete), because the deck script's cached slide state reset to the first slide.
+- A refresh never interrupts an open interaction (transaction, text edit, drag, resize, Overview mode, or open export menu); the change applies on the next idle poll after the interaction ends.
+- The editor's own saves never trigger a refresh.
+- If reading the bound file fails for permissions, one toast announces "Live updates paused — file access needed. Save to re-link."; the next successful save re-links the watch and toasts "Live updates resumed.".
+- Browsers without the File System Access API keep the existing manual flow; nothing changes for them.
 
 ## Constraints From WFP Slides
 
@@ -241,7 +259,7 @@ These are not part of the current product contract. Add them to `ROADMAP.md` or 
 - Asset replacement.
 - Theme variable editing.
 - Overview search/filter or duplicate slide.
-- Text-range annotations, slide-level annotations, pins, comments panel, resolved-state workflow, or hidden agent prompts.
+- Text-range annotations, slide-level annotations, pins, comments panel, or hidden agent prompts.
 - Mobile/touch editing.
 
 ## Known Quality Work

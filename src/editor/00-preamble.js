@@ -20,6 +20,8 @@
  * v2.11:   export action menu; save-in-place via File System Access.
  * v2.12:   adaptive inspector — overlap-gated fade during live edits,
  *          coral value tag, scrubbable font field.
+ * v2.13:   live agent round-trip — save-file watch, in-place refresh,
+ *          agent results reconciliation.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -27,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.12.3';
+  const VERSION = '2.13.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -57,7 +59,10 @@
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
   const HANDOFF_SCRIPT_ATTR = 'data-wfp-agent-annotations';
-  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element, then remove resolved annotation metadata.';
+  const RESULTS_SCRIPT_ATTR = 'data-wfp-agent-results';
+  const ANNOTATION_STATUS_ATTR = 'data-wfp-edit-annotation-status';
+  const ANNOTATION_REPLY_ATTR = 'data-wfp-edit-annotation-reply';
+  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored.';
 
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);

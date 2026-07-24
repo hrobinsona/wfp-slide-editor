@@ -1,27 +1,26 @@
   // ===========================================================================
-  // Live agent round-trip — SPIKE (worktree-only; not production code)
+  // Live agent round-trip (v2.13)
   //
-  // Validates the riskiest assumption behind the "Live Agent Round-trip"
-  // roadmap candidate: after an agent rewrites the saved file on disk, the
-  // editor detects the write through the bound FileSystemFileHandle, swaps
-  // the new document into the live page without a navigation, and re-boots
-  // itself with edit mode and the active slide restored.
+  // When an agent rewrites the bound save-in-place file on disk, the editor
+  // refreshes the document in place: no reload, no bookmarklet re-click, no
+  // permission re-grant. Contract in REQUIREMENTS.md (“Live Agent
+  // Round-trip”); design rationale in DESIGN.md; build record in
+  // feature-briefs/v2.13-live-agent-roundtrip.md.
   //
   // Mechanism:
-  //   - Poll boundFileHandle.getFile().lastModified.
+  //   - Poll boundFileHandle.getFile().lastModified (~1.2s).
   //   - On an external change: stash a restore payload on window (the
   //     window object and its globals survive document.open() — only the
   //     Document's contents and its event listeners are replaced), then
   //     document.open()/write()/close() the new HTML. That erases
-  //     document-level listeners (the fixture's stale nav handler and the
-  //     old editor's own keydown capture) and re-executes deck scripts
-  //     fresh during the write. Finally re-inject the editor script that
-  //     was captured at boot.
-  //   - The new instance adopts the payload at ready: same file handle (no
-  //     re-pick, no re-grant), edit mode, active slide — and deckMutated,
-  //     because the re-parsed deck script's closures reset to slide 0,
-  //     which is exactly the staleness deckMutated's arrow-nav takeover
-  //     already exists to cover.
+  //     document-level listeners (the deck's stale nav handler and the old
+  //     editor's own keydown capture) and re-executes deck scripts exactly
+  //     once during the write. Finally re-inject the editor script
+  //     captured at boot.
+  //   - The new instance adopts the payload at ready: same file handle,
+  //     edit mode, active slide, fold states — and deckMutated, because
+  //     the re-parsed deck script's closures reset to slide 0, which is
+  //     exactly the staleness deckMutated's arrow-nav takeover covers.
   // ===========================================================================
   const AGENT_WATCH_INTERVAL_MS = 1200;
   const LIVE_RESTORE_KEY = '__wfpLiveRefreshRestore';
@@ -53,17 +52,41 @@
     agentWatchPaused = false;
   }
 
+  // "Paused" has been announced and "resumed" hasn't yet. The flag only
+  // gates the two announcements — a recovered handle refreshes regardless.
+  let watchDormant = false;
+
   // Called after our own successful save so the watcher never mistakes the
-  // editor's write for an agent update.
+  // editor's write for an agent update. A successful save is also the
+  // re-link moment when the watch had gone dormant.
   async function agentWatchSyncBaseline(handle) {
     try {
       if (handle && typeof handle.getFile === 'function') {
         const f = await handle.getFile();
         agentWatchBaseline = f.lastModified;
+        if (watchDormant) {
+          watchDormant = false;
+          showToast(document.body, 'Live updates resumed.');
+        }
       }
     } catch (_) {
       /* keep the old baseline; the next tick retries */
     }
+  }
+
+  // A refresh must not fire mid-interaction: the swap would destroy open
+  // transactions, text edits, drags, or overlay state. Deferring instead of
+  // dropping works because the baseline only advances on a successful swap,
+  // so the next idle tick picks the change up again.
+  function isInteractionOpen() {
+    return !!(
+      state.txn ||
+      state.editingText ||
+      state.drag ||
+      state.resize ||
+      state.overviewMode ||
+      state.exportMenuOpen
+    );
   }
 
   async function agentWatchTick() {
@@ -80,13 +103,22 @@
         agentWatchBaseline = f.lastModified;
         return;
       }
-      if (f.lastModified > agentWatchBaseline) {
-        const html = await f.text();
-        agentWatchBaseline = f.lastModified;
-        await performLiveRefresh(html, f.lastModified);
+      if (f.lastModified <= agentWatchBaseline) return;
+      if (isInteractionOpen()) return; // deferred — retried next tick
+      const html = await f.text();
+      // Re-check after the awaits: a save may have paused the watcher while
+      // this tick was in flight. (The baseline guard defuses this in
+      // practice; the check makes the invariant explicit.)
+      if (agentWatchPaused) return;
+      agentWatchBaseline = f.lastModified;
+      await performLiveRefresh(html, f.lastModified);
+    } catch (err) {
+      const name = err && err.name;
+      if ((name === 'NotAllowedError' || name === 'SecurityError') && !watchDormant) {
+        watchDormant = true;
+        showToast(document.body, 'Live updates paused — file access needed. Save to re-link.');
       }
-    } catch (_) {
-      /* transient read failure (e.g. permission dropped) — retry next tick */
+      /* other read failures are transient — retry next tick */
     } finally {
       agentWatchBusy = false;
     }
@@ -121,6 +153,8 @@
       lastModified,
       editMode: state.editMode,
       slideIndex: captureActiveSlideIndex(),
+      inspectorMinimised: state.inspectorMinimised,
+      toolbarCollapsed: state.toolbarCollapsed,
     };
 
     // Replace the document wholesale. Same Document object, same realm,
@@ -152,19 +186,29 @@
       agentWatchBaseline = typeof payload.lastModified === 'number' ? payload.lastModified : null;
     }
 
-    const slides = getSlides();
-    const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
-    if (idx >= 0 && slides[idx]) {
-      const dots = document.querySelectorAll('.progress-dot');
-      slides.forEach((s, i) => s.classList.toggle('active', i === idx));
-      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    // Flat documents have no slide pagination: getSlides() returns the flat
+    // root itself, and toggling `active` there would stamp a class onto a
+    // user element that export never strips.
+    if (getDocumentMode() !== 'flat') {
+      const slides = getSlides();
+      const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
+      if (idx >= 0 && slides[idx]) {
+        const dots = document.querySelectorAll('.progress-dot');
+        slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+      }
+      // The re-parsed deck script cached slide 0 as current; hand plain-view
+      // arrow nav to the editor's fresh-DOM implementation, the same
+      // mechanism used after overview reorder/delete.
+      state.deckMutated = true;
     }
 
-    // The re-parsed deck script cached slide 0 as current; hand plain-view
-    // arrow nav to the editor's fresh-DOM implementation, the same
-    // mechanism used after overview reorder/delete.
-    if (getDocumentMode() !== 'flat') state.deckMutated = true;
-
+    state.inspectorMinimised = !!payload.inspectorMinimised;
+    if (payload.toolbarCollapsed) setToolbarCollapsed(true);
     if (payload.editMode) setEditMode(true);
-    showToast(document.body, 'Reloaded from disk — agent update applied.');
+    // When the refreshed file carried a results block, the ready-time
+    // summary toast is the more informative message — skip the generic one.
+    if (!state.agentResultsSummary) {
+      showToast(document.body, 'Reloaded from disk — agent update applied.');
+    }
   }

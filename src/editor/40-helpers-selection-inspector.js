@@ -365,8 +365,12 @@
         annotationLayer.appendChild(marker);
       }
       marker.dataset.selected = el === state.selected ? 'true' : 'false';
+      const status = el.getAttribute(ANNOTATION_STATUS_ATTR);
+      if (status) marker.dataset.status = status;
+      else delete marker.dataset.status;
       marker.textContent = '';
-      marker.title = getAnnotationText(el);
+      const reply = normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR));
+      marker.title = reply ? `${getAnnotationText(el)} — Agent: ${reply}` : getAnnotationText(el);
       positionAnnotationBadge(marker, rect);
       used.add(marker);
     }
@@ -393,6 +397,10 @@
       el.setAttribute(ANNOTATION_ID_ATTR, currentId || generateAnnotationId());
       el.setAttribute(ANNOTATION_TEXT_ATTR, nextText);
     }
+    // A changed or deleted instruction supersedes the agent's reply to the
+    // old one (v2.13). Same transaction, so undo restores them together.
+    el.removeAttribute(ANNOTATION_STATUS_ATTR);
+    el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
@@ -407,6 +415,8 @@
     touchElement(el);
     el.removeAttribute(ANNOTATION_ID_ATTR);
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    el.removeAttribute(ANNOTATION_STATUS_ATTR);
+    el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
@@ -422,6 +432,7 @@
       if (document.activeElement !== annotationTextarea) annotationTextarea.value = '';
       annotationDeleteBtn.disabled = true;
       updateAnnotationDraftStatus(null);
+      renderAnnotationReply(null);
       return;
     }
     const targetChanged = annotationRow.__wfpeTarget !== el;
@@ -437,6 +448,24 @@
     }
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
+    renderAnnotationReply(el);
+  }
+
+  // Read-only "Agent …" line under the note textarea (v2.13): shows the
+  // agent's reply for skipped / needs-input notes, hidden otherwise.
+  function renderAnnotationReply(el) {
+    const status = el ? (el.getAttribute(ANNOTATION_STATUS_ATTR) || '') : '';
+    if (!status) {
+      annotationReply.textContent = '';
+      annotationReply.dataset.status = '';
+      annotationReply.style.display = 'none';
+      return;
+    }
+    const label = status === 'needs-input' ? 'Agent needs input' : 'Agent skipped';
+    const reply = normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR));
+    annotationReply.textContent = reply ? `${label}: ${reply}` : `${label}.`;
+    annotationReply.dataset.status = status;
+    annotationReply.style.display = '';
   }
 
   function refreshExportUi() {
@@ -484,6 +513,7 @@
     const rootEl = rootNode.documentElement || rootNode;
     if (!rootEl) return;
     rootEl.querySelectorAll(`script[${HANDOFF_SCRIPT_ATTR}]`).forEach((script) => script.remove());
+    rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
     });
@@ -497,21 +527,73 @@
     comments.forEach((comment) => comment.remove());
   }
 
+  // Parses the agent's results block (v2.13). Returns null when absent or
+  // malformed; otherwise a per-id map plus counts for the summary toast.
+  function parseAgentResults() {
+    const script = document.querySelector(`script[${RESULTS_SCRIPT_ATTR}]`);
+    if (!script) return null;
+    try {
+      const payload = JSON.parse(script.textContent || '{}');
+      if (!payload || !Array.isArray(payload.results)) return null;
+      const byId = new Map();
+      const counts = { done: 0, skipped: 0, needsInput: 0 };
+      for (const entry of payload.results) {
+        const id = (entry && typeof entry.id === 'string') ? entry.id : '';
+        const status = entry && entry.status;
+        if (!id || byId.has(id)) continue;
+        if (status !== 'done' && status !== 'skipped' && status !== 'needs-input') continue;
+        byId.set(id, { status, note: normalizeAnnotationText(entry.note) });
+        if (status === 'done') counts.done += 1;
+        else if (status === 'skipped') counts.skipped += 1;
+        else counts.needsInput += 1;
+      }
+      return byId.size ? { byId, counts } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function reimportHandoffAnnotations() {
     const payload = parseHandoffPayload();
-    if (!payload) return;
-    for (const annotation of payload.annotations) {
-      const id = typeof annotation.id === 'string' ? annotation.id : '';
-      const instruction = normalizeAnnotationText(annotation.instruction);
-      if (!id || !instruction) continue;
-      const targets = getHandoffTargetsById(document, id);
-      if (!targets.length) continue;
-      for (const target of targets) {
-        target.setAttribute(ANNOTATION_ID_ATTR, id);
-        target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
+    const results = parseAgentResults();
+    if (results) state.agentResultsSummary = results.counts;
+    if (!payload && !results) return;
+    if (payload) {
+      for (const annotation of payload.annotations) {
+        const id = typeof annotation.id === 'string' ? annotation.id : '';
+        const instruction = normalizeAnnotationText(annotation.instruction);
+        if (!id || !instruction) continue;
+        const result = results ? results.byId.get(id) : null;
+        // A done result resolves the note even if the agent left the
+        // metadata in place — stale annotations must not re-import.
+        if (result && result.status === 'done') continue;
+        const targets = getHandoffTargetsById(document, id);
+        if (!targets.length) continue;
+        for (const target of targets) {
+          target.setAttribute(ANNOTATION_ID_ATTR, id);
+          target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
+          if (result) {
+            target.setAttribute(ANNOTATION_STATUS_ATTR, result.status);
+            if (result.note) target.setAttribute(ANNOTATION_REPLY_ATTR, result.note);
+          }
+        }
       }
     }
     removeHandoffArtifacts(document);
+  }
+
+  // Toasts the reconciliation summary once, at ready. Covers both the live
+  // refresh and a manual reopen of an agent-processed file.
+  function consumeAgentResultsSummaryToast() {
+    const counts = state.agentResultsSummary;
+    state.agentResultsSummary = null;
+    if (!counts) return;
+    const parts = [];
+    if (counts.done) parts.push(`${counts.done} done`);
+    if (counts.skipped) parts.push(`${counts.skipped} skipped`);
+    if (counts.needsInput) parts.push(`${counts.needsInput} needs input`);
+    if (!parts.length) return;
+    showToast(document.body, `Agent update: ${parts.join(', ')}.`);
   }
 
   function getCoordinateRootForElement(el) {

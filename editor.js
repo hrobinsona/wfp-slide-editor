@@ -20,6 +20,8 @@
  * v2.11:   export action menu; save-in-place via File System Access.
  * v2.12:   adaptive inspector — overlap-gated fade during live edits,
  *          coral value tag, scrubbable font field.
+ * v2.13:   live agent round-trip — save-file watch, in-place refresh,
+ *          agent results reconciliation.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -27,7 +29,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.12.3';
+  const VERSION = '2.13.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -57,7 +59,10 @@
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
   const HANDOFF_SCRIPT_ATTR = 'data-wfp-agent-annotations';
-  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element, then remove resolved annotation metadata.';
+  const RESULTS_SCRIPT_ATTR = 'data-wfp-agent-results';
+  const ANNOTATION_STATUS_ATTR = 'data-wfp-edit-annotation-status';
+  const ANNOTATION_REPLY_ATTR = 'data-wfp-edit-annotation-reply';
+  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored.';
 
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);
@@ -93,6 +98,7 @@
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
+    agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
   };
   const deckContext = resolveDeckRoot();
   // ===========================================================================
@@ -929,6 +935,24 @@
       letter-spacing: 0.02em;
       min-height: 11px;
     }
+    /* v2.13 — read-only agent reply under the note textarea. Amber for
+       needs-input (the row's existing has-note accent), slate for skipped. */
+    #${ROOT_ID} .wfpe-annotation-reply {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 7px;
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.38);
+      color: rgba(255, 234, 200, 0.96);
+      font: 500 10.5px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.01em;
+      overflow-wrap: break-word;
+    }
+    #${ROOT_ID} .wfpe-annotation-reply[data-status="skipped"] {
+      background: rgba(148, 163, 178, 0.16);
+      border-color: rgba(148, 163, 178, 0.4);
+      color: rgba(226, 232, 240, 0.92);
+    }
     #${ROOT_ID} .wfpe-annotation-save-btn {
       appearance: none;
       -webkit-appearance: none;
@@ -1086,6 +1110,33 @@
       transform: translateY(-1px);
       box-shadow:
         0 4px 12px rgba(230, 88, 76, 0.7),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    /* v2.13 agent-reply states in the same coral-glass vocabulary:
+       needs-input renders amber, skipped renders muted slate. Emphasis
+       keeps each state's own glow rather than reverting to coral. */
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"] {
+      background: radial-gradient(circle at 35% 30%, #ffe6b8, #f0a83b 62%, #d8892a);
+      box-shadow:
+        0 2px 7px rgba(240, 168, 59, 0.55),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"]:hover,
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="needs-input"][data-selected="true"] {
+      box-shadow:
+        0 4px 12px rgba(240, 168, 59, 0.7),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"] {
+      background: radial-gradient(circle at 35% 30%, #e2e8ee, #9aa6b2 62%, #7d8a97);
+      box-shadow:
+        0 2px 7px rgba(122, 135, 148, 0.5),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
+    }
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"]:hover,
+    #${ROOT_ID} .wfpe-annotation-badge[data-status="skipped"][data-selected="true"] {
+      box-shadow:
+        0 4px 12px rgba(122, 135, 148, 0.65),
         inset 0 1px 1px rgba(255, 255, 255, 0.5);
     }
     @media (prefers-color-scheme: dark) {
@@ -2075,6 +2126,13 @@
   annotationTextarea.spellcheck = true;
   annotationRow.appendChild(annotationTextarea);
 
+  // v2.13 — read-only agent reply line (skipped / needs-input outcomes).
+  const annotationReply = document.createElement('div');
+  annotationReply.className = 'wfpe-annotation-reply';
+  annotationReply.dataset.status = '';
+  annotationReply.style.display = 'none';
+  annotationRow.appendChild(annotationReply);
+
   const annotationActions = document.createElement('div');
   annotationActions.className = 'wfpe-annotation-actions';
 
@@ -2971,8 +3029,12 @@
         annotationLayer.appendChild(marker);
       }
       marker.dataset.selected = el === state.selected ? 'true' : 'false';
+      const status = el.getAttribute(ANNOTATION_STATUS_ATTR);
+      if (status) marker.dataset.status = status;
+      else delete marker.dataset.status;
       marker.textContent = '';
-      marker.title = getAnnotationText(el);
+      const reply = normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR));
+      marker.title = reply ? `${getAnnotationText(el)} — Agent: ${reply}` : getAnnotationText(el);
       positionAnnotationBadge(marker, rect);
       used.add(marker);
     }
@@ -2999,6 +3061,10 @@
       el.setAttribute(ANNOTATION_ID_ATTR, currentId || generateAnnotationId());
       el.setAttribute(ANNOTATION_TEXT_ATTR, nextText);
     }
+    // A changed or deleted instruction supersedes the agent's reply to the
+    // old one (v2.13). Same transaction, so undo restores them together.
+    el.removeAttribute(ANNOTATION_STATUS_ATTR);
+    el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
@@ -3013,6 +3079,8 @@
     touchElement(el);
     el.removeAttribute(ANNOTATION_ID_ATTR);
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    el.removeAttribute(ANNOTATION_STATUS_ATTR);
+    el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
@@ -3028,6 +3096,7 @@
       if (document.activeElement !== annotationTextarea) annotationTextarea.value = '';
       annotationDeleteBtn.disabled = true;
       updateAnnotationDraftStatus(null);
+      renderAnnotationReply(null);
       return;
     }
     const targetChanged = annotationRow.__wfpeTarget !== el;
@@ -3043,6 +3112,24 @@
     }
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
+    renderAnnotationReply(el);
+  }
+
+  // Read-only "Agent …" line under the note textarea (v2.13): shows the
+  // agent's reply for skipped / needs-input notes, hidden otherwise.
+  function renderAnnotationReply(el) {
+    const status = el ? (el.getAttribute(ANNOTATION_STATUS_ATTR) || '') : '';
+    if (!status) {
+      annotationReply.textContent = '';
+      annotationReply.dataset.status = '';
+      annotationReply.style.display = 'none';
+      return;
+    }
+    const label = status === 'needs-input' ? 'Agent needs input' : 'Agent skipped';
+    const reply = normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR));
+    annotationReply.textContent = reply ? `${label}: ${reply}` : `${label}.`;
+    annotationReply.dataset.status = status;
+    annotationReply.style.display = '';
   }
 
   function refreshExportUi() {
@@ -3090,6 +3177,7 @@
     const rootEl = rootNode.documentElement || rootNode;
     if (!rootEl) return;
     rootEl.querySelectorAll(`script[${HANDOFF_SCRIPT_ATTR}]`).forEach((script) => script.remove());
+    rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
     });
@@ -3103,21 +3191,73 @@
     comments.forEach((comment) => comment.remove());
   }
 
+  // Parses the agent's results block (v2.13). Returns null when absent or
+  // malformed; otherwise a per-id map plus counts for the summary toast.
+  function parseAgentResults() {
+    const script = document.querySelector(`script[${RESULTS_SCRIPT_ATTR}]`);
+    if (!script) return null;
+    try {
+      const payload = JSON.parse(script.textContent || '{}');
+      if (!payload || !Array.isArray(payload.results)) return null;
+      const byId = new Map();
+      const counts = { done: 0, skipped: 0, needsInput: 0 };
+      for (const entry of payload.results) {
+        const id = (entry && typeof entry.id === 'string') ? entry.id : '';
+        const status = entry && entry.status;
+        if (!id || byId.has(id)) continue;
+        if (status !== 'done' && status !== 'skipped' && status !== 'needs-input') continue;
+        byId.set(id, { status, note: normalizeAnnotationText(entry.note) });
+        if (status === 'done') counts.done += 1;
+        else if (status === 'skipped') counts.skipped += 1;
+        else counts.needsInput += 1;
+      }
+      return byId.size ? { byId, counts } : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function reimportHandoffAnnotations() {
     const payload = parseHandoffPayload();
-    if (!payload) return;
-    for (const annotation of payload.annotations) {
-      const id = typeof annotation.id === 'string' ? annotation.id : '';
-      const instruction = normalizeAnnotationText(annotation.instruction);
-      if (!id || !instruction) continue;
-      const targets = getHandoffTargetsById(document, id);
-      if (!targets.length) continue;
-      for (const target of targets) {
-        target.setAttribute(ANNOTATION_ID_ATTR, id);
-        target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
+    const results = parseAgentResults();
+    if (results) state.agentResultsSummary = results.counts;
+    if (!payload && !results) return;
+    if (payload) {
+      for (const annotation of payload.annotations) {
+        const id = typeof annotation.id === 'string' ? annotation.id : '';
+        const instruction = normalizeAnnotationText(annotation.instruction);
+        if (!id || !instruction) continue;
+        const result = results ? results.byId.get(id) : null;
+        // A done result resolves the note even if the agent left the
+        // metadata in place — stale annotations must not re-import.
+        if (result && result.status === 'done') continue;
+        const targets = getHandoffTargetsById(document, id);
+        if (!targets.length) continue;
+        for (const target of targets) {
+          target.setAttribute(ANNOTATION_ID_ATTR, id);
+          target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
+          if (result) {
+            target.setAttribute(ANNOTATION_STATUS_ATTR, result.status);
+            if (result.note) target.setAttribute(ANNOTATION_REPLY_ATTR, result.note);
+          }
+        }
       }
     }
     removeHandoffArtifacts(document);
+  }
+
+  // Toasts the reconciliation summary once, at ready. Covers both the live
+  // refresh and a manual reopen of an agent-processed file.
+  function consumeAgentResultsSummaryToast() {
+    const counts = state.agentResultsSummary;
+    state.agentResultsSummary = null;
+    if (!counts) return;
+    const parts = [];
+    if (counts.done) parts.push(`${counts.done} done`);
+    if (counts.skipped) parts.push(`${counts.skipped} skipped`);
+    if (counts.needsInput) parts.push(`${counts.needsInput} needs input`);
+    if (!parts.length) return;
+    showToast(document.body, `Agent update: ${parts.join(', ')}.`);
   }
 
   function getCoordinateRootForElement(el) {
@@ -6061,7 +6201,7 @@
     if (state.editingText) endTextEdit();
     const noteCount = getAnnotatedElements(document).length;
     const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
-    // SPIKE (live agent round-trip): pause the watcher so our own write is
+    // Live agent round-trip (v2.13): pause the watcher so our own write is
     // never mistaken for an external agent update; baseline is rebased
     // after a successful write, and the watcher resumes in finally.
     agentWatchPause();
@@ -6338,7 +6478,7 @@
       version: 1,
       source: 'wfp-slide-editor',
       kind: 'agent-handoff',
-      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first.',
+      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first. After implementing, the user expects a script[type="application/json"][data-wfp-agent-results] block recording {id, status: done|skipped|needs-input, note} per annotation, with metadata removed for done items and kept for skipped/needs-input ones.',
       annotations,
     };
     const comment = document.createComment(` ${HANDOFF_COMMENT_TEXT} `);
@@ -6407,29 +6547,28 @@
     showToast(document.body, `Exported handoff to ${filename}`);
   }
   // ===========================================================================
-  // Live agent round-trip — SPIKE (worktree-only; not production code)
+  // Live agent round-trip (v2.13)
   //
-  // Validates the riskiest assumption behind the "Live Agent Round-trip"
-  // roadmap candidate: after an agent rewrites the saved file on disk, the
-  // editor detects the write through the bound FileSystemFileHandle, swaps
-  // the new document into the live page without a navigation, and re-boots
-  // itself with edit mode and the active slide restored.
+  // When an agent rewrites the bound save-in-place file on disk, the editor
+  // refreshes the document in place: no reload, no bookmarklet re-click, no
+  // permission re-grant. Contract in REQUIREMENTS.md (“Live Agent
+  // Round-trip”); design rationale in DESIGN.md; build record in
+  // feature-briefs/v2.13-live-agent-roundtrip.md.
   //
   // Mechanism:
-  //   - Poll boundFileHandle.getFile().lastModified.
+  //   - Poll boundFileHandle.getFile().lastModified (~1.2s).
   //   - On an external change: stash a restore payload on window (the
   //     window object and its globals survive document.open() — only the
   //     Document's contents and its event listeners are replaced), then
   //     document.open()/write()/close() the new HTML. That erases
-  //     document-level listeners (the fixture's stale nav handler and the
-  //     old editor's own keydown capture) and re-executes deck scripts
-  //     fresh during the write. Finally re-inject the editor script that
-  //     was captured at boot.
-  //   - The new instance adopts the payload at ready: same file handle (no
-  //     re-pick, no re-grant), edit mode, active slide — and deckMutated,
-  //     because the re-parsed deck script's closures reset to slide 0,
-  //     which is exactly the staleness deckMutated's arrow-nav takeover
-  //     already exists to cover.
+  //     document-level listeners (the deck's stale nav handler and the old
+  //     editor's own keydown capture) and re-executes deck scripts exactly
+  //     once during the write. Finally re-inject the editor script
+  //     captured at boot.
+  //   - The new instance adopts the payload at ready: same file handle,
+  //     edit mode, active slide, fold states — and deckMutated, because
+  //     the re-parsed deck script's closures reset to slide 0, which is
+  //     exactly the staleness deckMutated's arrow-nav takeover covers.
   // ===========================================================================
   const AGENT_WATCH_INTERVAL_MS = 1200;
   const LIVE_RESTORE_KEY = '__wfpLiveRefreshRestore';
@@ -6461,17 +6600,41 @@
     agentWatchPaused = false;
   }
 
+  // "Paused" has been announced and "resumed" hasn't yet. The flag only
+  // gates the two announcements — a recovered handle refreshes regardless.
+  let watchDormant = false;
+
   // Called after our own successful save so the watcher never mistakes the
-  // editor's write for an agent update.
+  // editor's write for an agent update. A successful save is also the
+  // re-link moment when the watch had gone dormant.
   async function agentWatchSyncBaseline(handle) {
     try {
       if (handle && typeof handle.getFile === 'function') {
         const f = await handle.getFile();
         agentWatchBaseline = f.lastModified;
+        if (watchDormant) {
+          watchDormant = false;
+          showToast(document.body, 'Live updates resumed.');
+        }
       }
     } catch (_) {
       /* keep the old baseline; the next tick retries */
     }
+  }
+
+  // A refresh must not fire mid-interaction: the swap would destroy open
+  // transactions, text edits, drags, or overlay state. Deferring instead of
+  // dropping works because the baseline only advances on a successful swap,
+  // so the next idle tick picks the change up again.
+  function isInteractionOpen() {
+    return !!(
+      state.txn ||
+      state.editingText ||
+      state.drag ||
+      state.resize ||
+      state.overviewMode ||
+      state.exportMenuOpen
+    );
   }
 
   async function agentWatchTick() {
@@ -6488,13 +6651,22 @@
         agentWatchBaseline = f.lastModified;
         return;
       }
-      if (f.lastModified > agentWatchBaseline) {
-        const html = await f.text();
-        agentWatchBaseline = f.lastModified;
-        await performLiveRefresh(html, f.lastModified);
+      if (f.lastModified <= agentWatchBaseline) return;
+      if (isInteractionOpen()) return; // deferred — retried next tick
+      const html = await f.text();
+      // Re-check after the awaits: a save may have paused the watcher while
+      // this tick was in flight. (The baseline guard defuses this in
+      // practice; the check makes the invariant explicit.)
+      if (agentWatchPaused) return;
+      agentWatchBaseline = f.lastModified;
+      await performLiveRefresh(html, f.lastModified);
+    } catch (err) {
+      const name = err && err.name;
+      if ((name === 'NotAllowedError' || name === 'SecurityError') && !watchDormant) {
+        watchDormant = true;
+        showToast(document.body, 'Live updates paused — file access needed. Save to re-link.');
       }
-    } catch (_) {
-      /* transient read failure (e.g. permission dropped) — retry next tick */
+      /* other read failures are transient — retry next tick */
     } finally {
       agentWatchBusy = false;
     }
@@ -6529,6 +6701,8 @@
       lastModified,
       editMode: state.editMode,
       slideIndex: captureActiveSlideIndex(),
+      inspectorMinimised: state.inspectorMinimised,
+      toolbarCollapsed: state.toolbarCollapsed,
     };
 
     // Replace the document wholesale. Same Document object, same realm,
@@ -6560,21 +6734,31 @@
       agentWatchBaseline = typeof payload.lastModified === 'number' ? payload.lastModified : null;
     }
 
-    const slides = getSlides();
-    const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
-    if (idx >= 0 && slides[idx]) {
-      const dots = document.querySelectorAll('.progress-dot');
-      slides.forEach((s, i) => s.classList.toggle('active', i === idx));
-      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    // Flat documents have no slide pagination: getSlides() returns the flat
+    // root itself, and toggling `active` there would stamp a class onto a
+    // user element that export never strips.
+    if (getDocumentMode() !== 'flat') {
+      const slides = getSlides();
+      const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
+      if (idx >= 0 && slides[idx]) {
+        const dots = document.querySelectorAll('.progress-dot');
+        slides.forEach((s, i) => s.classList.toggle('active', i === idx));
+        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+      }
+      // The re-parsed deck script cached slide 0 as current; hand plain-view
+      // arrow nav to the editor's fresh-DOM implementation, the same
+      // mechanism used after overview reorder/delete.
+      state.deckMutated = true;
     }
 
-    // The re-parsed deck script cached slide 0 as current; hand plain-view
-    // arrow nav to the editor's fresh-DOM implementation, the same
-    // mechanism used after overview reorder/delete.
-    if (getDocumentMode() !== 'flat') state.deckMutated = true;
-
+    state.inspectorMinimised = !!payload.inspectorMinimised;
+    if (payload.toolbarCollapsed) setToolbarCollapsed(true);
     if (payload.editMode) setEditMode(true);
-    showToast(document.body, 'Reloaded from disk — agent update applied.');
+    // When the refreshed file carried a results block, the ready-time
+    // summary toast is the more informative message — skip the generic one.
+    if (!state.agentResultsSummary) {
+      showToast(document.body, 'Reloaded from disk — agent update applied.');
+    }
   }
   // ===========================================================================
   // Ready
@@ -6588,11 +6772,12 @@
       })
       .catch(() => {});
   }
-  // SPIKE (live agent round-trip): adopt state handed over by a previous
+  // Live agent round-trip (v2.13): adopt state handed over by a previous
   // instance across a document.write refresh, then watch the bound file
   // for external (agent) writes.
   adoptLiveRefreshState();
   if (canSaveInPlace()) startAgentWatch();
+  consumeAgentResultsSummaryToast();
   window.__wfpEditorReady = true;
   console.log(`[wfp-editor] ready v${VERSION}`);
 })();

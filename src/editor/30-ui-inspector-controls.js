@@ -574,6 +574,13 @@
   annotationTextarea.spellcheck = true;
   annotationRow.appendChild(annotationTextarea);
 
+  // v2.13 — read-only agent reply line (skipped / needs-input outcomes).
+  const annotationReply = document.createElement('div');
+  annotationReply.className = 'wfpe-annotation-reply';
+  annotationReply.dataset.status = '';
+  annotationReply.style.display = 'none';
+  annotationRow.appendChild(annotationReply);
+
   const annotationActions = document.createElement('div');
   annotationActions.className = 'wfpe-annotation-actions';
 

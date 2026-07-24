@@ -207,6 +207,24 @@ The one sanctioned exception is the `handleRehydration` await from Decision 3 ab
 
 Feature-detected once via `canSaveInPlace()` (`typeof window.showSaveFilePicker === 'function'`). Safari and Firefox lack the API entirely, so row 1 downgrades to the download behaviour Export already had (`<name>-edited.html` / `<name>-agent-handoff.html`) — no handle, no IndexedDB, no user-gesture care beyond what a normal download already requires. The distinction is surfaced to the user only through the menu sublabel (" — Downloads"), not through different content: both paths reuse the same `buildExportHtml`/`buildHandoffExportHtml` pipelines described above.
 
+## Live Agent Round-trip (v2.13)
+
+### Why document.open()/write() instead of a reload
+
+A reload loses the editor (injected scripts do not survive navigation), costs a file-access re-grant, and drops the user's position. `document.open()/write()/close()` replaces the Document's contents inside the same window and realm: window globals survive — which is what carries the `FileSystemFileHandle` across generations with no re-pick — while document-level listeners are erased, killing the deck's stale nav closures and the previous editor instance's key handling in one move (Chromium erases window-level listeners too; the pre-swap `removeEventListener` calls are belt and braces). Scripts in the written HTML execute exactly once against the new DOM. The old instance then re-injects the editor script captured at boot — `src` for bookmarklet loads, inline text for dev/Playwright injection — and the duplicate-mount guard passes because saved files never contain editor chrome.
+
+### Generations
+
+Each boot increments `window.__wfpEditorGeneration`. A refresh is a generation boundary: fresh state, fresh listeners, fresh undo history — deliberate, since the document itself changed underneath the history's DOM references. Continuity travels in a single window-scoped restore payload (file handle, mtime baseline, edit mode, active slide index, inspector/toolbar fold state) that the new instance adopts at ready. Adoption also sets `state.deckMutated`, reusing the existing fresh-DOM arrow-nav takeover: the re-parsed deck script cached slide 0 as current, which is precisely the staleness that mechanism was built for.
+
+### Watch discipline
+
+The watcher polls `getFile().lastModified` (~1.2s). Three rules keep it predictable. The editor's own saves pause the watcher and rebase its baseline afterwards, so a save never reads as an agent write. The baseline advances only on a successful swap, so a refresh deferred by an open interaction (transaction, text edit, drag, resize, Overview, export menu) retries on the next idle tick instead of being dropped. Permission failures announce "paused" exactly once and the next successful save announces "resumed" — the dormant flag gates the announcements, not the mechanism, so a silently recovered handle still refreshes.
+
+### Results reconciliation
+
+The handoff guidance asks agents to record per-annotation outcomes in `script[data-wfp-agent-results]` (`{id, status: done|skipped|needs-input, note}`), removing metadata for done items and keeping it otherwise so notes stay anchored. Import reconciles defensively: a done result resolves its annotation even when a sloppy agent leaves metadata behind (this closes the old stale-reimport hole), skipped/needs-input replies re-import as open notes carrying `data-wfp-edit-annotation-status`/`-reply` (rendered as amber/slate badges and a read-only inspector line), and annotations without a result import unchanged for agents that ignore the contract. The parsed summary lands on `state.agentResultsSummary` — on `state` rather than a module `let` because reimport runs during an earlier fragment's top-level evaluation, where a later fragment's `let` binding would still be in its temporal dead zone — and the ready block toasts it once.
+
 ## Inline-style Merging
 
 Many slide elements already carry inline styles for animation and layout. Editor writes must use DOM style APIs:

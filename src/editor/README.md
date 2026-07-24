@@ -21,7 +21,8 @@ physical ownership boundaries before deeper dependency cleanup.
 - `80-drag-resize-unlock.js` - scale-aware drag/resize and flow unlock.
 - `90-text-edit.js` - inline text edit lifecycle.
 - `95-export.js` - clean/handoff HTML export pipelines and the v2.11 save-in-place engine (File System Access + IndexedDB handle store).
-- `99-ready.js` - ready flag and startup log.
+- `96-live-refresh.js` - v2.13 live agent round-trip: save-file watch, in-place document swap, editor re-injection, and cross-generation state adoption.
+- `99-ready.js` - restore adoption, watch start, results summary toast, ready flag, and startup log.
 
 Keep `editor.js` in sync with these fragments by running:
 

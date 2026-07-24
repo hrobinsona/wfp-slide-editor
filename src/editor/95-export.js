@@ -126,7 +126,7 @@
     if (state.editingText) endTextEdit();
     const noteCount = getAnnotatedElements(document).length;
     const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
-    // SPIKE (live agent round-trip): pause the watcher so our own write is
+    // Live agent round-trip (v2.13): pause the watcher so our own write is
     // never mistaken for an external agent update; baseline is rebased
     // after a successful write, and the watcher resumes in finally.
     agentWatchPause();
@@ -403,7 +403,7 @@
       version: 1,
       source: 'wfp-slide-editor',
       kind: 'agent-handoff',
-      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first.',
+      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first. After implementing, the user expects a script[type="application/json"][data-wfp-agent-results] block recording {id, status: done|skipped|needs-input, note} per annotation, with metadata removed for done items and kept for skipped/needs-input ones.',
       annotations,
     };
     const comment = document.createComment(` ${HANDOFF_COMMENT_TEXT} `);
