@@ -373,3 +373,90 @@ test.describe('v2.14 — reimport hygiene', () => {
     expect(written).not.toContain('edit-old-2');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 6. Overflow false positives (v2.14 QA — BUG-001, BUG-002)
+// ---------------------------------------------------------------------------
+
+test.describe('v2.14 — overflow measurement false positives', () => {
+  // BUG-001: dragging a flex child flow-unlocks the row and PINS the parent
+  // (.chip-row) to its pre-drag footprint via a freeze marker. The dragged
+  // child's deliberate new position then falls outside that stale parent box,
+  // tripping the parent-escape check even though nothing is visually clipped.
+  test('a flow-unlock drag target is not reported as overflowing its frozen parent', async ({ page }) => {
+    await installFsaFileStub(page);
+    await loadReady(page);
+
+    // Drag the first chip ("Plan") down and out of the flex row. This freezes
+    // the row and its siblings, and repositions the chip below the row's box.
+    const center = await page.evaluate(() => {
+      const chip = document.querySelector('.slide.active .chip-row .chip');
+      const r = chip.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x + 20, center.y + 60, { steps: 4 });
+    await page.mouse.move(center.x + 30, center.y + 120, { steps: 4 });
+    await page.mouse.up();
+
+    // Sanity: the drag actually flow-unlocked the row (freeze markers present).
+    const froze = await page.evaluate(() => {
+      const chip = document.querySelector('.slide.active .chip-row .chip');
+      const row = document.querySelector('.slide.active .chip-row');
+      const has = (el) => !!el && (el.hasAttribute('data-wfp-edit-frozen') || el.hasAttribute('data-wfp-edit-flex-frozen'));
+      return { chip: has(chip), row: has(row) };
+    });
+    expect(froze.chip || froze.row).toBe(true);
+
+    // Annotate the dragged chip so it carries a measured overflow value.
+    await saveNote(page, '.slide.active .chip-row .chip', 'Nudge this chip');
+    const written = await saveInPlace(page, 1);
+    const payload = extractHandoffPayload(written);
+
+    const chip = payload.annotations.find((a) => a.targetText === 'Plan');
+    expect(chip).toBeTruthy();
+    // No visual clipping — the new position is the deliberate result of the
+    // drag, not an escape from a real containment boundary.
+    expect(chip.overflow).toBe(false);
+
+    // And its ledger entry (position edit) must agree.
+    const chipEdit = payload.edits.find((e) => e.targetText === 'Plan');
+    expect(chipEdit).toBeTruthy();
+    expect(chipEdit.overflow).toBe(false);
+  });
+
+  // BUG-002: sub-1 line-height display text paints glyph descenders a few px
+  // below the content box, so scrollHeight edges fractionally past clientHeight
+  // on an auto-height heading that never actually clips.
+  test('a wrapped sub-1 line-height headline is not reported as overflowing', async ({ page }) => {
+    await installFsaFileStub(page);
+    await loadReady(page);
+
+    // Force the line-height:0.96 headline to wrap to multiple lines. Its height
+    // is auto, so content is always fully visible — any overflow:true here is a
+    // descender-metric artifact, not clipping.
+    await page.evaluate(() => {
+      const h1 = document.querySelector('.slide.active h1.foreign-title');
+      h1.style.width = '260px';
+      h1.style.fontSize = '60px';
+    });
+    const wrapped = await page.evaluate(() => {
+      const h1 = document.querySelector('.slide.active h1.foreign-title');
+      return {
+        multiline: h1.getBoundingClientRect().height > 90,
+        gap: h1.scrollHeight - h1.clientHeight,
+      };
+    });
+    expect(wrapped.multiline).toBe(true); // genuinely wrapped, height grew
+    expect(wrapped.gap).toBeGreaterThan(1); // the descender artifact is present
+
+    await saveNote(page, '.slide.active h1.foreign-title', 'Punch up this headline');
+    const written = await saveInPlace(page, 1);
+    const payload = extractHandoffPayload(written);
+
+    const headline = payload.annotations.find((a) => a.targetText === 'Market day agenda');
+    expect(headline).toBeTruthy();
+    expect(headline.overflow).toBe(false);
+  });
+});

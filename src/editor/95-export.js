@@ -407,15 +407,35 @@
     };
   }
 
+  function hasFreezeMarker(el) {
+    return (
+      !!el &&
+      (el.hasAttribute('data-wfp-edit-frozen') ||
+        el.hasAttribute('data-wfp-edit-flex-frozen'))
+    );
+  }
+
   function measureElementOverflow(el) {
+    // Content clipping. Descender glyphs on sub-1 line-height text paint a few
+    // px below the content box, edging scrollHeight past clientHeight on an
+    // element that never visually clips. Allow vertical slop proportional to
+    // font-size — a genuinely clipped line adds ~a full font-size, far more
+    // than descender overhang. (BUG-002)
+    const fontSize = parseFloat(getComputedStyle(el).fontSize) || 0;
+    const vTolerance = Math.max(1, fontSize * 0.25);
     if (
       el.scrollWidth > el.clientWidth + 1 ||
-      el.scrollHeight > el.clientHeight + 1
+      el.scrollHeight > el.clientHeight + vTolerance
     ) {
       return true;
     }
     const parent = el.parentElement;
     if (!parent) return false;
+    // Parent-escape check. A flow-unlock/freeze pins the parent to its pre-edit
+    // footprint and stamps both the dragged child and its siblings. In that
+    // state the parent box is stale layout, not a containment boundary — a
+    // deliberate drag past it is not clipping, so skip this check. (BUG-001)
+    if (hasFreezeMarker(el) || hasFreezeMarker(parent)) return false;
     const rect = el.getBoundingClientRect();
     const parentRect = parent.getBoundingClientRect();
     return (

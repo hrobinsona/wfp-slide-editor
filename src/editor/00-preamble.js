@@ -24,6 +24,8 @@
  *          agent results reconciliation.
  * v2.14:   handoff ground truth — edit ledger and box/computed/overflow
  *          measurements in the handoff payload.
+ * v2.14.1: overflow measurement fixes — skip parent-escape on unlock-frozen
+ *          elements; tolerate sub-1 line-height descender overhang.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -31,7 +33,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.14.0';
+  const VERSION = '2.14.1';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;

@@ -63,49 +63,42 @@ note dot) restyled `.wfpe-annotation-badge` to 13×13px
 message, so the test is stale, not the code. Test-only fix; check the spec
 for other 16px badge references.
 
-### Handoff ledger reports overflow:true for elements dragged out of an unlock-frozen parent
+## Resolved
 
-- **Status:** open
-- **Raised:** 2026-07-24, v2.14 manual browser QA (high severity)
+### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 
-`measureElementOverflow` (`src/editor/95-export.js:410-427`) reports
-`overflow: true` for a flow-unlocked element that the user dragged to a new,
-correctly-rendered position. Root cause is the parent-escape branch
-(lines 417-426): when a flex/flow child is dragged, `pinContainerChildren`
-freezes the parent (`.chip-row`) to its *pre-drag* footprint, so the
-child's new position falls outside that stale parent box and trips the
-check — even though the element has no visual clipping. Reproduced live:
-dragging a `.chip` out of `fixtures/foreign-deck.html`'s `.chip-row`
-yielded `overflow: true` on the drag target while its untouched siblings
-read `false`. This hits drag-to-reposition — the most common edit — and
-contradicts the ledger's own "preserve these edits" guidance: an agent
-trusting the signal could move a correctly-placed element back inside the
-stale box. Same unlock/freeze mechanism as the "Reset does not restore
-unlock-frozen sibling groups" entry above. Suggested fix: skip or
-down-weight the parent-escape check when the element or its parent carries
-`data-wfp-edit-frozen`/`data-wfp-edit-flex-frozen` (in that state the
-parent box is pre-edit layout, not an intended containment boundary).
-Coverage gap: `tests/v2-14-handoff-ground-truth.spec.js` overflow tests
-cover a fitting element and a content-overflow case, but no flex-freeze
-drag target.
-
-### Handoff measurement reports overflow:true on tight-line-height multi-line text
-
-- **Status:** open (low severity — known tradeoff, flagged in v2.14 code review, confirmed live in QA)
+- **Status:** fixed 2026-07-24 (BUG-001, high; branch `fix/v2.14-overflow-false-positives`)
 - **Raised:** 2026-07-24, v2.14 manual browser QA
 
-`measureElementOverflow`'s content branch (`src/editor/95-export.js:411-416`)
-returns `overflow: true` for a headline with `line-height < 1` once its text
-wraps to two lines, because glyph-descender metrics push `scrollHeight` a
-few px above `clientHeight` with no actual clipping. Reproduced live on
-`h1.foreign-title` (`line-height: 0.96`) at `font-size: 67px`: scrollHeight
-136 vs clientHeight 129, `overflow: true`, but the text renders fully
-visible. Lower impact than the flex-freeze case but affects a common
-display-type pattern. Suggested fix: widen the content tolerance to absorb
-typical descender overhang, or note in the guidance that `overflow: true`
-near sub-1 line-height warrants a visual check before acting.
+`measureElementOverflow`'s parent-escape branch (`src/editor/95-export.js`)
+reported `overflow: true` for a flow-unlocked element the user had dragged to
+a new, correctly-rendered position: dragging a flex/flow child freezes the
+parent (e.g. `.chip-row`) to its *pre-drag* footprint, so the child's new
+position falls outside that stale box and trips the geometric check with no
+visual clipping. Fixed by skipping the parent-escape check when the element
+or its parent carries `data-wfp-edit-frozen`/`data-wfp-edit-flex-frozen` — in
+that state the parent box is pre-edit layout, not a containment boundary. The
+content-clipping branch still runs for frozen elements. New coverage:
+`tests/v2-14-handoff-ground-truth.spec.js` drags a `.chip` out of
+`fixtures/foreign-deck.html`'s `.chip-row` and asserts `overflow: false` on
+both the annotation and ledger entries.
 
-## Resolved
+### Handoff measurement reported overflow:true on tight-line-height multi-line text
+
+- **Status:** fixed 2026-07-24 (BUG-002, low; branch `fix/v2.14-overflow-false-positives`)
+- **Raised:** 2026-07-24, v2.14 manual browser QA
+
+`measureElementOverflow`'s content branch returned `overflow: true` for a
+headline with `line-height < 1` once its text wrapped, because glyph-descender
+metrics push `scrollHeight` a few px above `clientHeight` with no actual
+clipping (live: `h1.foreign-title` at 60–67px, ~7px gap). Fixed by allowing
+vertical slop proportional to font-size (`max(1, fontSize * 0.25)`) in the
+`scrollHeight` comparison — descender overhang is a fraction of font-size,
+while a genuinely clipped line adds roughly a full font-size, so real content
+overflow (e.g. the shrunk `.resize-target` case) still reports `true`.
+Horizontal tolerance is unchanged. New coverage:
+`tests/v2-14-handoff-ground-truth.spec.js` wraps the `line-height: 0.96`
+headline and asserts `overflow: false`.
 
 ### Reset warped elements to the slide origin
 
