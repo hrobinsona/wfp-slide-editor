@@ -1,17 +1,48 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// v2.5 — reset styles. Clears the entire inline style attribute on the
-// selected element ("reset overrides" semantics from BRIEF "Decisions
-// baked in" #2). One history entry. Element returns to its stylesheet-
-// defined rendering.
+// v2.5 reset styles — reworked contract (2026-07). Reset restores the
+// selected element's inline `style` to its pre-edit original: the value
+// captured the first time an editor transaction changed the element.
+// The previous "clear the whole attribute" semantics destroyed styles
+// authored in the deck HTML (position/size), dropping the element to the
+// slide origin with auto dimensions. Runs against dev/harness.html like
+// the v2-10/v2-12 specs so it needs no private fixtures.
 
-test.use({ viewport: { width: 2000, height: 1200 } });
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const HARNESS_PATH = path.join(PROJECT_ROOT, 'dev', 'harness.html');
+
+const ROOT = '#wfp-editor-root';
+const RESET_BTN = `${ROOT} .wfpe-inspector .wfpe-reset-btn`;
+const FONT_INPUT = `${ROOT} .wfpe-inspector input[data-wfpe-prop="fontSize"]`;
+
+// Mirrors how real WFP decks position elements: geometry authored as an
+// inline style in the deck HTML itself.
+const AUTHORED_STYLE =
+  'position: absolute; left: 120px; top: 80px; width: 300px; height: 140px; background: rgb(18, 52, 86);';
+
+test.use({ viewport: { width: 1600, height: 1000 } });
+
+async function loadHarness(page) {
+  await page.goto(pathToFileURL(HARNESS_PATH).href);
+  await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+}
+
+async function addAuthoredElement(page) {
+  await page.evaluate((styleText) => {
+    const el = document.createElement('div');
+    el.className = 'authored-box';
+    el.setAttribute('style', styleText);
+    el.textContent = 'Authored box';
+    document.querySelector('.slide.active').appendChild(el);
+  }, AUTHORED_STYLE);
+}
 
 async function selectByMouse(page, selector) {
   const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
+    const r = document.querySelector(sel).getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }, selector);
   await page.mouse.move(center.x, center.y);
@@ -19,99 +50,77 @@ async function selectByMouse(page, selector) {
   await page.mouse.up();
 }
 
-test.describe('v2.5 — reset styles', () => {
+async function dragBy(page, selector, dx, dy) {
+  const center = await page.evaluate((sel) => {
+    const r = document.querySelector(sel).getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }, selector);
+  await page.mouse.move(center.x, center.y);
+  await page.mouse.down();
+  await page.mouse.move(center.x + dx, center.y + dy, { steps: 8 });
+  await page.mouse.up();
+}
+
+function getStyleAttr(page, selector) {
+  return page.evaluate(
+    (sel) => document.querySelector(sel).getAttribute('style'),
+    selector
+  );
+}
+
+function getSlideRect(page, selector) {
+  return page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const cs = getComputedStyle(el);
+    return { left: cs.left, top: cs.top, width: cs.width, height: cs.height };
+  }, selector);
+}
+
+test.describe('v2.5 — reset styles (restore pre-edit original)', () => {
   test.beforeEach(async ({ page }) => {
-    await loadFixtureWithEditor(page, 'Townhall-1.html');
-    await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
+    await loadHarness(page);
+    await addAuthoredElement(page);
     await page.keyboard.press('e');
   });
 
-  test('reset button renders inside the inspector for any selection', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
-    const present = await page.evaluate(
-      () => !!document.querySelector('#wfp-editor-root .wfpe-inspector .wfpe-reset-btn')
-    );
-    expect(present).toBe(true);
+  test('reset after a drag restores authored inline styles, not clears them', async ({ page }) => {
+    const original = await getSlideRect(page, '.authored-box');
 
-    // And for non-text-bearing elements too.
-    const found = await page.evaluate(() => {
-      const slide = document.querySelector('.slide.active');
-      const isTextBearing = (el) => [...el.childNodes].some(
-        (n) => n.nodeType === 3 && n.textContent.trim().length > 0
-      );
-      let nonText = null;
-      for (const el of slide.querySelectorAll('*')) {
-        if (!isTextBearing(el) && el.children.length > 0) { nonText = el; break; }
-      }
-      if (!nonText) return { found: false };
-      nonText.click();
-      return {
-        found: true,
-        present: !!document.querySelector('#wfp-editor-root .wfpe-inspector .wfpe-reset-btn'),
-      };
-    });
-    expect(found.found).toBe(true);
-    expect(found.present).toBe(true);
+    await selectByMouse(page, '.authored-box');
+    await dragBy(page, '.authored-box', 90, 60);
+    const dragged = await getStyleAttr(page, '.authored-box');
+    expect(dragged).not.toBe(AUTHORED_STYLE);
+
+    await page.locator(RESET_BTN).click();
+    expect(await getStyleAttr(page, '.authored-box')).toBe(AUTHORED_STYLE);
+    expect(await getSlideRect(page, '.authored-box')).toEqual(original);
   });
 
-  test('reset clears the entire inline style attribute as one history entry', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
+  test('reset after inspector edits is one history entry: undo returns the edit, redo the original', async ({ page }) => {
+    await selectByMouse(page, '.authored-box');
 
-    // Apply several inline edits via the inspector (font-size + colour
-    // + width) so the style attribute carries multiple properties.
-    await page.evaluate(() => {
-      const el = document.querySelector('.slide.active h1');
-      // The fixture H1 already has an inline animation-delay; adding
-      // editor-driven properties on top exercises the "reset clears
-      // EVERYTHING" semantics — including the original animation-delay.
-      el.style.fontSize = '120px';
-      el.style.color = 'rgb(10, 20, 30)';
-      el.style.width = '900px';
-    });
-    const beforeStyle = await page.evaluate(
-      () => document.querySelector('.slide.active h1').getAttribute('style')
-    );
-    expect(beforeStyle).toBeTruthy();
-
-    // Click reset — one click → entire inline style cleared.
-    await page.locator('#wfp-editor-root .wfpe-reset-btn').click();
-    const afterStyle = await page.evaluate(
-      () => document.querySelector('.slide.active h1').getAttribute('style')
-    );
-    expect(afterStyle === null || afterStyle === '').toBe(true);
-
-    // One Cmd+Z restores the entire previous inline style — confirms
-    // the reset created exactly one history entry.
-    await page.keyboard.press('Control+z');
-    const undone = await page.evaluate(
-      () => document.querySelector('.slide.active h1').getAttribute('style')
-    );
-    expect(undone).toBe(beforeStyle);
-  });
-
-  test('reset on an element with no inline style is a no-op (no history entry, no DOM mutation)', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
-
-    // Seed a known inline-style baseline outside the editor's txn
-    // pipeline so the inspector commit captures it as BEFORE.
-    await page.evaluate(() => {
-      const el = document.querySelector('.slide.active h1');
-      el.removeAttribute('style');
-      el.style.fontSize = '99px';
-    });
-    // Make one real history entry via the inspector. Its BEFORE
-    // snapshot is "font-size: 99px"; its AFTER is "font-size: 77px".
-    const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSize"]');
+    const input = page.locator(FONT_INPUT);
     await input.click({ clickCount: 3 });
-    await input.fill('77');
+    await input.fill('44');
     await input.press('Enter');
+    const edited = await getStyleAttr(page, '.authored-box');
+    expect(edited).not.toBe(AUTHORED_STYLE);
 
-    // Clear the inline style outside the editor so the reset button
-    // has nothing to do.
-    await page.evaluate(() => document.querySelector('.slide.active h1').removeAttribute('style'));
+    await page.locator(RESET_BTN).click();
+    expect(await getStyleAttr(page, '.authored-box')).toBe(AUTHORED_STYLE);
 
-    // Use a MutationObserver to confirm the reset click does not write
-    // to the style attribute when there's nothing to clear.
+    // One undo → the edited state (reset was exactly one entry).
+    await page.keyboard.press('Control+z');
+    expect(await getStyleAttr(page, '.authored-box')).toBe(edited);
+
+    // Redo re-applies the reset.
+    await page.keyboard.press('Control+Shift+z');
+    expect(await getStyleAttr(page, '.authored-box')).toBe(AUTHORED_STYLE);
+  });
+
+  test('reset on a never-edited element is a no-op (no mutation, no history entry)', async ({ page }) => {
+    await selectByMouse(page, '.authored-box');
+
     await page.evaluate(() => {
       window.__resetMutations = 0;
       const obs = new MutationObserver((muts) => {
@@ -119,54 +128,52 @@ test.describe('v2.5 — reset styles', () => {
           if (m.attributeName === 'style') window.__resetMutations++;
         }
       });
-      obs.observe(document.querySelector('.slide.active h1'), { attributes: true });
+      obs.observe(document.querySelector('.authored-box'), { attributes: true });
       window.__resetObserver = obs;
     });
-    await page.locator('#wfp-editor-root .wfpe-reset-btn').click();
+    await page.locator(RESET_BTN).click();
     const muts = await page.evaluate(() => {
       window.__resetObserver.disconnect();
       return window.__resetMutations;
     });
     expect(muts).toBe(0);
+    expect(await getStyleAttr(page, '.authored-box')).toBe(AUTHORED_STYLE);
 
-    // One Cmd+Z should reverse the inspector commit (the only entry
-    // that exists), restoring its BEFORE snapshot — i.e. font-size: 99px.
-    // If reset had erroneously pushed an entry, undo would land us on
-    // a no-style state instead.
+    // Undo must have nothing to unwind — the authored styles stay put.
     await page.keyboard.press('Control+z');
-    const restored = await page.evaluate(
-      () => document.querySelector('.slide.active h1').style.fontSize
-    );
-    expect(restored).toBe('99px');
+    expect(await getStyleAttr(page, '.authored-box')).toBe(AUTHORED_STYLE);
   });
 
-  test('reset re-populates inspector readouts from the stylesheet defaults', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
-    const original = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active h1');
-      return parseFloat(getComputedStyle(el).fontSize);
-    });
-    // Bump font-size to a non-default value via the inspector.
-    const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="fontSize"]');
+  test('reset returns a stylesheet-styled element to no inline style and repopulates readouts', async ({ page }) => {
+    const original = await page.evaluate(
+      () => parseFloat(getComputedStyle(document.querySelector('.s1 .headline')).fontSize)
+    );
+
+    await selectByMouse(page, '.s1 .headline');
+    const input = page.locator(FONT_INPUT);
     await input.click({ clickCount: 3 });
     await input.fill(String(Math.round(original) + 30));
     await input.press('Enter');
 
-    await page.locator('#wfp-editor-root .wfpe-reset-btn').click();
-    const inspectorVal = await page.evaluate(
-      () => Number(document.querySelector('#wfp-editor-root input[data-wfpe-prop="fontSize"]').value)
+    await page.locator(RESET_BTN).click();
+    expect(await getStyleAttr(page, '.s1 .headline')).toBe(null);
+
+    const liveVal = await page.evaluate(
+      () => parseFloat(getComputedStyle(document.querySelector('.s1 .headline')).fontSize)
     );
-    const liveVal = await page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.slide.active h1')).fontSize));
-    expect(inspectorVal).toBe(Math.round(liveVal));
-    // Confirm the live value snapped back to the original (or close to it).
     expect(Math.round(liveVal)).toBe(Math.round(original));
+    const inspectorVal = await page.evaluate(
+      (sel) => Number(document.querySelector(sel).value),
+      FONT_INPUT
+    );
+    expect(inspectorVal).toBe(Math.round(liveVal));
   });
 
   test('reset preserves the editor selection (ring stays on the element)', async ({ page }) => {
-    await selectByMouse(page, '.slide.active h1');
-    await page.evaluate(() => { document.querySelector('.slide.active h1').style.color = '#ff0000'; });
+    await selectByMouse(page, '.authored-box');
+    await dragBy(page, '.authored-box', 40, 30);
 
-    await page.locator('#wfp-editor-root .wfpe-reset-btn').click();
+    await page.locator(RESET_BTN).click();
     const ringDisplay = await page.evaluate(
       () => document.querySelector('#wfp-editor-root .wfpe-selection-ring').style.display
     );

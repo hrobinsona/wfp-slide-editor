@@ -8,6 +8,7 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 - `DESIGN.md` - architectural decisions and current implementation shape.
 - `TESTING.md` - fixture-driven test approach and known reliability work.
 - `ROADMAP.md` - deferred features and active engineering tracks.
+- `FEATURES-AND-BUGS.md` - running tracker of known bugs and small iteration candidates on existing behaviour.
 - `REFACTOR-MAINTAINABILITY.md` - executable brief for the next maintainability pass.
 - `TASKS.md` and `feature-briefs/` - historical build records.
 

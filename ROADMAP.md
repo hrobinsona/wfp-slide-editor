@@ -1,6 +1,6 @@
 # Roadmap
 
-This file tracks work not covered by the current product contract in `REQUIREMENTS.md`.
+This file tracks work not covered by the current product contract in `REQUIREMENTS.md`. Known bugs and small iteration candidates on existing behaviour live in `FEATURES-AND-BUGS.md`.
 
 ## Delivered
 

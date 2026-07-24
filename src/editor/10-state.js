@@ -12,6 +12,7 @@
     history: [], // entries: [{ changes: [{element, before, after}, ...] }]
     historyIndex: 0, // 0 = nothing applied; history.length = all applied
     txn: null, // { snapshots: Map<Element, BeforeSnap>, captureHtml } when an op is in progress
+    originalStyles: new WeakMap(), // Element → pre-edit inline `style` value (string | null), captured at the element's first committed change; Reset restores this
     clipboard: null, // { outerHTML } session-only element copy/paste payload
     inspectorMinimised: false, // persists across selections within session; resets on reload
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only

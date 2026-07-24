@@ -621,16 +621,18 @@
   deleteBtn.title = 'Delete selected element';
   actionRow.appendChild(deleteBtn);
 
-  // Reset action (v2.5). Clears the selected element's entire inline style
-  // attribute as one history entry, returning it to its stylesheet-
-  // defined rendering. No-op (no history entry) if the element has no
-  // inline style to clear.
+  // Reset action (v2.5, reworked 2026-07). Restores the selected element's
+  // inline `style` to its pre-edit original (state.originalStyles) as one
+  // history entry. Clearing the whole attribute is wrong here: WFP decks
+  // author position/size as inline styles, so clearing warped elements to
+  // the slide origin. No-op (no history entry) if the editor never
+  // changed the element.
   const resetBtn = document.createElement('button');
   resetBtn.type = 'button';
   resetBtn.className = 'wfpe-action-btn wfpe-reset-btn';
   resetBtn.dataset.action = 'reset-styles';
   resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
-  resetBtn.title = 'Clear all inline style overrides on the selected element';
+  resetBtn.title = "Restore the selected element's styles to their state before any edits";
   actionRow.appendChild(resetBtn);
   inspectorBody.appendChild(actionRow);
 
@@ -1068,18 +1070,25 @@
     refreshInspector();
   });
 
-  // Reset clears the entire inline style attribute as one history entry.
-  // Bail when there's nothing to clear so an idle click can't push a
-  // no-op entry. The snapshot/endTxn pair captures and restores the
-  // attribute via the existing snapshot machinery.
+  // Reset restores the element's pre-edit inline style as one history
+  // entry. state.originalStyles holds the `style` attribute captured at
+  // the element's first committed change; no record means the editor
+  // never touched it, so an idle click can't mutate the element or push
+  // a no-op entry. The snapshot/endTxn pair makes the restore undoable
+  // via the existing snapshot machinery. Scoped to the style attribute by
+  // design: data-wfp-edit-* markers stay (export scrubs them), and
+  // unlock-frozen siblings/containers keep their pins — reset never
+  // touches elements other than the selected one.
   resetBtn.addEventListener('click', (e) => {
     e.preventDefault();
     const el = state.selected;
     if (!el) return;
-    if (!el.hasAttribute('style')) return; // nothing to reset
+    if (!state.originalStyles.has(el)) return; // never edited — already original
+    const original = state.originalStyles.get(el);
     const ctx = startInspectorTxn();
     touchElement(el);
-    el.removeAttribute('style');
+    if (original === null) el.removeAttribute('style');
+    else el.setAttribute('style', original);
     endInspectorTxn(ctx);
     refreshSelection();
   });

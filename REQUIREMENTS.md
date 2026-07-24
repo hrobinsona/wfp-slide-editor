@@ -75,7 +75,10 @@ The inspector is visible when an element is selected and supports:
   exact value.
 - Text colour and background colour controls.
 - Opacity controls.
-- Reset inline styles for the selected element.
+- Reset the selected element's inline styles to their pre-edit originals
+  (the `style` attribute captured at the element's first editor change —
+  clearing the attribute outright is wrong because decks author
+  position/size inline). No-op if the editor never changed the element.
 - Duplicate selected element.
 - Delete selected element.
 - Agent note save/delete for focused handoff annotations.

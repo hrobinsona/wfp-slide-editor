@@ -62,6 +62,10 @@
       const after = snapshotElement(el, txn);
       if (snapshotsEqual(before, after)) continue;
       changes.push({ element: el, before, after });
+      // First committed change to this element: its `before` style is the
+      // pristine pre-edit value (authored inline style, or null). Reset
+      // restores it. Later transactions must not overwrite it.
+      if (!state.originalStyles.has(el)) state.originalStyles.set(el, before.style);
     }
     if (changes.length === 0) return;
     pushHistoryEntry(changes);

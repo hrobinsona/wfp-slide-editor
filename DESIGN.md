@@ -123,7 +123,9 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 - Typography weight/align segmented controls (v2.10).
 - Colour controls.
 - Opacity.
-- Reset inline styles.
+- Reset inline styles to the pre-edit original (`state.originalStyles`
+  WeakMap, recorded at each element's first committed transaction in
+  `endTxn`).
 - Agent note save/delete.
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
