@@ -241,6 +241,13 @@ Ledger entries anchor to exported elements via `data-wfp-agent-edit-id`, but the
 
 Unlock/freeze pinning writes inline styles the user never asked for, and it stamps the *dragged* element with the same `data-wfp-edit-frozen` marker as its pinned siblings — attribute presence alone cannot separate editor mechanics from user intent, and the pin and the user's move commit inside one transaction, so history cannot either. `state.pinnedStyles` (WeakMap) records each element's inline style exactly as the pin wrote it; a ledger entry is `mechanical: true` only while its element carries a frozen marker *and* its style still equals that record. The moment the user drags, resizes, or restyles a pinned element, its style diverges and the entry reads as user intent. The guidance tells agents mechanical entries preserve layout and are not requests.
 
+### Overflow heuristic (and its two known blind spots)
+
+`measureElementOverflow` reports `true` in two ways: content clipping (`scrollWidth`/`scrollHeight` past the client box) or the element's rect escaping its parent's rect. Two v2.14.1 corrections keep it from crying wolf on ordinary edits:
+
+- **Frozen parent is not a boundary.** Flow-unlock pins the parent to its *pre-drag* footprint (`data-wfp-edit-frozen`/`-flex-frozen`), so a child deliberately dragged out of that stale box would trip the parent-escape check. The check is skipped when the element or its parent carries a freeze marker. The content-clipping branch still runs first, so a frozen element that genuinely clips its own content is still reported. *Residual tradeoff:* if a flow-unlock parent ever kept `overflow: hidden`, a child dragged past it would be visually clipped yet report `false` — accepted, because flow-unlock exists to reposition freely and a clipping unlock parent would be a visibly broken feature caught elsewhere.
+- **Descenders are not clipping.** Sub-1 line-height display text paints glyph descenders a few px below the content box, edging `scrollHeight` past `clientHeight` with nothing hidden. The vertical comparison allows slop of `max(1, fontSize * 0.25)`; a genuinely clipped line adds roughly a full `fontSize`, far above that floor, so real clipping is still caught. Horizontal tolerance stays `+1` (descenders are vertical). *Residual tradeoff:* partial bottom clipping under a quarter-em can hide.
+
 ## Inline-style Merging
 
 Many slide elements already carry inline styles for animation and layout. Editor writes must use DOM style APIs:
