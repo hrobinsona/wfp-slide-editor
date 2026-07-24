@@ -952,53 +952,42 @@
       pointer-events: none;
       z-index: 3;
     }
+    /* Annotation DOT (design 6b, v2.12.2): the "this element has a note"
+       marker in the same coral-glass vocabulary as the Edit button and the
+       Export badge — 13px coral radial with inset highlight + coral glow,
+       replacing the old detached glossy sphere. Class name kept for
+       test/handler continuity; the visual recipe is .wfpe-note-dot from
+       the 6b reference. */
     #${ROOT_ID} .wfpe-annotation-badge {
       position: fixed;
       pointer-events: auto;
       appearance: none;
       -webkit-appearance: none;
       box-sizing: border-box;
-      width: 16px;
-      height: 16px;
+      width: 13px;
+      height: 13px;
       padding: 0;
-      border: 1px solid rgba(255, 214, 196, 0.70);
+      border: 0;
       border-radius: 50%;
-      background:
-        radial-gradient(120% 130% at 45% 12%, rgba(255, 221, 198, 0.92) 0%, rgba(252, 170, 139, 0.92) 44%, rgba(244, 132, 123, 0.96) 100%);
+      background: radial-gradient(circle at 35% 30%, #ffc3b2, #f0685b 62%, #d94f43);
       color: transparent;
       box-shadow:
-        0 7px 18px rgba(232, 110, 103, 0.34),
-        0 3px 12px rgba(15, 23, 42, 0.16),
-        inset 0 1px 0 rgba(255, 255, 255, 0.58),
-        inset 0 -1px 0 rgba(126, 34, 26, 0.13);
+        0 2px 7px rgba(230, 88, 76, 0.55),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
       cursor: pointer;
       font-size: 0;
       line-height: 0;
       user-select: none;
       transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
     }
-    #${ROOT_ID} .wfpe-annotation-badge::before {
-      content: '';
-      position: absolute;
-      inset: 3px 4px auto 4px;
-      height: 1px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.62);
-      pointer-events: none;
-    }
-    #${ROOT_ID} .wfpe-annotation-badge::after {
-      content: none;
-    }
     #${ROOT_ID} .wfpe-annotation-badge:hover,
     #${ROOT_ID} .wfpe-annotation-badge[data-selected="true"] {
-      filter: brightness(1.04);
+      filter: brightness(1.05);
       transform: translateY(-1px);
       box-shadow:
-        0 9px 22px rgba(232, 110, 103, 0.42),
-        0 0 0 2px rgba(255, 255, 255, 0.54),
-        0 4px 14px rgba(15, 23, 42, 0.18),
-        inset 0 1px 0 rgba(255, 255, 255, 0.66),
-        inset 0 -1px 0 rgba(126, 34, 26, 0.14);
+        0 4px 10px rgba(230, 88, 76, 0.65),
+        0 0 0 2px rgba(255, 255, 255, 0.5),
+        inset 0 1px 1px rgba(255, 255, 255, 0.5);
     }
     @media (prefers-color-scheme: dark) {
       /* The inspector now uses the same dark-glass recipe in both

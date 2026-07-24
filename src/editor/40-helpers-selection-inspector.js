@@ -327,10 +327,13 @@
   }
 
   function positionAnnotationBadge(marker, rect) {
-    const markerWidth = 16;
-    const markerHeight = 16;
+    // Fixed-layer equivalent of the 6b reference's in-element anchor
+    // (top: -6, right: -6 on a 13px dot): the dot straddles the element's
+    // top-right corner, pushed 6px out on both axes.
+    const markerWidth = 13;
+    const markerHeight = 13;
     const left = Math.max(4, Math.min(window.innerWidth - markerWidth - 4, rect.right - markerWidth + 6));
-    const preferredTop = rect.top - 8;
+    const preferredTop = rect.top - 6;
     const top = preferredTop >= 4 ? preferredTop : Math.min(window.innerHeight - markerHeight - 4, rect.top + 4);
     marker.style.left = `${left}px`;
     marker.style.top = `${Math.max(4, top)}px`;
