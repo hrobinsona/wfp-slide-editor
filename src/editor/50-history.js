@@ -66,6 +66,9 @@
       // pristine pre-edit value (authored inline style, or null). Reset
       // restores it. Later transactions must not overwrite it.
       if (!state.originalStyles.has(el)) state.originalStyles.set(el, before.style);
+      // v2.14 — record the element in the iterable ledger set so the
+      // handoff export can enumerate user-touched elements later.
+      state.editedElements.add(el);
     }
     if (changes.length === 0) return;
     pushHistoryEntry(changes);

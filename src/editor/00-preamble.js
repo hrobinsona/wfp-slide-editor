@@ -22,6 +22,8 @@
  *          coral value tag, scrubbable font field.
  * v2.13:   live agent round-trip — save-file watch, in-place refresh,
  *          agent results reconciliation.
+ * v2.14:   handoff ground truth — edit ledger and box/computed/overflow
+ *          measurements in the handoff payload.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -29,7 +31,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.13.0';
+  const VERSION = '2.14.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -58,11 +60,15 @@
   const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
+  // v2.14 — anchors edit-ledger entries to exported elements. Stamped on the
+  // live DOM only transiently during the handoff build (stamp → cloneNode →
+  // unstamp); persisted in exported files only, stripped again on reimport.
+  const EDIT_LEDGER_TARGET_ATTR = 'data-wfp-agent-edit-id';
   const HANDOFF_SCRIPT_ATTR = 'data-wfp-agent-annotations';
   const RESULTS_SCRIPT_ATTR = 'data-wfp-agent-results';
   const ANNOTATION_STATUS_ATTR = 'data-wfp-edit-annotation-status';
   const ANNOTATION_REPLY_ATTR = 'data-wfp-edit-annotation-reply';
-  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored.';
+  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored. The payload\'s edits array records the user\'s own manual changes, anchored by data-wfp-agent-edit-id; preserve them unless an annotation explicitly asks otherwise (mechanical: true entries are editor-written layout pinning, not requests).';
 
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);

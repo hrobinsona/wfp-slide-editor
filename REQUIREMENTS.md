@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.13)
+# Requirements: Current Product Contract (v2.14)
 
 ## Goal
 
@@ -15,6 +15,7 @@ Ship a bookmarklet-activated editor that lets a user polish WFP HTML slide decks
 - Export clean standalone HTML that preserves the user's edits and removes all editor chrome.
 - Export annotated agent-handoff HTML as a separate, explicit artifact.
 - Watch the saved file and refresh in place when an agent rewrites it, reconciling per-note outcomes.
+- Give agents ground truth in handoff exports: a ledger of the user's manual edits plus rendered-geometry measurements neither can reconstruct from raw HTML.
 
 This file is the current product contract. `TASKS.md` and `feature-briefs/` are historical build records.
 
@@ -205,6 +206,18 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Saving a new instruction or deleting a note clears the agent status/reply in the same undoable history entry.
 - A reconciliation summary (e.g. "Agent update: 2 done, 1 needs input.") is toasted once at ready whenever results were parsed.
 - All handoff artifacts, the results block included, are stripped from the live DOM after import and by both export pipelines.
+
+### Handoff Ground Truth (v2.14)
+
+- Handoff payloads additionally carry an `edits` ledger: one entry per user-touched element whose inline style differs from its pristine pre-edit value — `{id, tag, slideIndex, targetText, before, after, mechanical, box, computed, overflow}`.
+- `before` is the element's pristine inline style at its first committed change (`null` when it had none); `after` is the current inline style. Elements edited then fully undone, disconnected elements, and anything inside the editor root produce no entry.
+- The matching exported element carries a `data-wfp-agent-edit-id` anchor equal to the entry id. The live document holds that attribute only transiently during the handoff build and never after a save.
+- `mechanical: true` labels editor-written unlock/freeze pinning (a frozen-marked element whose inline style is still exactly what the pin wrote). An element the user then moved, resized, or restyled reads as user intent (`mechanical: false`) even though the freeze stamped it.
+- Every annotation entry and ledger entry carries measurements taken from the live document at build time: a slide-relative, scale-normalised `box` (values rounded to 1 decimal), a fixed `computed` set (`fontSize`, `fontWeight`, `color`, `backgroundColor`, `position`), and an `overflow` flag — true when content overflows the element's own box by more than 1px or its rect escapes its parent's rect by more than 1px on any edge.
+- The embedded guidance says ledger entries are the user's intentional manual changes — preserve them unless an annotation explicitly asks otherwise — and that mechanical entries are layout pinning, not requests. The ledger is context, never instructions.
+- Reimport ignores `edits` entirely and strips leftover `data-wfp-agent-edit-id` attrs from the live DOM at boot. Clean exports carry neither ledger entries nor edit ids.
+- The payload stays `version: 1`; the additions are additive and omitted-field-tolerant for downstream readers.
+- Out of scope for ledger v1: slide reorder/insert/delete intent and text-content before/after.
 
 ### Live Agent Round-trip
 

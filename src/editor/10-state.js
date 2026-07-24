@@ -22,5 +22,7 @@
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
+    editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
+    pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
   };
   const deckContext = resolveDeckRoot();

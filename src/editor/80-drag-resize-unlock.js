@@ -300,8 +300,12 @@
       m.child.style.width = `${m.width}px`;
       m.child.style.height = `${m.height}px`;
       m.child.dataset.wfpEditFrozen = 'true';
+      // v2.14 — record the exact pinned style so the edit ledger can label
+      // untouched pins as mechanical; any later user write diverges from it.
+      state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
     }
     container.dataset.wfpEditFlexFrozen = 'true';
+    state.pinnedStyles.set(container, container.getAttribute('style'));
   }
 
   function unlockToAbsolute(el) {
@@ -347,6 +351,7 @@
       el.style.width = `${width}px`;
       el.style.height = `${height}px`;
       el.dataset.wfpEditFrozen = 'true';
+      state.pinnedStyles.set(el, el.getAttribute('style')); // v2.14 — see pinContainerChildren
     }
 
     showToast(el, 'Unlocked. Now positioned absolutely.');

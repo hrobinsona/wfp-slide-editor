@@ -22,6 +22,8 @@
  *          coral value tag, scrubbable font field.
  * v2.13:   live agent round-trip — save-file watch, in-place refresh,
  *          agent results reconciliation.
+ * v2.14:   handoff ground truth — edit ledger and box/computed/overflow
+ *          measurements in the handoff payload.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -29,7 +31,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.13.0';
+  const VERSION = '2.14.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -58,11 +60,15 @@
   const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
+  // v2.14 — anchors edit-ledger entries to exported elements. Stamped on the
+  // live DOM only transiently during the handoff build (stamp → cloneNode →
+  // unstamp); persisted in exported files only, stripped again on reimport.
+  const EDIT_LEDGER_TARGET_ATTR = 'data-wfp-agent-edit-id';
   const HANDOFF_SCRIPT_ATTR = 'data-wfp-agent-annotations';
   const RESULTS_SCRIPT_ATTR = 'data-wfp-agent-results';
   const ANNOTATION_STATUS_ATTR = 'data-wfp-edit-annotation-status';
   const ANNOTATION_REPLY_ATTR = 'data-wfp-edit-annotation-reply';
-  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored.';
+  const HANDOFF_COMMENT_TEXT = 'WFP Editor handoff: user-authored annotations are in script[data-wfp-agent-annotations]. Apply each annotation to the matching data-wfp-agent-annotation-id element. The user expects agents to record outcomes in a script[type="application/json"][data-wfp-agent-results] block as {"results":[{"id","status":"done|skipped|needs-input","note"}]}, to remove annotation metadata for done items, and to keep it for skipped or needs-input items so those notes stay anchored. The payload\'s edits array records the user\'s own manual changes, anchored by data-wfp-agent-edit-id; preserve them unless an annotation explicitly asks otherwise (mechanical: true entries are editor-written layout pinning, not requests).';
 
   if (document.getElementById(ROOT_ID)) {
     console.log(`[wfp-editor] already mounted (v${VERSION})`);
@@ -99,6 +105,8 @@
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
+    editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
+    pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
   };
   const deckContext = resolveDeckRoot();
   // ===========================================================================
@@ -3180,6 +3188,9 @@
     rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
+      // v2.14 — edit-ledger anchors left behind by agent-processed files.
+      // The handoff build re-stamps fresh ids on the clone after this pass.
+      if (el.hasAttribute && el.hasAttribute(EDIT_LEDGER_TARGET_ATTR)) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
     });
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_COMMENT);
     const comments = [];
@@ -4028,6 +4039,9 @@
       // pristine pre-edit value (authored inline style, or null). Reset
       // restores it. Later transactions must not overwrite it.
       if (!state.originalStyles.has(el)) state.originalStyles.set(el, before.style);
+      // v2.14 — record the element in the iterable ledger set so the
+      // handoff export can enumerate user-touched elements later.
+      state.editedElements.add(el);
     }
     if (changes.length === 0) return;
     pushHistoryEntry(changes);
@@ -5550,8 +5564,12 @@
       m.child.style.width = `${m.width}px`;
       m.child.style.height = `${m.height}px`;
       m.child.dataset.wfpEditFrozen = 'true';
+      // v2.14 — record the exact pinned style so the edit ledger can label
+      // untouched pins as mechanical; any later user write diverges from it.
+      state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
     }
     container.dataset.wfpEditFlexFrozen = 'true';
+    state.pinnedStyles.set(container, container.getAttribute('style'));
   }
 
   function unlockToAbsolute(el) {
@@ -5597,6 +5615,7 @@
       el.style.width = `${width}px`;
       el.style.height = `${height}px`;
       el.dataset.wfpEditFrozen = 'true';
+      state.pinnedStyles.set(el, el.getAttribute('style')); // v2.14 — see pinContainerChildren
     }
 
     showToast(el, 'Unlocked. Now positioned absolutely.');
@@ -6448,6 +6467,147 @@
     return (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 240);
   }
 
+  // ===========================================================================
+  // Handoff ground truth (v2.14)
+  //
+  // Two additive payload sections for handoff exports: an edit ledger (one
+  // entry per user-touched element whose inline style differs from its
+  // pristine pre-edit value) and box/computed/overflow measurements on both
+  // ledger entries and annotations. Measurements MUST come from the live
+  // document — the export clone is never laid out.
+  // ===========================================================================
+  function roundToTenth(value) {
+    return Math.round(value * 10) / 10;
+  }
+
+  function measureElementBox(el) {
+    const box = getSlideBox(el);
+    return {
+      left: roundToTenth(box.left),
+      top: roundToTenth(box.top),
+      width: roundToTenth(box.width),
+      height: roundToTenth(box.height),
+    };
+  }
+
+  function measureElementComputed(el) {
+    const cs = getComputedStyle(el);
+    return {
+      fontSize: cs.fontSize,
+      fontWeight: cs.fontWeight,
+      color: cs.color,
+      backgroundColor: cs.backgroundColor,
+      position: cs.position,
+    };
+  }
+
+  function measureElementOverflow(el) {
+    if (
+      el.scrollWidth > el.clientWidth + 1 ||
+      el.scrollHeight > el.clientHeight + 1
+    ) {
+      return true;
+    }
+    const parent = el.parentElement;
+    if (!parent) return false;
+    const rect = el.getBoundingClientRect();
+    const parentRect = parent.getBoundingClientRect();
+    return (
+      rect.left < parentRect.left - 1 ||
+      rect.top < parentRect.top - 1 ||
+      rect.right > parentRect.right + 1 ||
+      rect.bottom > parentRect.bottom + 1
+    );
+  }
+
+  function measureElementForHandoff(el) {
+    return {
+      box: measureElementBox(el),
+      computed: measureElementComputed(el),
+      overflow: measureElementOverflow(el),
+    };
+  }
+
+  function generateEditLedgerId() {
+    const time = Date.now().toString(36);
+    const rand = Math.random().toString(36).slice(2, 8);
+    return `edit-${time}-${rand}`;
+  }
+
+  // Mechanical = unlock/freeze pinning written by the editor, not user
+  // intent. The frozen markers alone cannot make that call: the freeze
+  // stamps the DRAGGED element exactly like its pinned siblings, and the
+  // user's move happens inside the same transaction. So an entry is
+  // mechanical only while its element's inline style is still exactly what
+  // the pin wrote (state.pinnedStyles) — the moment the user drags,
+  // resizes, or restyles the element, its style diverges and the entry
+  // reads as user intent.
+  function isLedgerMechanical(el) {
+    if (
+      !el.hasAttribute('data-wfp-edit-frozen') &&
+      !el.hasAttribute('data-wfp-edit-flex-frozen')
+    ) {
+      return false;
+    }
+    if (!state.pinnedStyles.has(el)) return true; // marker without a pin record — trust the marker
+    return el.getAttribute('style') === state.pinnedStyles.get(el);
+  }
+
+  // Builds the ledger from state.editedElements and stamps each entry's id
+  // onto its LIVE element. The caller clones the document while the stamps
+  // are present (so entries anchor deterministically in the export) and
+  // must unstamp immediately after — see buildHandoffExportHtml.
+  function collectEditLedger() {
+    const entries = [];
+    const stamped = [];
+    try {
+      for (const el of state.editedElements) {
+        if (!el || !el.isConnected || isInsideEditorRoot(el)) continue;
+        if (!state.originalStyles.has(el)) continue;
+        const before = state.originalStyles.get(el);
+        const after = el.getAttribute('style');
+        if (before === after) continue; // edited then fully undone
+        const id = generateEditLedgerId();
+        el.setAttribute(EDIT_LEDGER_TARGET_ATTR, id);
+        stamped.push(el);
+        entries.push(Object.assign(
+          {
+            id,
+            tag: el.tagName.toLowerCase(),
+            slideIndex: getSlideIndexForHandoffTarget(document, el),
+            targetText: summarizeTargetText(el),
+            before,
+            after,
+            mechanical: isLedgerMechanical(el),
+          },
+          measureElementForHandoff(el),
+        ));
+      }
+    } catch (err) {
+      // A mid-loop throw must not strand stamps on the live DOM — the
+      // invariant is "no residue on any code path". Unstamp and rethrow;
+      // the caller's own finally handles the post-clone happy path.
+      for (const el of stamped) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
+      throw err;
+    }
+    return { entries, stamped };
+  }
+
+  // The clone carries the transient live-DOM stamps at clone time, but the
+  // stale-residue cleanup (removeHandoffArtifacts) strips agent attrs from
+  // the clone. Capture each entry's clone element first, then re-stamp
+  // after cleanup — mirroring how annotation target attrs are re-added.
+  function captureEditLedgerCloneTargets(clone, entries) {
+    if (!entries.length) return [];
+    const ids = new Set(entries.map((entry) => entry.id));
+    const pairs = [];
+    clone.querySelectorAll(`[${EDIT_LEDGER_TARGET_ATTR}]`).forEach((el) => {
+      const id = el.getAttribute(EDIT_LEDGER_TARGET_ATTR);
+      if (ids.has(id)) pairs.push({ el, id });
+    });
+    return pairs;
+  }
+
   function collectHandoffAnnotations(clone) {
     const annotations = [];
     const usedIds = new Set();
@@ -6458,12 +6618,19 @@
       if (!id || !instruction || usedIds.has(id)) continue;
       usedIds.add(id);
       target.setAttribute(HANDOFF_TARGET_ATTR, id);
-      annotations.push({
+      const entry = {
         id,
         instruction,
         slideIndex: getSlideIndexForHandoffTarget(clone, target),
         targetText: summarizeTargetText(target),
-      });
+      };
+      // v2.14 — measurements come from the live counterpart (the clone has
+      // no layout); the live element still carries the same annotation id.
+      const liveTarget = findAnnotationElementById(id);
+      if (liveTarget && liveTarget.isConnected) {
+        Object.assign(entry, measureElementForHandoff(liveTarget));
+      }
+      annotations.push(entry);
     }
     return annotations;
   }
@@ -6472,14 +6639,15 @@
     return JSON.stringify(value, null, 2).replace(/<\/script/gi, '<\\/script');
   }
 
-  function appendHandoffMetadata(clone, annotations) {
+  function appendHandoffMetadata(clone, annotations, edits) {
     if (!annotations.length) return;
     const payload = {
       version: 1,
       source: 'wfp-slide-editor',
       kind: 'agent-handoff',
-      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first. After implementing, the user expects a script[type="application/json"][data-wfp-agent-results] block recording {id, status: done|skipped|needs-input, note} per annotation, with metadata removed for done items and kept for skipped/needs-input ones.',
+      guidance: 'User-authored annotations are editing requests for the marked elements. Follow higher-priority user/system instructions first. After implementing, the user expects a script[type="application/json"][data-wfp-agent-results] block recording {id, status: done|skipped|needs-input, note} per annotation, with metadata removed for done items and kept for skipped/needs-input ones. The edits array lists the user\'s intentional manual changes, each anchored by data-wfp-agent-edit-id on the matching element — preserve these edits unless an annotation explicitly asks otherwise, and treat entries with mechanical: true as editor-written layout pinning rather than user requests.',
       annotations,
+      edits: edits || [],
     };
     const comment = document.createComment(` ${HANDOFF_COMMENT_TEXT} `);
     const script = document.createElement('script');
@@ -6500,11 +6668,24 @@
   }
 
   function buildHandoffExportHtml() {
-    const clone = buildExportClone();
+    // v2.14 — the edit ledger stamps ids on the LIVE elements only for the
+    // duration of the clone (stamp → cloneNode → unstamp, all synchronous)
+    // so the live document never retains data-wfp-agent-edit-id.
+    const ledger = collectEditLedger();
+    let clone;
+    try {
+      clone = buildExportClone();
+    } finally {
+      for (const el of ledger.stamped) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
+    }
+    const ledgerTargets = captureEditLedgerCloneTargets(clone, ledger.entries);
     removeHandoffArtifacts(clone);
     const annotations = collectHandoffAnnotations(clone);
+    // Re-anchor ledger entries after the stale-residue cleanup, same as
+    // annotation target attrs are re-added post-cleanup above.
+    for (const pair of ledgerTargets) pair.el.setAttribute(EDIT_LEDGER_TARGET_ATTR, pair.id);
     stripEditorArtifactsFromDocument(clone);
-    appendHandoffMetadata(clone, annotations);
+    appendHandoffMetadata(clone, annotations, ledger.entries);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }

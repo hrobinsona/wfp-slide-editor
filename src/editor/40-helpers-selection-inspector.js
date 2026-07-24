@@ -516,6 +516,9 @@
     rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
+      // v2.14 — edit-ledger anchors left behind by agent-processed files.
+      // The handoff build re-stamps fresh ids on the clone after this pass.
+      if (el.hasAttribute && el.hasAttribute(EDIT_LEDGER_TARGET_ATTR)) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
     });
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_COMMENT);
     const comments = [];

@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.12: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, the v2.11 export action menu with save-in-place, and the v2.12 adaptive inspector fade are all in `editor.js`.
+The shipped editor is v2.14: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, the v2.11 export action menu with save-in-place, the v2.12 adaptive inspector fade, the v2.13 live agent round-trip, and the v2.14 handoff ground truth (edit ledger + measurements) are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -224,6 +224,22 @@ The watcher polls `getFile().lastModified` (~1.2s). Three rules keep it predicta
 ### Results reconciliation
 
 The handoff guidance asks agents to record per-annotation outcomes in `script[data-wfp-agent-results]` (`{id, status: done|skipped|needs-input, note}`), removing metadata for done items and keeping it otherwise so notes stay anchored. Import reconciles defensively: a done result resolves its annotation even when a sloppy agent leaves metadata behind (this closes the old stale-reimport hole), skipped/needs-input replies re-import as open notes carrying `data-wfp-edit-annotation-status`/`-reply` (rendered as amber/slate badges and a read-only inspector line), and annotations without a result import unchanged for agents that ignore the contract. The parsed summary lands on `state.agentResultsSummary` — on `state` rather than a module `let` because reimport runs during an earlier fragment's top-level evaluation, where a later fragment's `let` binding would still be in its temporal dead zone — and the ready block toasts it once.
+
+## Handoff Ground Truth (v2.14)
+
+Handoff payloads carry two additive sections — an `edits` ledger (per user-touched element: pristine `before` vs current `after` inline style, `mechanical` labelling, and measurements) and the same `box`/`computed`/`overflow` measurements on every annotation. Clean exports are untouched, the payload stays `version: 1`, and reimport ignores `edits` entirely (agent-facing context, never restorable state).
+
+### WeakMap → Set for ledger enumeration
+
+`state.originalStyles` (the pristine pre-edit style Reset already relies on) is a WeakMap and cannot be enumerated, so `endTxn()` also records every changed element in `state.editedElements` — a plain `Set`, session-scoped and never pruned. Holding strong references is deliberate and cheap at slide-deck scale; the ledger build filters instead: disconnected elements, editor chrome, and elements whose `before` equals their current style (edited then fully undone) are skipped at handoff-build time.
+
+### Transient stamping
+
+Ledger entries anchor to exported elements via `data-wfp-agent-edit-id`, but the live DOM must never retain it. The build stamps the live elements, clones the document, then unstamps in a `finally` — all synchronous, so no observer or export can see the stamp outside the build. Because the stale-residue cleanup (`removeHandoffArtifacts`) now also strips `data-wfp-agent-edit-id` (covering reimports of agent-processed files that left anchors behind), the clone's fresh stamps are captured before that pass and re-applied after it — the same "re-add agent attrs after cleanup" order annotation targets use. Measurements (`getSlideBox` for scale-normalised boxes, a fixed computed-style set, an overflow flag) are always read from the live elements: the clone is never laid out.
+
+### Mechanical labelling
+
+Unlock/freeze pinning writes inline styles the user never asked for, and it stamps the *dragged* element with the same `data-wfp-edit-frozen` marker as its pinned siblings — attribute presence alone cannot separate editor mechanics from user intent, and the pin and the user's move commit inside one transaction, so history cannot either. `state.pinnedStyles` (WeakMap) records each element's inline style exactly as the pin wrote it; a ledger entry is `mechanical: true` only while its element carries a frozen marker *and* its style still equals that record. The moment the user drags, resizes, or restyles a pinned element, its style diverges and the entry reads as user intent. The guidance tells agents mechanical entries preserve layout and are not requests.
 
 ## Inline-style Merging
 

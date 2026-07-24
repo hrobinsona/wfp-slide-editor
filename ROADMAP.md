@@ -52,6 +52,12 @@ When an agent rewrites the bound save-in-place file, the editor refreshes the do
 
 Feature brief: `feature-briefs/v2.13-live-agent-roundtrip.md`.
 
+### v2.14 Handoff Ground Truth: Edit Ledger and Measurements
+
+Handoff exports now carry an `edits` ledger — one entry per user-touched element, pristine pre-edit inline style versus current, anchored to the exported element via `data-wfp-agent-edit-id` (stamped on the live DOM only transiently during the build) — plus `box`/`computed`/`overflow` measurements on both ledger entries and annotations, read from the live document at save time. Unlock/freeze pinning is labelled `mechanical: true` only while an element's style is still exactly what the pin wrote, so editor mechanics never read as user intent; the guidance tells agents to preserve ledger edits unless a note asks otherwise, and reimport ignores the ledger and strips leftover anchors at boot. Deliberately excluded from ledger v1: slide reorder/insert/delete intent (needs an order-at-boot snapshot — candidate follow-up) and text-content before/after.
+
+Feature brief: `feature-briefs/v2.14-handoff-ground-truth.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
@@ -61,10 +67,6 @@ The editor is now feature-rich but structurally heavy: `editor.js` is about 3.4k
 Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 ## v2.x Candidates
-
-### Handoff Ground Truth: Edit Ledger and Measurements
-
-Raised 2026-07-24 during a product review of the agent-annotation loop. Manual edits reach the agent as anonymous inline styles — impossible to propagate ("make slides 3, 4, 6, 10 match what I did here") and unprotected against agent rewrites of a slide. Candidate: serialize a net edit ledger into the handoff payload — per touched element, pristine pre-edit style (already retained in `state.originalStyles` for reset) versus current, plus recorded slide reorder/insert/delete ops — labelled so unlock/freeze pinning styles read as editor mechanics, not user intent. Add measurements per annotation and ledger entry: bounding box, key computed styles, parent box, overflow flag — cheap at save time, expensive for an agent to reconstruct from raw HTML. Guidance gains "these edits are intentional; preserve them". Open question: signal-to-noise of style-string diffs after flow unlock; first step is serializing a real session's ledger and reading it.
 
 ### Slide- and Deck-scoped Agent Notes
 
