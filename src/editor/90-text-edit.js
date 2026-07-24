@@ -148,6 +148,10 @@
     if (clickX != null && clickY != null) placeCaretAtPoint(clickX, clickY);
 
     refreshSelection(); // hides ring/handles via the editingText guard
+    // v2.12 — entering edit mode on an occluded element is intent to see
+    // it: fade the panel (no tag) for the whole edit, re-testing the
+    // overlap as typing reflows the element.
+    textEditFadeStart(el);
   }
 
   function endTextEdit() {
@@ -165,6 +169,7 @@
 
     endTxn();
     refreshSelection();
+    textEditFadeEnd(el); // v2.12 — release the edit-long fade hold
   }
 
   function onDoubleClick(e) {
@@ -226,6 +231,14 @@
       item.el.style.left = `${item.anchorLeft + dx}px`;
       item.el.style.top = `${item.anchorTop + dy}px`;
     }
+    // v2.12 — live X/Y tag (single selection only) + overlap-gated fade,
+    // re-tested on every move: the panel dims the moment the element passes
+    // beneath it and lights back up on the way out. Runs before
+    // refreshSelection so the dim bubble yields on the first tick.
+    const dragTagText = (d.items || []).length === 1 && d.el && d.el.isConnected
+      ? `X ${d.el.offsetLeft} · Y ${d.el.offsetTop}`
+      : null;
+    liveEditUpdate(dragTagText);
     refreshSelection();
   }
 
@@ -239,6 +252,7 @@
       // don't accidentally re-select or deselect.
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
       endTxn();
+      liveEditEnd();
     }
     // After a drag (or a no-op mousedown that didn't lead to drag), the
     // post-click suppress fires; refresh the inspector so the panel

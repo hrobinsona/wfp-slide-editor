@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.11)
+# Requirements: Current Product Contract (v2.12)
 
 ## Goal
 
@@ -69,7 +69,10 @@ The inspector is visible when an element is selected and supports:
 
 - X/Y position controls.
 - Width/height controls.
-- Font-size controls for text-bearing elements.
+- Font-size controls for text-bearing elements. The font value field is
+  scrubbable (v2.12): dragging left/right changes size ~1px per 3px with one
+  history entry per gesture; a plain click focuses the field for a typed
+  exact value.
 - Text colour and background colour controls.
 - Opacity controls.
 - Reset inline styles for the selected element.
@@ -79,6 +82,21 @@ The inspector is visible when an element is selected and supports:
 - Minimise/expand state remembered within the editor session.
 
 Inspector clicks must not accidentally select slide content or end inline text editing unless that is the intended control behaviour.
+
+### Adaptive Inspector Fade (v2.12)
+
+- During any live manipulation (drag-move, resize, font scrub or ± steps,
+  opacity slider, weight/align commit, inline text edit) the inspector fades
+  to a whisper while keeping pointer events, and restores ~380ms after the
+  gesture settles. An open text edit holds the fade until it commits.
+- The fade only applies when the selection's bounding box intersects the
+  inspector's on-screen rectangle. The check runs per gesture and re-runs on
+  every move, so dragging under the panel fades it mid-gesture and dragging
+  back out restores it.
+- A coral value tag pinned to the selection shows live feedback (`N px`,
+  `X/Y`, `W × H`, `N %`, weight/align label) whether or not the panel fades.
+  While the tag is visible it replaces the dimension bubble.
+- The toolbar never fades.
 
 ### Font Size Keyboard Controls
 

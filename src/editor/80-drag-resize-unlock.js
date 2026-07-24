@@ -197,6 +197,10 @@
     r.el.style.top = `${top}px`;
     r.el.style.width = `${width}px`;
     r.el.style.height = `${height}px`;
+    // v2.12 — live W × H tag + overlap-gated fade, re-tested every move
+    // (a growing element can pass under the panel mid-gesture). Runs
+    // before refreshSelection so the dim bubble yields on the first tick.
+    liveEditUpdate(`${r.el.offsetWidth} × ${r.el.offsetHeight}`);
     refreshSelection();
   }
 
@@ -207,6 +211,7 @@
       state.resize = null;
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
       endTxn();
+      liveEditEnd();
     }
   }
 

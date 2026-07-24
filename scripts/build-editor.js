@@ -25,6 +25,7 @@ const PARTS = [
   '60-modes-overview-keyboard.js',
   '70-selection-events.js',
   '80-drag-resize-unlock.js',
+  '85-adaptive-fade.js',
   '90-text-edit.js',
   '95-export.js',
   '99-ready.js',

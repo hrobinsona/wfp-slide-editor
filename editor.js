@@ -18,6 +18,8 @@
  * v2.2:    element copy/paste/duplicate + Overview blank-slide insertion.
  * v2.5:    agent handoff annotations with explicit handoff export.
  * v2.11:   export action menu; save-in-place via File System Access.
+ * v2.12:   adaptive inspector — overlap-gated fade during live edits,
+ *          coral value tag, scrubbable font field.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -25,7 +27,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.11.2';
+  const VERSION = '2.12.0';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -514,6 +516,12 @@
        recedes — dimmed, body folded to its 36px header. Dismissing the
        menu restores it. Shares the minimised fold/chevron mechanics. */
     #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] { opacity: 0.55; }
+    /* v2.12 design 7: any live manipulation dissolves the panel to a
+       whisper so the selection reflows in full view. Only applied when the
+       selection's box actually intersects the panel (smart gate in
+       85-adaptive-fade). Pointer-events stay live. After the suppressed
+       rule so a mid-gesture fade wins over the export-menu dim. */
+    #${ROOT_ID} .wfpe-inspector[data-fade="true"] { opacity: 0.16; }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
@@ -702,6 +710,17 @@
       transition: background-color 120ms ease;
     }
     #${ROOT_ID} .wfpe-font-btn:hover { background: rgba(255,255,255,0.16); }
+    /* v2.12 design 7: the font value field is scrubbable — drag L/R to
+       change size (~1px per 3px). A clean click still focuses the input
+       for a typed exact value, so the caret cursor returns on focus. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field,
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field input {
+      cursor: ew-resize;
+      touch-action: none;
+    }
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field input:focus {
+      cursor: text;
+    }
     /* Segmented control (weight Reg/Med/Bold, align L/C/R) */
     #${ROOT_ID} .wfpe-seg {
       display: flex;
@@ -998,6 +1017,31 @@
          stacking context above the slide; no need to compete with the
          ring's z-index since they're siblings under the same root. */
     }
+    /* v2.12 live value tag (design 7): lit coral chip pinned to the
+       selection while a gesture is in flight — the eye stays on the
+       element, not the faded panel. Supersedes the dim bubble for the
+       duration (positionDimBubble defers to it). */
+    #${ROOT_ID} .wfpe-scrub-tag {
+      position: fixed;
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 8px;
+      white-space: nowrap;
+      pointer-events: none;
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 60%, #e55a4e);
+      box-shadow: 0 4px 12px rgba(230, 88, 76, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.40);
+      color: #fff;
+      font: 700 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+      opacity: 0;
+      transform: translateY(5px);
+      transition:
+        opacity 200ms cubic-bezier(0.32,0.72,0,1),
+        transform 200ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-scrub-tag[data-show="true"] { opacity: 1; transform: translateY(0); }
     #${ROOT_ID} .wfpe-annotation-layer {
       position: fixed;
       inset: 0;
@@ -1277,6 +1321,7 @@
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-selection-ring,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-handle,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-dim-bubble,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-scrub-tag,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-annotation-layer,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector-dock {
       display: none !important;
@@ -2102,6 +2147,14 @@
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
 
+  // Live value tag (v2.12, design 7): coral chip pinned to the selection
+  // during a gesture. Content, position, and visibility are owned by the
+  // adaptive-fade module (85-adaptive-fade.js).
+  const scrubTag = document.createElement('div');
+  scrubTag.className = 'wfpe-scrub-tag';
+  scrubTag.dataset.show = 'false';
+  root.appendChild(scrubTag);
+
   const annotationLayer = document.createElement('div');
   annotationLayer.className = 'wfpe-annotation-layer';
   root.appendChild(annotationLayer);
@@ -2311,7 +2364,7 @@
   // as the font-size ± buttons: one history entry per click via the
   // inspector-txn isolation helpers, no-op guarded against the computed
   // style so re-clicking the active segment doesn't pollute history.
-  function commitSegStyle(styleProp, value) {
+  function commitSegStyle(styleProp, value, tagLabel) {
     const el = state.selected;
     if (!el || !isTextBearing(el)) return;
     const cs = getComputedStyle(el);
@@ -2324,18 +2377,22 @@
     el.style[styleProp] = value;
     endInspectorTxn(ctx);
     populateTypography(el);
+    // v2.12 — the reflow is what the user wants to see; no-op clicks
+    // returned above and don't blip.
+    liveEditBlip(tagLabel);
     refreshSelection();
   }
   for (const b of weightRow.buttons) {
     b.addEventListener('click', (e) => {
       e.preventDefault();
-      commitSegStyle('fontWeight', b.dataset.wfpeValue);
+      commitSegStyle('fontWeight', b.dataset.wfpeValue, b.textContent);
     });
   }
   for (const b of alignRow.buttons) {
     b.addEventListener('click', (e) => {
       e.preventDefault();
-      commitSegStyle('textAlign', b.dataset.wfpeValue);
+      const v = b.dataset.wfpeValue;
+      commitSegStyle('textAlign', v, v.charAt(0).toUpperCase() + v.slice(1));
     });
   }
 
@@ -2355,6 +2412,10 @@
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
     el.style.opacity = String(pct / 100);
     populateOpacity(el);
+    // v2.12 — bounded control keeps its slider; each tick refreshes the
+    // tag/fade, and the restore is anchored to true drag-end below so a
+    // mid-drag pause can't flicker the chrome back in.
+    liveEditUpdate(`${Math.round(pct)} %`);
   });
   const endOpacityDrag = () => {
     if (!opacitySliderTarget) return;
@@ -2362,6 +2423,7 @@
     const ctx = opacitySliderRestoreCtx;
     opacitySliderRestoreCtx = null;
     endInspectorTxn(ctx);
+    liveEditEnd();
   };
   opacitySlider.addEventListener('mouseup', endOpacityDrag);
   opacitySlider.addEventListener('change', endOpacityDrag);
@@ -3287,7 +3349,10 @@
     // the inspector's W/H readout. r.width/height are post-`transform: scale()`
     // viewport pixels and would diverge from the inline-style values.
     dimBubble.textContent = `${el.offsetWidth} × ${el.offsetHeight}`;
-    dimBubble.style.display = 'block';
+    // v2.12: while the live value tag owns the readout, keep the text
+    // tracking (v2-2 reads textContent right after a resize gesture) but
+    // yield the pixels to the coral tag.
+    dimBubble.style.display = isScrubTagVisible() ? 'none' : 'block';
     // Anchor the bubble centred above the ring with a small gutter; the
     // chip's own height is small (~22px) so a 22px offset clears the
     // ring's stroke without floating off the screen for top-edge selections.
@@ -4745,6 +4810,11 @@
     nudgeFontSize(el, deltaPx);
     endInspectorTxn(ctx);
     populateFontSize(el, { forceInput: true });
+    // v2.12 — each ± step blips the value tag (and the fade when the
+    // selection sits under the panel); the settle timer keeps a burst of
+    // clicks from flickering the chrome.
+    const px = Math.round(parseFloat(getComputedStyle(el).fontSize));
+    liveEditBlip(`${px} px`);
     refreshSelection();
   }
 
@@ -5224,6 +5294,10 @@
     r.el.style.top = `${top}px`;
     r.el.style.width = `${width}px`;
     r.el.style.height = `${height}px`;
+    // v2.12 — live W × H tag + overlap-gated fade, re-tested every move
+    // (a growing element can pass under the panel mid-gesture). Runs
+    // before refreshSelection so the dim bubble yields on the first tick.
+    liveEditUpdate(`${r.el.offsetWidth} × ${r.el.offsetHeight}`);
     refreshSelection();
   }
 
@@ -5234,6 +5308,7 @@
       state.resize = null;
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
       endTxn();
+      liveEditEnd();
     }
   }
 
@@ -5379,6 +5454,209 @@
       height: el.offsetHeight,
     };
   }
+  // ===========================================================================
+  // Adaptive inspector fade (v2.12 — design 7 + smart overlap gate)
+  //
+  // ONE RULE: any live manipulation — drag-move, resize, font scrub/steppers,
+  // opacity slider, weight/align commits, inline text edit — dissolves the
+  // inspector to a whisper so the selection reflows in full view, and pins
+  // the lit coral value tag to it. Chrome restores ~380ms after the gesture
+  // ends; an open text edit holds the fade until it commits.
+  //
+  // THE GATE: the panel only fades when the selection's bounding box
+  // actually intersects the inspector's live rectangle. The check runs per
+  // gesture and re-runs on every move, so a drag fades the panel the moment
+  // the element passes beneath it and releases it on the way out. The value
+  // tag shows regardless of overlap — it's useful feedback either way. The
+  // toolbar never fades: it's the anchor.
+  //
+  // Call sites: onMouseMove/onMouseUp + onResizeMove/onResizeUp (80/90),
+  // startTextEdit/endTextEdit (90), nudgeFontSizeWithHistory (60), the
+  // opacity slider + seg commits (30), and the font-scrub field below.
+  // ===========================================================================
+  const FADE_RESTORE_MS = 380;
+  const SCRUB_PX_PER_STEP = 3; // pointer px per 1 font px
+  const SCRUB_DEADZONE_PX = 3; // under this it's a click-to-type, not a scrub
+  let fadeRestoreTimer = null;
+
+  function isScrubTagVisible() {
+    return scrubTag.dataset.show === 'true';
+  }
+
+  function rectsOverlap(a, b) {
+    return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+  }
+
+  function getLiveSelectionRect() {
+    const members = state.editingText && state.editingText.el.isConnected
+      ? [state.editingText.el]
+      : getSelectedElements();
+    let rect = null;
+    for (const el of members) {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 && r.height <= 0) continue;
+      rect = rect
+        ? {
+          left: Math.min(rect.left, r.left),
+          top: Math.min(rect.top, r.top),
+          right: Math.max(rect.right, r.right),
+          bottom: Math.max(rect.bottom, r.bottom),
+        }
+        : { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    }
+    return rect;
+  }
+
+  function selectionOverlapsInspector() {
+    // A folded dock clips the panel's paint but not its measured rect, so
+    // the gate is hard-false unless the segment is actually on screen.
+    if (inspectorDock.dataset.visible !== 'true') return false;
+    const sel = getLiveSelectionRect();
+    if (!sel) return false;
+    return rectsOverlap(sel, inspector.getBoundingClientRect());
+  }
+
+  function positionScrubTag() {
+    const sel = getLiveSelectionRect();
+    if (!sel) return;
+    scrubTag.style.left = `${Math.max(2, sel.left)}px`;
+    scrubTag.style.top = `${Math.max(2, sel.top - 26)}px`;
+  }
+
+  // Gesture start AND every move: re-run the gate, refresh the tag.
+  // tagText == null means fade-only (text edit, multi-element drag).
+  function liveEditUpdate(tagText) {
+    clearTimeout(fadeRestoreTimer);
+    fadeRestoreTimer = null;
+    inspector.dataset.fade = selectionOverlapsInspector() ? 'true' : 'false';
+    if (tagText != null && getSelectedElements().length === 1) {
+      scrubTag.textContent = tagText;
+      scrubTag.dataset.show = 'true';
+      positionScrubTag();
+      hideDimBubble();
+    }
+  }
+
+  // Gesture end — settle after a beat so a burst of steps or keystrokes
+  // doesn't flicker the chrome between clicks.
+  function liveEditEnd() {
+    clearTimeout(fadeRestoreTimer);
+    fadeRestoreTimer = setTimeout(() => {
+      fadeRestoreTimer = null;
+      scrubTag.dataset.show = 'false';
+      // An open text edit holds the fade until endTextEdit releases it.
+      if (!state.editingText) inspector.dataset.fade = 'false';
+      refreshSelection(); // restore the dim bubble / selection chrome
+    }, FADE_RESTORE_MS);
+  }
+
+  // One-shot triggers (steppers, slider ticks, seg commits).
+  function liveEditBlip(tagText) {
+    liveEditUpdate(tagText);
+    liveEditEnd();
+  }
+
+  function onTextEditInput() {
+    // Typing reflows the element — re-test the overlap as it grows/shrinks.
+    liveEditUpdate(null);
+  }
+  function textEditFadeStart(el) {
+    el.addEventListener('input', onTextEditInput);
+    liveEditUpdate(null);
+  }
+  function textEditFadeEnd(el) {
+    el.removeEventListener('input', onTextEditInput);
+    liveEditEnd();
+  }
+
+  // ---------------------------------------------------------------------------
+  // FONT is a scrubbable value field (design 7): drag left/right on the
+  // field to change size ~1px per 3px dragged. The ± steppers stay for fine
+  // single steps; a clean click (no move past the deadzone) hands focus to
+  // the input for an exact typed value, so the v2.3 commit-on-Enter/blur
+  // contract is untouched. One scrub gesture = one history entry, same as
+  // the opacity slider drag. No max clamp — decks legitimately use display
+  // sizes past the reference's 96px.
+  // ---------------------------------------------------------------------------
+  let fontScrubSession = null; // { pointerId, startX, startPx, target, moved, restoreCtx }
+  let suppressFieldClickFocus = false;
+
+  // The field wrap is a <label>: even with the pointerdown default
+  // suppressed, the trailing click's label activation would focus the
+  // input AFTER a scrub — leaving the keyboard captive to the field (a
+  // follow-up Cmd+Z would read as typing and never reach undo). A clean
+  // click grants focus explicitly in endFontScrub instead.
+  fieldFontSize.wrap.addEventListener('click', (e) => {
+    if (!suppressFieldClickFocus) return;
+    suppressFieldClickFocus = false;
+    e.preventDefault();
+  });
+
+  fieldFontSize.wrap.addEventListener('pointerdown', (e) => {
+    // Self-heal a stale suppression flag (a pointercancel mid-scrub has no
+    // trailing click to consume it).
+    suppressFieldClickFocus = false;
+    if (e.button !== 0) return;
+    const el = state.selected;
+    if (!el || hasMultiSelection() || !isTextBearing(el)) return;
+    // A focused input owns its own drag semantics (in-field text selection).
+    if (document.activeElement === inspectorInputs.fontSize) return;
+    // Suppress native focus/text-drag; a clean click refocuses on pointerup.
+    e.preventDefault();
+    fontScrubSession = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startPx: Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX,
+      target: el,
+      moved: false,
+      restoreCtx: null,
+    };
+    try {
+      fieldFontSize.wrap.setPointerCapture(e.pointerId);
+    } catch (_) {
+      /* capture is best-effort — scrub still works via bubbling moves */
+    }
+  });
+
+  fieldFontSize.wrap.addEventListener('pointermove', (e) => {
+    const s = fontScrubSession;
+    if (!s || e.pointerId !== s.pointerId) return;
+    if (!s.target.isConnected) return;
+    const dx = e.clientX - s.startX;
+    if (!s.moved) {
+      if (Math.abs(dx) < SCRUB_DEADZONE_PX) return;
+      s.moved = true;
+      s.restoreCtx = startInspectorTxn();
+      touchElement(s.target);
+    }
+    const next = Math.max(FONT_SIZE_MIN_PX, s.startPx + Math.round(dx / SCRUB_PX_PER_STEP));
+    s.target.style.fontSize = `${next}px`;
+    populateFontSize(s.target, { forceInput: true });
+    liveEditUpdate(`${next} px`);
+    refreshSelection();
+  });
+
+  function endFontScrub(e) {
+    const s = fontScrubSession;
+    if (!s || e.pointerId !== s.pointerId) return;
+    fontScrubSession = null;
+    try {
+      fieldFontSize.wrap.releasePointerCapture(s.pointerId);
+    } catch (_) {
+      /* already released */
+    }
+    if (s.moved) {
+      suppressFieldClickFocus = true;
+      endInspectorTxn(s.restoreCtx);
+      liveEditEnd();
+      return;
+    }
+    // Clean click — hand focus to the input for an exact typed value.
+    inspectorInputs.fontSize.focus();
+    inspectorInputs.fontSize.select();
+  }
+  fieldFontSize.wrap.addEventListener('pointerup', endFontScrub);
+  fieldFontSize.wrap.addEventListener('pointercancel', endFontScrub);
   // ===========================================================================
   // Inline text edit
   //
@@ -5529,6 +5807,10 @@
     if (clickX != null && clickY != null) placeCaretAtPoint(clickX, clickY);
 
     refreshSelection(); // hides ring/handles via the editingText guard
+    // v2.12 — entering edit mode on an occluded element is intent to see
+    // it: fade the panel (no tag) for the whole edit, re-testing the
+    // overlap as typing reflows the element.
+    textEditFadeStart(el);
   }
 
   function endTextEdit() {
@@ -5546,6 +5828,7 @@
 
     endTxn();
     refreshSelection();
+    textEditFadeEnd(el); // v2.12 — release the edit-long fade hold
   }
 
   function onDoubleClick(e) {
@@ -5607,6 +5890,14 @@
       item.el.style.left = `${item.anchorLeft + dx}px`;
       item.el.style.top = `${item.anchorTop + dy}px`;
     }
+    // v2.12 — live X/Y tag (single selection only) + overlap-gated fade,
+    // re-tested on every move: the panel dims the moment the element passes
+    // beneath it and lights back up on the way out. Runs before
+    // refreshSelection so the dim bubble yields on the first tick.
+    const dragTagText = (d.items || []).length === 1 && d.el && d.el.isConnected
+      ? `X ${d.el.offsetLeft} · Y ${d.el.offsetTop}`
+      : null;
+    liveEditUpdate(dragTagText);
     refreshSelection();
   }
 
@@ -5620,6 +5911,7 @@
       // don't accidentally re-select or deselect.
       state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
       endTxn();
+      liveEditEnd();
     }
     // After a drag (or a no-op mousedown that didn't lead to drag), the
     // post-click suppress fires; refresh the inspector so the panel

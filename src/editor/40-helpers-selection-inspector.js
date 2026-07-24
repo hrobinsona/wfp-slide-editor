@@ -749,7 +749,10 @@
     // the inspector's W/H readout. r.width/height are post-`transform: scale()`
     // viewport pixels and would diverge from the inline-style values.
     dimBubble.textContent = `${el.offsetWidth} × ${el.offsetHeight}`;
-    dimBubble.style.display = 'block';
+    // v2.12: while the live value tag owns the readout, keep the text
+    // tracking (v2-2 reads textContent right after a resize gesture) but
+    // yield the pixels to the coral tag.
+    dimBubble.style.display = isScrubTagVisible() ? 'none' : 'block';
     // Anchor the bubble centred above the ring with a small gutter; the
     // chip's own height is small (~22px) so a 22px offset clears the
     // ring's stroke without floating off the screen for top-edge selections.

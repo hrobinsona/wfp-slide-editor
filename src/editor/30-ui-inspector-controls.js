@@ -638,6 +638,14 @@
   dimBubble.className = 'wfpe-dim-bubble';
   root.appendChild(dimBubble);
 
+  // Live value tag (v2.12, design 7): coral chip pinned to the selection
+  // during a gesture. Content, position, and visibility are owned by the
+  // adaptive-fade module (85-adaptive-fade.js).
+  const scrubTag = document.createElement('div');
+  scrubTag.className = 'wfpe-scrub-tag';
+  scrubTag.dataset.show = 'false';
+  root.appendChild(scrubTag);
+
   const annotationLayer = document.createElement('div');
   annotationLayer.className = 'wfpe-annotation-layer';
   root.appendChild(annotationLayer);
@@ -847,7 +855,7 @@
   // as the font-size ± buttons: one history entry per click via the
   // inspector-txn isolation helpers, no-op guarded against the computed
   // style so re-clicking the active segment doesn't pollute history.
-  function commitSegStyle(styleProp, value) {
+  function commitSegStyle(styleProp, value, tagLabel) {
     const el = state.selected;
     if (!el || !isTextBearing(el)) return;
     const cs = getComputedStyle(el);
@@ -860,18 +868,22 @@
     el.style[styleProp] = value;
     endInspectorTxn(ctx);
     populateTypography(el);
+    // v2.12 — the reflow is what the user wants to see; no-op clicks
+    // returned above and don't blip.
+    liveEditBlip(tagLabel);
     refreshSelection();
   }
   for (const b of weightRow.buttons) {
     b.addEventListener('click', (e) => {
       e.preventDefault();
-      commitSegStyle('fontWeight', b.dataset.wfpeValue);
+      commitSegStyle('fontWeight', b.dataset.wfpeValue, b.textContent);
     });
   }
   for (const b of alignRow.buttons) {
     b.addEventListener('click', (e) => {
       e.preventDefault();
-      commitSegStyle('textAlign', b.dataset.wfpeValue);
+      const v = b.dataset.wfpeValue;
+      commitSegStyle('textAlign', v, v.charAt(0).toUpperCase() + v.slice(1));
     });
   }
 
@@ -891,6 +903,10 @@
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
     el.style.opacity = String(pct / 100);
     populateOpacity(el);
+    // v2.12 — bounded control keeps its slider; each tick refreshes the
+    // tag/fade, and the restore is anchored to true drag-end below so a
+    // mid-drag pause can't flicker the chrome back in.
+    liveEditUpdate(`${Math.round(pct)} %`);
   });
   const endOpacityDrag = () => {
     if (!opacitySliderTarget) return;
@@ -898,6 +914,7 @@
     const ctx = opacitySliderRestoreCtx;
     opacitySliderRestoreCtx = null;
     endInspectorTxn(ctx);
+    liveEditEnd();
   };
   opacitySlider.addEventListener('mouseup', endOpacityDrag);
   opacitySlider.addEventListener('change', endOpacityDrag);

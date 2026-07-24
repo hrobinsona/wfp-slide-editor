@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.11: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, and the v2.11 export action menu with save-in-place are all in `editor.js`.
+The shipped editor is v2.12: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, the v2.11 export action menu with save-in-place, and the v2.12 adaptive inspector fade are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -129,6 +129,8 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
 
 Since the v2.10 "Ink Glass" refresh (design 3b, `feature-briefs/v2-ink-glass-ui.md`), the toolbar and inspector form one two-segment instrument in the top-right corner: the panel lives inside a `.wfpe-inspector-dock` wrapper fixed 1px below the 36px icon-only bar, and selection drives `data-visible` on the dock plus `data-docked` on the toolbar (corner morph) together in `refreshInspector()`. Minimise folds `.wfpe-inspector-fold` via `grid-template-rows`; the bar itself can collapse to 58px via `state.toolbarCollapsed`. Both surfaces use a scheme-invariant dark "ink" glass — there are no `prefers-color-scheme` variants for editor chrome.
+
+The v2.12 adaptive fade (design 7, `feature-briefs/v2.12-adaptive-inspector.md`, module `src/editor/85-adaptive-fade.js`) makes the docked panel get out of the way by itself: any live manipulation — drag-move, resize, font scrub/steppers, opacity slider, weight/align commits, inline text edit — sets `data-fade="true"` on `.wfpe-inspector` (opacity 0.16, pointer-events kept) and pins the coral `.wfpe-scrub-tag` value chip to the selection, restoring ~380ms after the gesture settles. The fade is overlap-gated: it only applies when the selection's bounding box intersects the inspector's live rect, re-tested on every move of a drag/resize and on every `input` of a text edit. The value tag shows regardless of overlap and display-suppresses the v2.2 dim bubble while visible (the bubble's `textContent` keeps tracking). The FONT field is scrubbable — drag left/right for ~1px per 3px, one history entry per gesture; a clean click still focuses the input for typed commits. The toolbar never fades.
 
 ## Overview Mode
 

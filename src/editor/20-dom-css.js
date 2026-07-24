@@ -420,6 +420,12 @@
        recedes — dimmed, body folded to its 36px header. Dismissing the
        menu restores it. Shares the minimised fold/chevron mechanics. */
     #${ROOT_ID} .wfpe-inspector[data-suppressed="true"] { opacity: 0.55; }
+    /* v2.12 design 7: any live manipulation dissolves the panel to a
+       whisper so the selection reflows in full view. Only applied when the
+       selection's box actually intersects the panel (smart gate in
+       85-adaptive-fade). Pointer-events stay live. After the suppressed
+       rule so a mid-gesture fade wins over the export-menu dim. */
+    #${ROOT_ID} .wfpe-inspector[data-fade="true"] { opacity: 0.16; }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
@@ -608,6 +614,17 @@
       transition: background-color 120ms ease;
     }
     #${ROOT_ID} .wfpe-font-btn:hover { background: rgba(255,255,255,0.16); }
+    /* v2.12 design 7: the font value field is scrubbable — drag L/R to
+       change size (~1px per 3px). A clean click still focuses the input
+       for a typed exact value, so the caret cursor returns on focus. */
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field,
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field input {
+      cursor: ew-resize;
+      touch-action: none;
+    }
+    #${ROOT_ID} .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field input:focus {
+      cursor: text;
+    }
     /* Segmented control (weight Reg/Med/Bold, align L/C/R) */
     #${ROOT_ID} .wfpe-seg {
       display: flex;
@@ -904,6 +921,31 @@
          stacking context above the slide; no need to compete with the
          ring's z-index since they're siblings under the same root. */
     }
+    /* v2.12 live value tag (design 7): lit coral chip pinned to the
+       selection while a gesture is in flight — the eye stays on the
+       element, not the faded panel. Supersedes the dim bubble for the
+       duration (positionDimBubble defers to it). */
+    #${ROOT_ID} .wfpe-scrub-tag {
+      position: fixed;
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 8px;
+      white-space: nowrap;
+      pointer-events: none;
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 60%, #e55a4e);
+      box-shadow: 0 4px 12px rgba(230, 88, 76, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.40);
+      color: #fff;
+      font: 700 11px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+      opacity: 0;
+      transform: translateY(5px);
+      transition:
+        opacity 200ms cubic-bezier(0.32,0.72,0,1),
+        transform 200ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-scrub-tag[data-show="true"] { opacity: 1; transform: translateY(0); }
     #${ROOT_ID} .wfpe-annotation-layer {
       position: fixed;
       inset: 0;
@@ -1183,6 +1225,7 @@
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-selection-ring,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-handle,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-dim-bubble,
+    body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-scrub-tag,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-annotation-layer,
     body[data-wfp-edit-overview="on"] #${ROOT_ID} .wfpe-inspector-dock {
       display: none !important;

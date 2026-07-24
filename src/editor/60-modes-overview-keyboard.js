@@ -738,6 +738,11 @@
     nudgeFontSize(el, deltaPx);
     endInspectorTxn(ctx);
     populateFontSize(el, { forceInput: true });
+    // v2.12 — each ± step blips the value tag (and the fade when the
+    // selection sits under the panel); the settle timer keeps a burst of
+    // clicks from flickering the chrome.
+    const px = Math.round(parseFloat(getComputedStyle(el).fontSize));
+    liveEditBlip(`${px} px`);
     refreshSelection();
   }
 
