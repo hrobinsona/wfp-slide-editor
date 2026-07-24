@@ -126,6 +126,10 @@
     if (state.editingText) endTextEdit();
     const noteCount = getAnnotatedElements(document).length;
     const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
+    // SPIKE (live agent round-trip): pause the watcher so our own write is
+    // never mistaken for an external agent update; baseline is rebased
+    // after a successful write, and the watcher resumes in finally.
+    agentWatchPause();
     try {
       // A save fired right after ready can race the still-in-flight
       // rehydration; wait for it so we reuse the stored handle instead of
@@ -147,6 +151,7 @@
         handle = await pickSourceHandle();
         await writeHtmlToHandle(handle, html);
       }
+      await agentWatchSyncBaseline(handle);
       showToast(
         document.body,
         noteCount > 0
@@ -159,6 +164,8 @@
         return;
       }
       showToast(document.body, `Save failed (${(err && err.name) || 'unknown'}) — try Export → Clean copy.`);
+    } finally {
+      agentWatchResume();
     }
   }
   // ===========================================================================

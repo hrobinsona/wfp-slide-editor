@@ -10,6 +10,11 @@
       })
       .catch(() => {});
   }
+  // SPIKE (live agent round-trip): adopt state handed over by a previous
+  // instance across a document.write refresh, then watch the bound file
+  // for external (agent) writes.
+  adoptLiveRefreshState();
+  if (canSaveInPlace()) startAgentWatch();
   window.__wfpEditorReady = true;
   console.log(`[wfp-editor] ready v${VERSION}`);
 })();

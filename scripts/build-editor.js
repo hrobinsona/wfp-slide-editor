@@ -28,6 +28,7 @@ const PARTS = [
   '85-adaptive-fade.js',
   '90-text-edit.js',
   '95-export.js',
+  '96-live-refresh.js',
   '99-ready.js',
 ];
 
