@@ -1088,7 +1088,7 @@
     e.preventDefault();
     const el = state.selected;
     if (!el) return;
-    const unlockGroup = state.flowUnlockGroups.get(el);
+    const unlockGroup = getActiveFlowUnlockGroup(el);
     if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
     const ctx = startInspectorTxn();
     if (unlockGroup) {

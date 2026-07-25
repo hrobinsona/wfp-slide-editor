@@ -109,7 +109,7 @@
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
-    flowUnlockGroups: new WeakMap(), // Element → latest unlock group containing it. Each group records pre-unlock styles/markers plus exact mechanical pin styles so Reset can restore eligible members atomically without discarding later sibling edits.
+    flowUnlockGroups: new WeakMap(), // Element → ordered unlock-group memberships. The latest active group owns Reset for that element; inactive entries remain only so undo/redo can reactivate their provenance.
   };
   const deckContext = resolveDeckRoot();
   // ===========================================================================
@@ -2651,7 +2651,7 @@
     e.preventDefault();
     const el = state.selected;
     if (!el) return;
-    const unlockGroup = state.flowUnlockGroups.get(el);
+    const unlockGroup = getActiveFlowUnlockGroup(el);
     if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
     const ctx = startInspectorTxn();
     if (unlockGroup) {
@@ -3985,8 +3985,8 @@
   // markers that the editor adds during unlock/freeze. Undo restores every
   // element's `before`; redo restores `after`. One drag = one entry, one
   // resize = one entry, one font-size keystroke = one entry; the freeze that
-  // a drag performs on flex/grid siblings is bundled into the same entry as
-  // the drag itself.
+  // a drag performs on flex/grid siblings and its unlock-group active state
+  // are bundled into the same entry as the drag itself.
   // ===========================================================================
   function snapshotElement(el, options = {}) {
     const snap = {
@@ -4023,13 +4023,27 @@
 
   function beginTxn(options = {}) {
     if (state.txn) return; // ignore re-entry; outermost owns the txn
-    state.txn = { snapshots: new Map(), captureHtml: !!options.captureHtml };
+    state.txn = {
+      snapshots: new Map(),
+      captureHtml: !!options.captureHtml,
+      flowGroupStates: new Map(),
+    };
   }
 
   function touchElement(el) {
     if (!state.txn || !el) return;
     if (state.txn.snapshots.has(el)) return;
     state.txn.snapshots.set(el, snapshotElement(el, state.txn));
+  }
+
+  function setFlowUnlockGroupActive(group, active) {
+    if (!group) return;
+    const next = !!active;
+    if (group.active === next) return;
+    if (state.txn && !state.txn.flowGroupStates.has(group)) {
+      state.txn.flowGroupStates.set(group, !!group.active);
+    }
+    group.active = next;
   }
 
   function endTxn() {
@@ -4049,8 +4063,14 @@
       // handoff export can enumerate user-touched elements later.
       state.editedElements.add(el);
     }
-    if (changes.length === 0) return;
-    pushHistoryEntry(changes);
+    const flowGroupStates = [];
+    for (const [group, beforeActive] of txn.flowGroupStates) {
+      const afterActive = !!group.active;
+      if (beforeActive === afterActive) continue;
+      flowGroupStates.push({ group, beforeActive, afterActive });
+    }
+    if (changes.length === 0 && flowGroupStates.length === 0) return;
+    pushHistoryEntry(changes, null, flowGroupStates);
   }
 
   // ---------------------------------------------------------------------------
@@ -4096,12 +4116,13 @@
     }
   }
 
-  function pushHistoryEntry(changes, slideOps = null) {
+  function pushHistoryEntry(changes, slideOps = null, flowGroupStates = null) {
     // Truncate any redo stack — a fresh change invalidates everything
     // beyond the current cursor.
     state.history.length = state.historyIndex;
     const entry = { changes };
     if (slideOps && slideOps.length) entry.slideOps = slideOps;
+    if (flowGroupStates && flowGroupStates.length) entry.flowGroupStates = flowGroupStates;
     state.history.push(entry);
     state.historyIndex = state.history.length;
     while (state.history.length > HISTORY_MAX) {
@@ -4224,6 +4245,11 @@
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
+    if (entry.flowGroupStates) {
+      for (const transition of entry.flowGroupStates) {
+        transition.group.active = transition.beforeActive;
+      }
+    }
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -4234,6 +4260,11 @@
     const entry = state.history[state.historyIndex];
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.after);
+    }
+    if (entry.flowGroupStates) {
+      for (const transition of entry.flowGroupStates) {
+        transition.group.active = transition.afterActive;
+      }
     }
     if (entry.slideOps) {
       for (const op of entry.slideOps) redoSlideOp(op);
@@ -5552,11 +5583,28 @@
     return record;
   }
 
+  function registerFlowUnlockGroupMember(group, el) {
+    let memberships = state.flowUnlockGroups.get(el);
+    if (!memberships) {
+      memberships = [];
+      state.flowUnlockGroups.set(el, memberships);
+    }
+    if (!memberships.includes(group)) memberships.push(group);
+  }
+
+  function getActiveFlowUnlockGroup(el) {
+    const memberships = state.flowUnlockGroups.get(el) || [];
+    for (let i = memberships.length - 1; i >= 0; i--) {
+      if (memberships[i].active) return memberships[i];
+    }
+    return null;
+  }
+
   function prepareFlowUnlockGroup(ancestors, el) {
     const containers = ancestors.filter(
       (container) => container.dataset.wfpEditFlexFrozen !== 'true'
     );
-    const group = { records: new Map() };
+    const group = { records: new Map(), active: false };
 
     // Snapshot the whole group before the first write. In nested layouts an
     // outer pin mutates the inner container before that inner container is
@@ -5576,10 +5624,11 @@
       addFlowUnlockGroupMember(group, el);
     }
 
-    if (group.records.size === 0) return state.flowUnlockGroups.get(el) || null;
+    if (group.records.size === 0) return getActiveFlowUnlockGroup(el);
     for (const record of group.records.values()) {
-      state.flowUnlockGroups.set(record.el, group);
+      registerFlowUnlockGroupMember(group, record.el);
     }
+    setFlowUnlockGroupActive(group, true);
     return group;
   }
 
@@ -5664,12 +5713,16 @@
       const currentStyle = record.el.getAttribute('style');
       // The selected element is the explicit reset target. Other members are
       // mechanical only while they still equal the exact editor-written pin.
-      // A member already restored by a prior partial reset is also safe.
+      // A member already restored by a prior partial reset is also safe. An
+      // older group never owns a member claimed by a newer active group.
       restorable.set(
         record.el,
-        record.el === selectedEl ||
-          currentStyle === record.pinnedStyle ||
-          currentStyle === record.beforeStyle
+        getActiveFlowUnlockGroup(record.el) === group &&
+          (
+            record.el === selectedEl ||
+            currentStyle === record.pinnedStyle ||
+            currentStyle === record.beforeStyle
+          )
       );
     }
 
@@ -5697,6 +5750,12 @@
       touchElement(record.el);
       restoreFlowUnlockRecord(record);
     }
+
+    // Retire completed provenance so subsequent ordinary edits use the
+    // pristine originalStyles contract. The transition is part of the same
+    // history entry, so undo reactivates the group and redo retires it again.
+    const fullyRestored = [...group.records.values()].every(flowUnlockRecordIsAtRest);
+    if (fullyRestored) setFlowUnlockGroupActive(group, false);
   }
 
   function unlockToAbsolute(el) {

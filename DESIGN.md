@@ -115,19 +115,29 @@ When a user drags a flow-positioned element, including a flow element inside a m
 This is more complex than the original v1 sketch because real slide layouts use nested flex/grid structures. The behaviour is correct only if undo restores both the moved element and any touched containers without leaving stale selected DOM references.
 
 Flow-unlock Reset uses a separate session-only provenance map,
-`state.flowUnlockGroups`. Before the first pin write, the editor records every
-affected member's inline style and freeze-marker values, then records the exact
-style produced by pinning. This distinction matters because
+`state.flowUnlockGroups`. Each element maps to an ordered stack of group
+memberships; the latest active group owns that element for Reset. Before the
+first pin write, the editor records every affected member's inline style and
+freeze-marker values, then records the exact style produced by pinning. This
+distinction matters because
 `state.originalStyles` is the pristine value before an element's first editor
 change, whereas a group reset needs the layout immediately before that unlock.
 Reset restores the selected member plus members whose current style still
 equals that mechanical pin; a later style divergence is treated as deliberate
 user intent and retained. Container records also carry their direct pinned
 children. A container is restored only when all of those children are safe to
-restore, otherwise it remains pinned as the containing block for the retained
-edit. All eligible records are touched inside one normal history transaction,
-so undo/redo round-trips the full reset without replacing DOM nodes or
-disconnecting selection.
+restore and still owned by that group, otherwise it remains pinned as the
+containing block for a retained edit or newer nested unlock.
+
+Group activity is history state, not inferred from current style. The
+transaction records active-state transitions beside element snapshots:
+undoing the unlock deactivates its group, redo reactivates it, a complete group
+reset deactivates it, and undoing that reset reactivates it. Inactive
+memberships stay in the stack only for that history round-trip and are ignored
+by later Reset commands. Consequently, a later ordinary edit resets through
+`state.originalStyles` instead of being intercepted forever by stale
+pre-unlock metadata. All eligible records and lifecycle transitions share one
+normal history entry, without replacing DOM nodes or disconnecting selection.
 
 ## Inspector
 

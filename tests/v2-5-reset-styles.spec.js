@@ -62,6 +62,45 @@ async function addFlowUnlockGroup(page) {
   });
 }
 
+async function addNestedFlowUnlockGroup(page) {
+  await page.evaluate(() => {
+    const outer = document.createElement('div');
+    outer.dataset.testNestedOuter = 'true';
+    outer.setAttribute(
+      'style',
+      'position: absolute; left: 180px; top: 500px; display: flex; gap: 20px; align-items: stretch;'
+    );
+
+    const laneA = document.createElement('div');
+    laneA.dataset.testNestedPart = 'lane-a';
+    laneA.setAttribute(
+      'style',
+      'box-sizing: border-box; width: 220px; min-height: 120px; padding: 18px; background: rgb(238, 241, 245);'
+    );
+    laneA.textContent = 'Lane A';
+
+    const laneB = document.createElement('div');
+    laneB.dataset.testNestedPart = 'lane-b';
+    laneB.setAttribute(
+      'style',
+      'box-sizing: border-box; width: 220px; min-height: 120px; padding: 12px; display: flex; gap: 10px; background: rgb(224, 230, 238);'
+    );
+    for (const label of ['B1', 'B2']) {
+      const item = document.createElement('div');
+      item.dataset.testNestedPart = label.toLowerCase();
+      item.setAttribute(
+        'style',
+        'box-sizing: border-box; width: 88px; min-height: 72px; padding: 14px; background: rgb(255, 255, 255);'
+      );
+      item.textContent = label;
+      laneB.appendChild(item);
+    }
+
+    outer.append(laneA, laneB);
+    document.querySelector('.slide.active').appendChild(outer);
+  });
+}
+
 async function selectByMouse(page, selector) {
   const center = await page.evaluate((sel) => {
     const r = document.querySelector(sel).getBoundingClientRect();
@@ -81,6 +120,13 @@ async function dragBy(page, selector, dx, dy) {
   await page.mouse.down();
   await page.mouse.move(center.x + dx, center.y + dy, { steps: 8 });
   await page.mouse.up();
+}
+
+async function setSelectedFontSize(page, value) {
+  const input = page.locator(FONT_INPUT);
+  await input.click({ clickCount: 3 });
+  await input.fill(String(value));
+  await input.press('Enter');
 }
 
 function getStyleAttr(page, selector) {
@@ -111,6 +157,25 @@ function getFlowGroupState(page) {
       flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
       connected: el.isConnected,
     }]));
+  });
+}
+
+function getNestedFlowGroupState(page) {
+  return page.evaluate(() => {
+    const keys = ['outer', 'lane-a', 'lane-b', 'b1', 'b2'];
+    const elements = [
+      document.querySelector('[data-test-nested-outer="true"]'),
+      ...keys.slice(1).map((key) => document.querySelector(`[data-test-nested-part="${key}"]`)),
+    ];
+    return Object.fromEntries(keys.map((key, index) => {
+      const el = elements[index];
+      return [key, {
+        style: el.getAttribute('style'),
+        frozen: el.getAttribute('data-wfp-edit-frozen'),
+        flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+        connected: el.isConnected,
+      }];
+    }));
   });
 }
 
@@ -294,6 +359,88 @@ test.describe('v2.5 — reset styles (restore pre-edit original)', () => {
 
     await page.keyboard.press('Control+Shift+z');
     expect(await getFlowGroupState(page)).toEqual(reset);
+    await expectSelectionConnected(page);
+  });
+
+  test('an older group reset cannot remove a newer nested unlock dependency', async ({ page }) => {
+    await addNestedFlowUnlockGroup(page);
+    const original = await getNestedFlowGroupState(page);
+
+    // Group 1 freezes the outer row and both lanes.
+    await selectByMouse(page, '[data-test-nested-part="lane-a"]');
+    await dragBy(page, '[data-test-nested-part="lane-a"]', -50, 25);
+
+    // Group 2 overlaps Group 1 at Lane B, then freezes B1/B2 inside it.
+    await selectByMouse(page, '[data-test-nested-part="b1"]');
+    await dragBy(page, '[data-test-nested-part="b1"]', 25, 15);
+    const nestedFrozen = await getNestedFlowGroupState(page);
+    expect(nestedFrozen.outer.flexFrozen).toBe('true');
+    expect(nestedFrozen['lane-b'].frozen).toBe('true');
+    expect(nestedFrozen['lane-b'].flexFrozen).toBe('true');
+    expect(nestedFrozen.b1.frozen).toBe('true');
+    expect(nestedFrozen.b2.frozen).toBe('true');
+
+    await selectByMouse(page, '[data-test-nested-part="lane-a"]');
+    await page.locator(RESET_BTN).click();
+    const resetOlderGroup = await getNestedFlowGroupState(page);
+
+    expect(resetOlderGroup['lane-a']).toEqual(original['lane-a']);
+    // Lane B is owned by the newer active group. Its style/markers and the
+    // outer containing block it depends on must survive the older reset.
+    expect(resetOlderGroup.outer).toEqual(nestedFrozen.outer);
+    expect(resetOlderGroup['lane-b']).toEqual(nestedFrozen['lane-b']);
+    expect(resetOlderGroup.b1).toEqual(nestedFrozen.b1);
+    expect(resetOlderGroup.b2).toEqual(nestedFrozen.b2);
+
+    await page.keyboard.press('Control+z');
+    expect(await getNestedFlowGroupState(page)).toEqual(nestedFrozen);
+  });
+
+  test('undoing an unlock retires its group so later Reset uses the pristine original', async ({ page }) => {
+    await addFlowUnlockGroup(page);
+    const original = await getFlowGroupState(page);
+
+    await selectByMouse(page, '[data-test-flow-item="plan"]');
+    await setSelectedFontSize(page, 31);
+    const preUnlock = await getFlowGroupState(page);
+    expect(preUnlock.plan.style).not.toBe(original.plan.style);
+
+    await dragBy(page, '[data-test-flow-item="plan"]', 70, 35);
+    await page.keyboard.press('Control+z');
+    expect(await getFlowGroupState(page)).toEqual(preUnlock);
+
+    await setSelectedFontSize(page, 43);
+    await page.locator(RESET_BTN).click();
+    expect(await getFlowGroupState(page)).toEqual(original);
+    await expectSelectionConnected(page);
+  });
+
+  test('a completed group reset retires metadata before later ordinary edits', async ({ page }) => {
+    await addFlowUnlockGroup(page);
+    const original = await getFlowGroupState(page);
+
+    await selectByMouse(page, '[data-test-flow-item="plan"]');
+    await setSelectedFontSize(page, 31);
+    const preUnlock = await getFlowGroupState(page);
+
+    await dragBy(page, '[data-test-flow-item="plan"]', 70, 35);
+    await page.locator(RESET_BTN).click();
+    expect(await getFlowGroupState(page)).toEqual(preUnlock);
+
+    // The group reset remains a normal round-trippable history entry.
+    const frozen = await page.evaluate(() => {
+      const parent = document.querySelector('[data-test-flow-group="true"]');
+      return parent.getAttribute('data-wfp-edit-flex-frozen');
+    });
+    expect(frozen).toBe(null);
+    await page.keyboard.press('Control+z');
+    expect((await getFlowGroupState(page)).parent.flexFrozen).toBe('true');
+    await page.keyboard.press('Control+Shift+z');
+    expect(await getFlowGroupState(page)).toEqual(preUnlock);
+
+    await setSelectedFontSize(page, 43);
+    await page.locator(RESET_BTN).click();
+    expect(await getFlowGroupState(page)).toEqual(original);
     await expectSelectionConnected(page);
   });
 });

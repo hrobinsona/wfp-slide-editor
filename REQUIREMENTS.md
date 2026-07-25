@@ -85,8 +85,12 @@ The inspector is visible when an element is selected and supports:
   obsolete freeze markers. Mechanically pinned members are restored only
   while their inline style still matches the editor-recorded pin; a sibling
   deliberately edited later is preserved, together with any pinned container
-  it still needs as a positioning context. No-op if the editor never changed
-  the element.
+  it still needs as a positioning context. Nested unlocks use latest-active
+  ownership: an older group cannot restore a member or container still needed
+  by a newer group. Undoing an unlock or completing a full group reset retires
+  that group's Reset provenance (undo/redo also round-trips this lifecycle), so
+  later ordinary edits reset to the pristine pre-edit original. No-op if the
+  editor never changed the element.
 - Duplicate selected element.
 - Delete selected element.
 - Agent note save/delete for focused handoff annotations.

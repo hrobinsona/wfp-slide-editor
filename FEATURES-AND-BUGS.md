@@ -52,9 +52,14 @@ now records a group-wide pre-unlock snapshot plus each exact editor-written pin.
 Reset restores eligible members and obsolete freeze markers in one history
 transaction, with full undo/redo and connected selection. A member whose style
 diverged after pinning is preserved as a deliberate later edit; any container
-it still depends on also remains pinned. Synthetic Plan/Review/Publish coverage
-in `tests/v2-5-reset-styles.spec.js` exercises both full and partial group
-restoration.
+it still depends on also remains pinned. Follow-up review hardened overlapping
+nested unlocks with latest-active ownership, preventing an older reset from
+removing newer markers or container dependencies. Group activity now
+round-trips with history and retires after undo-unlock/full-reset so stale
+metadata cannot intercept later ordinary Reset. Synthetic
+Plan/Review/Publish and nested-lane coverage in
+`tests/v2-5-reset-styles.spec.js` exercises full, partial, overlapping, and
+lifecycle restoration.
 
 ### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 

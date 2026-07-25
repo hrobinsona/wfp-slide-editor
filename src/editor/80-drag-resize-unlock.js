@@ -282,11 +282,28 @@
     return record;
   }
 
+  function registerFlowUnlockGroupMember(group, el) {
+    let memberships = state.flowUnlockGroups.get(el);
+    if (!memberships) {
+      memberships = [];
+      state.flowUnlockGroups.set(el, memberships);
+    }
+    if (!memberships.includes(group)) memberships.push(group);
+  }
+
+  function getActiveFlowUnlockGroup(el) {
+    const memberships = state.flowUnlockGroups.get(el) || [];
+    for (let i = memberships.length - 1; i >= 0; i--) {
+      if (memberships[i].active) return memberships[i];
+    }
+    return null;
+  }
+
   function prepareFlowUnlockGroup(ancestors, el) {
     const containers = ancestors.filter(
       (container) => container.dataset.wfpEditFlexFrozen !== 'true'
     );
-    const group = { records: new Map() };
+    const group = { records: new Map(), active: false };
 
     // Snapshot the whole group before the first write. In nested layouts an
     // outer pin mutates the inner container before that inner container is
@@ -306,10 +323,11 @@
       addFlowUnlockGroupMember(group, el);
     }
 
-    if (group.records.size === 0) return state.flowUnlockGroups.get(el) || null;
+    if (group.records.size === 0) return getActiveFlowUnlockGroup(el);
     for (const record of group.records.values()) {
-      state.flowUnlockGroups.set(record.el, group);
+      registerFlowUnlockGroupMember(group, record.el);
     }
+    setFlowUnlockGroupActive(group, true);
     return group;
   }
 
@@ -394,12 +412,16 @@
       const currentStyle = record.el.getAttribute('style');
       // The selected element is the explicit reset target. Other members are
       // mechanical only while they still equal the exact editor-written pin.
-      // A member already restored by a prior partial reset is also safe.
+      // A member already restored by a prior partial reset is also safe. An
+      // older group never owns a member claimed by a newer active group.
       restorable.set(
         record.el,
-        record.el === selectedEl ||
-          currentStyle === record.pinnedStyle ||
-          currentStyle === record.beforeStyle
+        getActiveFlowUnlockGroup(record.el) === group &&
+          (
+            record.el === selectedEl ||
+            currentStyle === record.pinnedStyle ||
+            currentStyle === record.beforeStyle
+          )
       );
     }
 
@@ -427,6 +449,12 @@
       touchElement(record.el);
       restoreFlowUnlockRecord(record);
     }
+
+    // Retire completed provenance so subsequent ordinary edits use the
+    // pristine originalStyles contract. The transition is part of the same
+    // history entry, so undo reactivates the group and redo retires it again.
+    const fullyRestored = [...group.records.values()].every(flowUnlockRecordIsAtRest);
+    if (fullyRestored) setFlowUnlockGroupActive(group, false);
   }
 
   function unlockToAbsolute(el) {
