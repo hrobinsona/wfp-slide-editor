@@ -165,3 +165,141 @@ test.describe('v2.15 — zero-move resize handle click is a no-op', () => {
     }))).toEqual({ style: null, width: before.width, height: before.height });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bug 2 — unlocking a DIRECT child of the slide/flat root must pin siblings.
+// fixtures/flat-document.html: the flat root `main#flat-article` has direct
+// children .flat-hero + three .flat-section. Dragging the hero used to leave
+// the sections in flow, so the first section jumped up by the hero's full
+// height. State helpers mirror tests/v2-5-reset-styles.spec.js patterns.
+// ---------------------------------------------------------------------------
+
+// Select and drag the hero itself (not one of its children): the hero's
+// padding is >=36px on every side, so a point 12px inside its top-left
+// corner hits the hero element directly.
+async function selectAndDragHero(page, dx, dy) {
+  const point = await page.evaluate(() => {
+    const r = document.querySelector('.flat-hero').getBoundingClientRect();
+    return { x: r.left + 12, y: r.top + 12 };
+  });
+  await page.mouse.click(point.x, point.y);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.mouse.move(point.x + dx, point.y + dy, { steps: 6 });
+  await page.mouse.up();
+}
+
+// Inline style + freeze markers for the flat root and each of its children.
+function getFlatRootState(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('#flat-article');
+    const describe = (el) => ({
+      style: el.getAttribute('style'),
+      frozen: el.getAttribute('data-wfp-edit-frozen'),
+      flexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+    });
+    return {
+      root: describe(root),
+      children: [...root.children].map(describe),
+    };
+  });
+}
+
+test.describe('v2.15 — direct-child unlock pins slide/flat-root siblings', () => {
+  test('dragging the flat hero keeps the first section anchored and the root inline-untouched', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const hero = page.locator('.flat-hero');
+    const firstSection = page.locator('.flat-section').first();
+    const heroBefore = await hero.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top };
+    });
+    const sectionBefore = await firstSection.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top };
+    });
+
+    await selectAndDragHero(page, 60, 30);
+
+    const heroAfter = await hero.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return {
+        left: r.left,
+        top: r.top,
+        inlineLeft: el.style.left,
+        inlineTop: el.style.top,
+        position: el.style.position,
+      };
+    });
+    const sectionAfter = await firstSection.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, frozen: el.getAttribute('data-wfp-edit-frozen') };
+    });
+    const rootInlineStyle = await page.evaluate(
+      () => document.querySelector('#flat-article').getAttribute('style')
+    );
+
+    // The hero followed the pointer…
+    expect(heroAfter.position).toBe('absolute');
+    expect(heroAfter.inlineLeft).not.toBe('');
+    expect(heroAfter.inlineTop).not.toBe('');
+    expect(heroAfter.left).toBeCloseTo(heroBefore.left + 60, 0);
+    expect(heroAfter.top).toBeCloseTo(heroBefore.top + 30, 0);
+
+    // …the sibling section did NOT reflow into the hero's place…
+    expect(Math.abs(sectionAfter.left - sectionBefore.left)).toBeLessThan(2);
+    expect(Math.abs(sectionAfter.top - sectionBefore.top)).toBeLessThan(2);
+    expect(sectionAfter.frozen).toBe('true');
+
+    // …and the flat root itself was never inline-mutated.
+    expect(rootInlineStyle).toBeNull();
+  });
+
+  test('undo after a direct-child unlock restores every pinned sibling and the hero', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const original = await getFlatRootState(page);
+
+    await selectAndDragHero(page, 60, 30);
+
+    // Sanity: the unlock actually pinned the whole sibling set (hero moved,
+    // every sibling frozen at its captured rect) without a root style write.
+    const pinned = await getFlatRootState(page);
+    expect(pinned.root.style).toBeNull();
+    expect(pinned.children[0].style).toContain('position: absolute');
+    for (const child of pinned.children) {
+      expect(child.frozen).toBe('true');
+      expect(child.style).not.toBeNull();
+    }
+
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await getFlatRootState(page)).toEqual(original);
+  });
+
+  test('inspector Reset after a direct-child unlock restores the whole group', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const original = await getFlatRootState(page);
+
+    await selectAndDragHero(page, 60, 30);
+    const pinned = await getFlatRootState(page);
+    expect(pinned).not.toEqual(original);
+
+    await page.locator(RESET_BTN).click();
+    expect(await getFlatRootState(page)).toEqual(original);
+
+    // Selection survives the group restore.
+    const ringDisplay = await page.evaluate(
+      () => document.querySelector('#wfp-editor-root .wfpe-selection-ring').style.display
+    );
+    expect(ringDisplay).toBe('block');
+
+    // Reset was one atomic entry: a single undo returns the pinned state.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await getFlatRootState(page)).toEqual(pinned);
+  });
+});

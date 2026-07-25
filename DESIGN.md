@@ -114,6 +114,29 @@ When a user drags a flow-positioned element, including a flow element inside a m
 
 This is more complex than the original v1 sketch because real slide layouts use nested flex/grid structures. The behaviour is correct only if undo restores both the moved element and any touched containers without leaving stale selected DOM references.
 
+Unlocking a DIRECT child of the slide/flat root has no intermediate container
+to pin, so the root's own children are pinned the same way a container's are —
+with one difference: the root element itself never receives inline style
+writes. Native slides own fixed 1920x1080 stylesheet dimensions, and the flat
+root's contract is no inline root mutation (its positioning context comes from
+the fixture stylesheet or the editor's `data-wfp-edit-flat-position-context`
+CSS). The root does take the `data-wfp-edit-flex-frozen` marker as the same
+idempotency/restore latch containers use; it restores through the ordinary
+unlock-group machinery and is scrubbed on export. A static non-flat root
+cannot anchor absolute children without a write, so only in that case it falls
+back to the ordinary container pin (inline `position: relative` plus dimension
+locks). A root whose only child is the unlock target keeps the group-of-one
+safety net. Accepted tradeoff: with every child absolute, a flat root's
+intrinsic height collapses; content still renders at its pinned offsets and
+the page still scrolls to it, because absolutely-positioned descendants extend
+their containing block's scrollable overflow.
+
+The unlock itself is deadzone-gated for both drag and resize gestures: a
+handle or element mousedown records geometry only, and no transaction, style
+write, or sibling pin happens until the pointer moves past `DRAG_DEADZONE_PX`.
+A zero-movement press-and-release therefore mutates nothing and adds no
+history entry.
+
 Flow-unlock Reset uses a separate session-only provenance map,
 `state.flowUnlockGroups`. Each element maps to an ordered stack of group
 memberships; the latest active group owns that element for Reset. Before the

@@ -6218,7 +6218,7 @@
     return null;
   }
 
-  function prepareFlowUnlockGroup(ancestors, el) {
+  function prepareFlowUnlockGroup(ancestors, el, rootChildPinTarget = null) {
     const containers = ancestors.filter(
       (container) => container.dataset.wfpEditFlexFrozen !== 'true'
     );
@@ -6236,7 +6236,19 @@
       }
     }
 
-    // A direct child of the slide has no ancestor container to pin, but the
+    // v2.15 — direct child of the slide/flat root: the root joins the group
+    // as a container member (its flex-frozen latch must restore on Reset/
+    // undo) and every direct child is recorded, but pinRootChildren never
+    // writes a style on the root itself.
+    if (rootChildPinTarget && rootChildPinTarget.dataset.wfpEditFlexFrozen !== 'true') {
+      const rootRecord = addFlowUnlockGroupMember(group, rootChildPinTarget, true);
+      rootRecord.children = [...rootChildPinTarget.children];
+      for (const child of rootRecord.children) {
+        addFlowUnlockGroupMember(group, child);
+      }
+    }
+
+    // A lone direct child of the slide has no sibling to pin, but the
     // safety-net absolute conversion is still an unlock group of one.
     if (group.records.size === 0 && getComputedStyle(el).position !== 'absolute') {
       addFlowUnlockGroupMember(group, el);
@@ -6256,6 +6268,29 @@
     if (!group) return;
     const record = group.records.get(el);
     if (record) record.pinnedStyle = el.getAttribute('style');
+  }
+
+  function pinSnapshottedChildren(childRects, group) {
+    for (const m of childRects) {
+      touchElement(m.child);
+      m.child.style.position = 'absolute';
+      // Zero out margins. CSS margin-top/left etc. on a positioned element
+      // adds to the `top`/`left` distance from the containing block, so a
+      // child with `margin-top: 0.75rem` and pinned `top: 37px` would render
+      // at offsetTop 49. The captured offset already represents the child's
+      // visual position (margin-collapse and all), so margins must be
+      // neutralised for the pin to be authoritative.
+      m.child.style.margin = '0';
+      m.child.style.left = `${m.left}px`;
+      m.child.style.top = `${m.top}px`;
+      m.child.style.width = `${m.width}px`;
+      m.child.style.height = `${m.height}px`;
+      m.child.dataset.wfpEditFrozen = 'true';
+      // v2.14 — record the exact pinned style so the edit ledger can label
+      // untouched pins as mechanical; any later user write diverges from it.
+      state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
+      recordFlowPin(group, m.child);
+    }
   }
 
   function pinContainerChildren(container, group = null) {
@@ -6279,29 +6314,31 @@
     container.style.width = `${outerWidth}px`;
     container.style.height = `${outerHeight}px`;
 
-    for (const m of childRects) {
-      touchElement(m.child);
-      m.child.style.position = 'absolute';
-      // Zero out margins. CSS margin-top/left etc. on a positioned element
-      // adds to the `top`/`left` distance from the containing block, so a
-      // child with `margin-top: 0.75rem` and pinned `top: 37px` would render
-      // at offsetTop 49. The captured offset already represents the child's
-      // visual position (margin-collapse and all), so margins must be
-      // neutralised for the pin to be authoritative.
-      m.child.style.margin = '0';
-      m.child.style.left = `${m.left}px`;
-      m.child.style.top = `${m.top}px`;
-      m.child.style.width = `${m.width}px`;
-      m.child.style.height = `${m.height}px`;
-      m.child.dataset.wfpEditFrozen = 'true';
-      // v2.14 — record the exact pinned style so the edit ledger can label
-      // untouched pins as mechanical; any later user write diverges from it.
-      state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
-      recordFlowPin(group, m.child);
-    }
+    pinSnapshottedChildren(childRects, group);
     container.dataset.wfpEditFlexFrozen = 'true';
     state.pinnedStyles.set(container, container.getAttribute('style'));
     recordFlowPin(group, container);
+  }
+
+  // v2.15 — pinContainerChildren for the slide/flat root itself: identical
+  // child pinning, but the root's inline style is never written. Native
+  // slides own fixed 1920x1080 stylesheet dimensions, and the flat root's
+  // contract is "no inline root mutation" (its positioning context comes
+  // from the fixture stylesheet or the editor's
+  // data-wfp-edit-flat-position-context CSS). The root still takes the
+  // flex-frozen MARKER: it is the same idempotency latch containers use to
+  // skip re-pinning while an active group owns the children, it restores
+  // through the ordinary group/history machinery, and the export scrubber
+  // already strips every data-wfp-edit-* attribute.
+  function pinRootChildren(rootEl, group = null) {
+    if (rootEl.dataset.wfpEditFlexFrozen === 'true') return;
+
+    const childRects = snapshotChildOffsetsRelativeTo(rootEl);
+    touchElement(rootEl);
+    pinSnapshottedChildren(childRects, group);
+    rootEl.dataset.wfpEditFlexFrozen = 'true';
+    state.pinnedStyles.set(rootEl, rootEl.getAttribute('style'));
+    recordFlowPin(group, rootEl);
   }
 
   function restoreOptionalAttribute(el, name, value) {
@@ -6385,9 +6422,9 @@
     // and pin each one. Outermost first so inner snapshots don't see outer
     // mutations. Pinning at every level keeps both immediate siblings
     // (block-flow reflow) and outer siblings (flex/grid redistribution)
-    // stable in one pass. The slide itself is excluded — it has explicit
-    // 1920x1080 dimensions and its children in WFP fixtures are typically
-    // already position:absolute.
+    // stable in one pass. The slide itself is never dimension-pinned — it
+    // has explicit 1920x1080 dimensions (or is the inline-untouchable flat
+    // root); see pinRootChildren for how its direct children are protected.
     const ancestors = [];
     {
       let cur = el;
@@ -6398,9 +6435,38 @@
     }
     ancestors.reverse(); // outermost first
 
-    const unlockGroup = prepareFlowUnlockGroup(ancestors, el);
+    // v2.15 — `el` is a DIRECT child of the slide/flat root: there is no
+    // intermediate container, but siblings still reflow when the target
+    // leaves the flow, so pin the root's children without mutating the root
+    // itself. Slides and the flat root are already positioning contexts
+    // (foreign slides are absolute; the flat root gets position: relative
+    // from the editor's data-wfp-edit-flat-position-context CSS). A static
+    // NON-flat root cannot anchor absolute children without a write, so it
+    // falls back to the ordinary container pin — inline position: relative
+    // is acceptable there, and only there. A root whose only child is `el`
+    // has no siblings to protect and keeps the group-of-one safety net.
+    let rootChildPinTarget = null;
+    if (
+      ancestors.length === 0 &&
+      slide &&
+      el.parentElement === slide &&
+      slide.children.length > 1 &&
+      slide.dataset.wfpEditFlexFrozen !== 'true'
+    ) {
+      const isFlatRoot = slide.getAttribute('data-wfp-edit-flat-root') === 'true';
+      if (!isFlatRoot && getComputedStyle(slide).position === 'static') {
+        ancestors.push(slide);
+      } else {
+        rootChildPinTarget = slide;
+      }
+    }
+
+    const unlockGroup = prepareFlowUnlockGroup(ancestors, el, rootChildPinTarget);
     for (const container of ancestors) {
       pinContainerChildren(container, unlockGroup);
+    }
+    if (rootChildPinTarget) {
+      pinRootChildren(rootChildPinTarget, unlockGroup);
     }
 
     // After pinContainerChildren, `el` is one of the pinned children and
