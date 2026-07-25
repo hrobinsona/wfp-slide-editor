@@ -613,3 +613,102 @@ test.describe('v2.15 — resize anchors are fresh at deadzone activation', () =>
     expect(after.width).toBeGreaterThanOrEqual(before.width + 25);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round — static non-flat root fallback. A computed-static .slide
+// cannot anchor absolute children without a write, so it deliberately takes
+// the ordinary container pin (inline position:relative plus dimension
+// locks — the documented tradeoff in DESIGN.md). This exercises that branch,
+// which no public fixture reaches (foreign-deck slides are absolute).
+// ---------------------------------------------------------------------------
+
+async function loadStaticSlideDeck(page) {
+  await disableFsa(page);
+  await page.setContent(`
+    <!doctype html>
+    <html>
+    <head><style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      #static-pres { width: 100vw; }
+      .slide { padding: 24px; background: rgb(247, 248, 251); }
+      .slide:not(.active) { display: none; }
+      .slide h2 { margin: 0 0 16px; }
+      .stack-item { height: 110px; margin: 0 0 14px; background: rgb(226, 236, 244); }
+    </style></head>
+    <body>
+      <div id="static-pres">
+        <section class="slide active">
+          <h2 data-testid="static-heading">Static slide</h2>
+          <div class="stack-item" data-testid="stack-item-0">Item 0</div>
+          <div class="stack-item" data-testid="stack-item-1">Item 1</div>
+        </section>
+        <section class="slide"><h2>Second</h2></section>
+      </div>
+    </body>
+    </html>
+  `);
+  await page.addScriptTag({ path: EDITOR_PATH });
+  await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+  // Sanity: resolved as a (foreign) deck whose active slide is static.
+  expect(await page.evaluate(() => ({
+    rootMarked: document.querySelector('#static-pres')?.getAttribute('data-wfp-edit-deck-root'),
+    slidePosition: getComputedStyle(document.querySelector('.slide.active')).position,
+  }))).toEqual({ rootMarked: 'true', slidePosition: 'static' });
+  await page.keyboard.press('e');
+}
+
+test.describe('v2.15 — static non-flat slide root falls back to the container pin', () => {
+  test('dragging a direct child of a static slide pins siblings via the inline container fallback and undoes cleanly', async ({ page }) => {
+    await loadStaticSlideDeck(page);
+
+    const headingBefore = await page.locator('[data-testid="static-heading"]').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top };
+    });
+
+    await page.locator('[data-testid="stack-item-0"]').click();
+    await dragBySelector(page, '[data-testid="stack-item-0"]', 45, 25);
+
+    const after = await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      const heading = document.querySelector('[data-testid="static-heading"]');
+      const headingRect = heading.getBoundingClientRect();
+      return {
+        slideInline: slide.getAttribute('style') || '',
+        slideFlexFrozen: slide.getAttribute('data-wfp-edit-flex-frozen'),
+        headingFrozen: heading.getAttribute('data-wfp-edit-frozen'),
+        headingLeft: headingRect.left,
+        headingTop: headingRect.top,
+      };
+    });
+
+    // The documented fallback: the static slide takes the ordinary container
+    // pin — inline positioning context plus dimension locks…
+    expect(after.slideInline).toContain('position: relative');
+    expect(after.slideInline).toMatch(/width: \d/);
+    expect(after.slideInline).toMatch(/height: \d/);
+    expect(after.slideFlexFrozen).toBe('true');
+    // …and the sibling heading holds its place.
+    expect(after.headingFrozen).toBe('true');
+    expect(Math.abs(after.headingLeft - headingBefore.left)).toBeLessThan(2);
+    expect(Math.abs(after.headingTop - headingBefore.top)).toBeLessThan(2);
+
+    // One undo unwinds the entire fallback pin, slide included.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      return {
+        slideInline: slide.getAttribute('style'),
+        slideFlexFrozen: slide.getAttribute('data-wfp-edit-flex-frozen'),
+        headingStyle: document.querySelector('[data-testid="static-heading"]').getAttribute('style'),
+        itemStyle: document.querySelector('[data-testid="stack-item-0"]').getAttribute('style'),
+      };
+    })).toEqual({
+      slideInline: null,
+      slideFlexFrozen: null,
+      headingStyle: null,
+      itemStyle: null,
+    });
+  });
+});
