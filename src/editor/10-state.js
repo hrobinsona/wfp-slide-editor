@@ -24,5 +24,7 @@
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
+    flowUnlockGroups: new WeakMap(), // Element → ordered unlock-group memberships. The latest active group owns Reset for that element; inactive entries remain only so undo/redo can reactivate their provenance.
+    flowUnlockGroupRegistry: new Set(), // Iterable companion used to prune inactive groups once no retained history transition can reactivate them. Pruning clears strong record→Element references, including detached members.
   };
   const deckContext = resolveDeckRoot();

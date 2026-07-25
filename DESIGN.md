@@ -114,6 +114,47 @@ When a user drags a flow-positioned element, including a flow element inside a m
 
 This is more complex than the original v1 sketch because real slide layouts use nested flex/grid structures. The behaviour is correct only if undo restores both the moved element and any touched containers without leaving stale selected DOM references.
 
+Flow-unlock Reset uses a separate session-only provenance map,
+`state.flowUnlockGroups`. Each element maps to an ordered stack of group
+memberships; the latest active group owns that element for Reset. Before the
+first pin write, the editor records every affected member's inline style and
+freeze-marker values, then records the exact style produced by pinning. This
+distinction matters because
+`state.originalStyles` is the pristine value before an element's first editor
+change, whereas a group reset needs the layout immediately before that unlock.
+Reset restores the selected member plus members whose current style still
+equals that mechanical pin; a later style divergence is treated as deliberate
+user intent and retained. Container records also carry their direct pinned
+children. A container is restored only when all of those children are safe to
+restore and still owned by that group, otherwise it remains pinned as the
+containing block for a retained edit or newer nested unlock.
+
+Group activity is history state, not inferred from current style. The
+transaction records active-state transitions beside element snapshots:
+undoing the unlock deactivates its group, redo reactivates it, a complete group
+reset deactivates it, and undoing that reset reactivates it. Inactive
+memberships stay in the stack only for that history round-trip and are ignored
+by later Reset commands. Consequently, a later ordinary edit resets through
+`state.originalStyles` instead of being intercepted forever by stale
+pre-unlock metadata. All eligible records and lifecycle transitions share one
+normal history entry, without replacing DOM nodes or disconnecting selection.
+
+Inactive provenance is retained only while history can reactivate it. Every
+history push performs redo truncation and the 50-entry cap eviction first,
+then scans retained lifecycle transitions. An inactive group with no remaining
+transition is removed from each member's membership stack, its records map is
+cleared, and it leaves the iterable registry; this releases all additional
+strong references owned by flow-unlock provenance, including group records for
+disconnected/deleted members. The pre-existing session edit ledger
+(`state.editedElements`) remains intentionally session-scoped and never pruned,
+as described under Handoff Ground Truth; this cleanup neither adds to nor
+redesigns that separate retention policy. Active groups are never pruned merely
+because their original unlock entry aged out — they still define live Reset
+behaviour. The editor root's `data-flow-unlock-group-count` and
+`data-flow-unlock-record-count` diagnostics expose the bounded provenance
+registry for fixture-driven lifecycle coverage and are removed with the rest
+of editor chrome on export.
+
 ## Inspector
 
 The inspector is an editor-owned control panel bound to `state.selected`. It writes directly to inline styles using DOM style APIs, not string replacement. Controls should commit predictable atomic history entries:
@@ -123,9 +164,10 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 - Typography weight/align segmented controls (v2.10).
 - Colour controls.
 - Opacity.
-- Reset inline styles to the pre-edit original (`state.originalStyles`
-  WeakMap, recorded at each element's first committed transaction in
-  `endTxn`).
+- Reset ordinary inline styles to the pre-edit original
+  (`state.originalStyles` WeakMap, recorded at each element's first committed
+  transaction in `endTxn`), or restore an eligible flow-unlock group from
+  `state.flowUnlockGroups`.
 - Agent note save/delete.
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.

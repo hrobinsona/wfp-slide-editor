@@ -6,8 +6,8 @@
   // markers that the editor adds during unlock/freeze. Undo restores every
   // element's `before`; redo restores `after`. One drag = one entry, one
   // resize = one entry, one font-size keystroke = one entry; the freeze that
-  // a drag performs on flex/grid siblings is bundled into the same entry as
-  // the drag itself.
+  // a drag performs on flex/grid siblings and its unlock-group active state
+  // are bundled into the same entry as the drag itself.
   // ===========================================================================
   function snapshotElement(el, options = {}) {
     const snap = {
@@ -44,13 +44,27 @@
 
   function beginTxn(options = {}) {
     if (state.txn) return; // ignore re-entry; outermost owns the txn
-    state.txn = { snapshots: new Map(), captureHtml: !!options.captureHtml };
+    state.txn = {
+      snapshots: new Map(),
+      captureHtml: !!options.captureHtml,
+      flowGroupStates: new Map(),
+    };
   }
 
   function touchElement(el) {
     if (!state.txn || !el) return;
     if (state.txn.snapshots.has(el)) return;
     state.txn.snapshots.set(el, snapshotElement(el, state.txn));
+  }
+
+  function setFlowUnlockGroupActive(group, active) {
+    if (!group) return;
+    const next = !!active;
+    if (group.active === next) return;
+    if (state.txn && !state.txn.flowGroupStates.has(group)) {
+      state.txn.flowGroupStates.set(group, !!group.active);
+    }
+    group.active = next;
   }
 
   function endTxn() {
@@ -70,8 +84,14 @@
       // handoff export can enumerate user-touched elements later.
       state.editedElements.add(el);
     }
-    if (changes.length === 0) return;
-    pushHistoryEntry(changes);
+    const flowGroupStates = [];
+    for (const [group, beforeActive] of txn.flowGroupStates) {
+      const afterActive = !!group.active;
+      if (beforeActive === afterActive) continue;
+      flowGroupStates.push({ group, beforeActive, afterActive });
+    }
+    if (changes.length === 0 && flowGroupStates.length === 0) return;
+    pushHistoryEntry(changes, null, flowGroupStates);
   }
 
   // ---------------------------------------------------------------------------
@@ -117,18 +137,20 @@
     }
   }
 
-  function pushHistoryEntry(changes, slideOps = null) {
+  function pushHistoryEntry(changes, slideOps = null, flowGroupStates = null) {
     // Truncate any redo stack — a fresh change invalidates everything
     // beyond the current cursor.
     state.history.length = state.historyIndex;
     const entry = { changes };
     if (slideOps && slideOps.length) entry.slideOps = slideOps;
+    if (flowGroupStates && flowGroupStates.length) entry.flowGroupStates = flowGroupStates;
     state.history.push(entry);
     state.historyIndex = state.history.length;
     while (state.history.length > HISTORY_MAX) {
       state.history.shift();
       state.historyIndex--;
     }
+    pruneInactiveFlowUnlockGroups();
   }
 
   function pushElementInsertEntry(op) {
@@ -245,6 +267,11 @@
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
+    if (entry.flowGroupStates) {
+      for (const transition of entry.flowGroupStates) {
+        transition.group.active = transition.beforeActive;
+      }
+    }
     if (
       entry.slideOps &&
       entry.slideOps.some((op) => (
@@ -265,6 +292,11 @@
     const entry = state.history[state.historyIndex];
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.after);
+    }
+    if (entry.flowGroupStates) {
+      for (const transition of entry.flowGroupStates) {
+        transition.group.active = transition.afterActive;
+      }
     }
     if (entry.slideOps) {
       for (const op of entry.slideOps) redoSlideOp(op);

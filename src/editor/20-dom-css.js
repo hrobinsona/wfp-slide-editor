@@ -3,6 +3,8 @@
   // ===========================================================================
   const root = document.createElement('div');
   root.id = ROOT_ID;
+  root.dataset.flowUnlockGroupCount = '0';
+  root.dataset.flowUnlockRecordCount = '0';
   Object.assign(root.style, {
     position: 'fixed',
     inset: '0',

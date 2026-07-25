@@ -80,7 +80,17 @@ The inspector is visible when an element is selected and supports:
 - Reset the selected element's inline styles to their pre-edit originals
   (the `style` attribute captured at the element's first editor change —
   clearing the attribute outright is wrong because decks author
-  position/size inline). No-op if the editor never changed the element.
+  position/size inline). For a flow-unlocked element, Reset atomically
+  restores its unlock group to the recorded pre-unlock styles and removes
+  obsolete freeze markers. Mechanically pinned members are restored only
+  while their inline style still matches the editor-recorded pin; a sibling
+  deliberately edited later is preserved, together with any pinned container
+  it still needs as a positioning context. Nested unlocks use latest-active
+  ownership: an older group cannot restore a member or container still needed
+  by a newer group. Undoing an unlock or completing a full group reset retires
+  that group's Reset provenance (undo/redo also round-trips this lifecycle), so
+  later ordinary edits reset to the pristine pre-edit original. No-op if the
+  editor never changed the element.
 - Duplicate selected element.
 - Delete selected element.
 - Agent note save/delete for focused handoff annotations.
@@ -137,7 +147,7 @@ Inspector clicks must not accidentally select slide content or end inline text e
 
 - Cmd/Ctrl+Z undoes the last change.
 - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redoes.
-- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, annotation save/delete, text edit, element insert/delete, slide reorder, slide delete.
+- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, flow-unlock group reset, annotation save/delete, text edit, element insert/delete, slide reorder, slide delete.
 - History persists for the current page session only.
 - History must support at least 50 entries.
 
