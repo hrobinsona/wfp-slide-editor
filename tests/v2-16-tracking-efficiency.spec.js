@@ -3,14 +3,25 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { EDITOR_PATH } from './_helpers.js';
 
-// Perf — the R2 idle selection-tracking rAF loop (40-helpers-selection-
-// inspector.js) now dirty-checks bounding rects each tick and only pays for
-// a full refreshSelection() when something actually moved. The tests below
-// pin the R2 guarantee this loop exists for in the first place: the ring
-// (and, separately, an annotation marker on a non-selected element) must
-// still catch up to something that moves with NO editor event at all (e.g.
-// a host-page animation), since that's exactly the case the cheap
-// per-frame rect/visibility comparison has to catch.
+// Two independent inspector-chrome fixes:
+//
+// 1. Perf — the R2 idle selection-tracking rAF loop (40-helpers-selection-
+//    inspector.js) now dirty-checks bounding rects each tick and only pays
+//    for a full refreshSelection() when something actually moved. The tests
+//    above pin the R2 guarantee this loop exists for in the first place:
+//    the ring (and, separately, an annotation marker on a non-selected
+//    element) must still catch up to something that moves with no editor
+//    event at all (e.g. a host-page animation).
+//
+// 2. A11y — the opacity slider's one-history-entry-per-drag session used to
+//    open only on `mousedown`, so keyboard users focusing the slider and
+//    pressing arrow keys moved the native thumb without ever touching the
+//    element's opacity (and the thumb snapped back on the next repopulate).
+//    The session now opens lazily on the first `input` when none is open,
+//    and settles (rather than closing immediately) when that session was
+//    opened by keyboard, since a native range input fires `change`
+//    immediately after every keyboard-driven `input` — including every
+//    tick of OS key auto-repeat — unlike a mouse drag.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -75,6 +86,13 @@ async function waitForAnimationFrames(page, count = 2) {
   }), count);
 }
 
+async function readOpacity(page, selector) {
+  return page.evaluate(
+    (sel) => parseFloat(getComputedStyle(document.querySelector(sel)).opacity),
+    selector,
+  );
+}
+
 test.describe('Selection tracking perf (idle dirty-check)', () => {
   test('idle tracking loop catches up to an element that moves without an editor event', async ({ page }) => {
     await loadReady(page);
@@ -137,5 +155,108 @@ test.describe('Selection tracking perf (idle dirty-check)', () => {
     });
     expect(marker.left).toBeCloseTo(marker.expectedLeft, 0);
     expect(marker.top).toBeCloseTo(marker.expectedTop, 0);
+  });
+});
+
+test.describe('Opacity slider keyboard input', () => {
+  test('arrow-key input on the focused opacity slider applies to the selected element and is undoable', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+
+    const before = await readOpacity(page, '.slide.active .resize-target');
+
+    const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+    await slider.focus();
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+
+    const afterPresses = await readOpacity(page, '.slide.active .resize-target');
+    expect(afterPresses).toBeCloseTo(before - 0.03, 2);
+
+    // No snap-back: the slider's own displayed value must agree with what
+    // was actually applied to the element, not silently disagree with it.
+    const sliderValue = Number(await slider.inputValue());
+    expect(sliderValue).toBe(Math.round(afterPresses * 100));
+
+    // The editor's document-level keydown handler treats any focused
+    // <input> (including this slider) as a typing target and defers to it
+    // completely — Cmd/Ctrl+Z only reaches undo once focus has moved off
+    // the control, same as it would for the number input or a text field.
+    // Blurring also flushes the settle timer below immediately, matching
+    // how a keyboard user would actually invoke undo right after.
+    await slider.evaluate((el) => el.blur());
+
+    // A native <input type=range> fires `change` immediately after every
+    // keyboard-driven `input`, unlike a mouse drag where it fires once at
+    // release (verified directly against Chromium) — so the whole press
+    // burst above settled into ONE session (see the held-key test below
+    // for the mechanism): one undo restores the full pre-keyboard value.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+
+    // Redo re-applies the whole burst as one step too.
+    await page.keyboard.press('ControlOrMeta+y');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(afterPresses, 2);
+  });
+
+  test('holding the opacity slider arrow key coalesces the whole burst into one undo step and does not evict older history', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+
+    // An unrelated prior edit with its own history entry — proves the
+    // keyboard burst below doesn't evict it. Chromium fires `change`
+    // immediately after every keyboard-driven `input` on a range slider,
+    // including every tick of OS key auto-repeat while a key is held —
+    // without the settle-timer fix, a ~12-tick hold would previously have
+    // produced 12 separate history entries.
+    const xInput = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="x"]');
+    await xInput.click({ clickCount: 3 });
+    await xInput.fill('333');
+    await xInput.press('Enter');
+    expect(await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft)).toBe(333);
+
+    const before = await readOpacity(page, '.slide.active .resize-target');
+
+    const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+    await slider.focus();
+
+    // Simulate a genuinely held arrow key: repeated keydowns with no
+    // keyup in between (matches OS auto-repeat), then a single keyup.
+    for (let i = 0; i < 12; i += 1) {
+      await page.keyboard.down('ArrowLeft');
+    }
+    await page.keyboard.up('ArrowLeft');
+
+    const afterBurst = await readOpacity(page, '.slide.active .resize-target');
+    expect(afterBurst).toBeCloseTo(before - 0.12, 2);
+
+    await slider.evaluate((el) => el.blur());
+
+    // One undo restores the WHOLE burst in a single step...
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+    // ...leaving the unrelated prior edit untouched and still in history...
+    expect(await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft)).toBe(333);
+    // ...so a second undo is the one that reverts it.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft)).not.toBe(333);
+  });
+
+  test('opacity slider arrow-key presses do not bubble to editor shortcuts', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+
+    const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+    await slider.focus();
+    await page.keyboard.press('ArrowLeft');
+
+    // ArrowLeft is the slide-navigation key outside the inspector; it must
+    // not have reached the fixture's own keydown handler while focused on
+    // the slider, i.e. the active slide must be unchanged.
+    const stillOnFirstSlide = await page.evaluate(
+      () => document.querySelector('.slide.active')?.id === 'foreign-slide-1',
+    );
+    expect(stillOnFirstSlide).toBe(true);
   });
 });
