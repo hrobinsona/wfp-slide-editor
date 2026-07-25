@@ -23,7 +23,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { EDITOR_PATH, disableFsa } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1248,5 +1248,109 @@ test.describe('v2.15 — deleting pinned children releases the flat-root hold', 
     expect(after.childCount).toBe(5);
     expect(after.held).toBe(held);
     expect(Math.abs(after.footerTop - footerBefore)).toBeLessThan(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Merge-gate review — the v2.13 live refresh replaces the whole document
+// (document.open/write/close) and re-injects the editor, so a new editor
+// closure gets fresh module state and the old editor root — including the
+// dynamic height rule's <style> — is destroyed with the old document. This
+// asserts that end state rather than trusting it: no marker and no rule may
+// survive into the new generation, and the refreshed document must still
+// export clean.
+// ---------------------------------------------------------------------------
+
+const FLAT_FIXTURE_PATH = path.join(
+  path.resolve(__dirname, '..'), 'fixtures', 'flat-document.html'
+);
+
+async function installFlatFsaStub(page) {
+  await page.addInitScript(() => {
+    window.__fsa = { written: [], file: { content: null, lastModified: 1000 } };
+    const handle = {
+      name: 'flat-document.html',
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+      getFile: async () => ({
+        lastModified: window.__fsa.file.lastModified,
+        text: async () => window.__fsa.file.content,
+      }),
+      createWritable: async () => {
+        let buf = '';
+        return {
+          write: async (data) => { buf += String(data); },
+          close: async () => {
+            window.__fsa.file.content = buf;
+            window.__fsa.file.lastModified += 1000;
+            window.__fsa.written.push(buf);
+          },
+        };
+      },
+    };
+    window.showSaveFilePicker = async () => handle;
+  });
+}
+
+async function saveInPlace(page, expectedWrites) {
+  await page.keyboard.press('ControlOrMeta+s');
+  await page.waitForFunction((n) => window.__fsa.written.length === n, expectedWrites);
+  return page.evaluate(() => window.__fsa.written[window.__fsa.written.length - 1]);
+}
+
+test.describe('v2.15 — a live refresh carries no hold residue into the new generation', () => {
+  test('the refreshed document has no marker, no rule, and exports clean', async ({ page }) => {
+    await installFlatFsaStub(page);
+    await page.goto(pathToFileURL(FLAT_FIXTURE_PATH).href);
+    await page.addScriptTag({ path: EDITOR_PATH });
+    await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+    await page.keyboard.press('e');
+
+    await selectAndDragHero(page, 60, 30);
+    expect(await page.evaluate(
+      () => document.querySelector('#flat-article').getAttribute('data-wfp-edit-flat-root-height')
+    )).not.toBeNull();
+
+    // The saved file carries the geometry as inline height (the documented
+    // export persistence) and no editor markers.
+    const saved = await saveInPlace(page, 1);
+    expect(saved).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(saved).toMatch(/<main id="flat-article"[^>]*style="[^"]*height:/);
+
+    // An "agent" rewrites the same file; the editor swaps it in place.
+    await page.evaluate((content) => {
+      window.__fsa.file.content = content;
+      window.__fsa.file.lastModified += 1000;
+    }, saved.replace('A practical guide', 'A revised guide'));
+    await expect
+      .poll(() => page.evaluate(() => window.__wfpEditorGeneration).catch(() => null),
+        { timeout: 20_000 })
+      .toBe(2);
+    await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+
+    const refreshed = await page.evaluate(() => {
+      const editorRoot = document.getElementById('wfp-editor-root');
+      return {
+        markers: document.querySelectorAll('[data-wfp-edit-flat-root-height]').length,
+        frozen: document.querySelectorAll('[data-wfp-edit-frozen]').length,
+        // No editor-owned stylesheet may still be holding a height.
+        holdRules: [...(editorRoot ? editorRoot.querySelectorAll('style') : [])].filter(
+          (s) => (s.textContent || '').includes('flat-root-height')
+        ).length,
+        contentSwapped: document.body.textContent.includes('A revised guide'),
+        inlineHeight: document.querySelector('#flat-article').style.height,
+      };
+    });
+    expect(refreshed.contentSwapped).toBe(true);
+    expect(refreshed.markers).toBe(0);
+    expect(refreshed.frozen).toBe(0);
+    expect(refreshed.holdRules).toBe(0);
+    // The height the previous generation persisted rides in the file itself.
+    expect(refreshed.inlineHeight).not.toBe('');
+
+    // Saving the refreshed document is still clean.
+    const resaved = await saveInPlace(page, 2);
+    expect(resaved).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(resaved).not.toContain('id="wfp-editor-root"');
   });
 });
