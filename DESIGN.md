@@ -188,12 +188,37 @@ between pinned states, and a later unlock pins the remainder. A one-shot
 measurement therefore goes stale, and the stale value reaches the export
 clone. So the hold is re-derived from live geometry after every transition
 that can change the pinned set: the pin itself, a group restore (inside the
-same transaction, so undo/redo round-trip the corrected value), and undo/redo.
-Once no pinned child remains, the marker is dropped outright and the root
-returns to natural layout — the dynamic rule is keyed to the exact attribute
-value, so removing the attribute un-matches it. The target is released with
-it; a redo that restores pins without a live target adopts the layout that
-history has just made correct.
+same transaction, so undo/redo round-trip the corrected value), undo/redo,
+and element attach/detach — paste/duplicate and delete, hooked once on the
+history entry point both funnel through, so deleting the pinned children of
+a root releases the hold instead of propping an emptied root open (in the
+export too, which reads the same marker). Once no pinned child remains the
+marker is dropped outright and the root returns to natural layout — the
+dynamic rule is keyed to the exact attribute value, so removing the attribute
+un-matches it.
+
+The TARGET outlives an empty pinned set. Undoing the delete or Reset that
+emptied it re-attaches pinned children into a collapsed root, and solving
+back to the retained target is the only way to restore the pre-delete
+geometry; adopting the collapsed layout would freeze the very shift being
+repaired. It is re-captured whenever a pin ESTABLISHES a hold on a root with
+nothing pinned — the layout measured then is the natural one — so a content
+edit between unlock cycles is not held against an outdated position.
+
+Rules in the dynamic stylesheet are additive and never pruned for the page
+session. That is deliberate rather than a leak: undo and redo restore earlier
+attribute values, which must still find their rule. The set is bounded by the
+distinct heights one root takes in a session, and a live refresh replaces the
+whole editor closure (and destroys the stylesheet with the old document), so
+nothing accumulates across generations.
+
+Two paths deliberately carry no reconcile. Overview slide delete/insert
+cannot reach a held root: the hold only exists on an element marked
+`data-wfp-edit-flat-root`, which only flat mode sets, and Overview is gated
+off in flat mode — a document with slides never resolves as flat in the first
+place. Inline text edit rewrites a pinned child's content, not the root's
+child set; a pinned child is absolutely positioned at an explicit box, so its
+content cannot change the root's flow.
 
 Anchor positions are read in LAYOUT space (`offsetTop`/`offsetHeight`), never
 through `getBoundingClientRect`. Layout offsets ignore transforms and
