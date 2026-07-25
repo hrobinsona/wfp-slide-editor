@@ -378,8 +378,26 @@
     if (absolutizeAssets) absolutizeExportAssetUrls(clone);
     removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
+    persistFlatRootHeightOnExport(clone);
 
     return clone;
+  }
+
+  // v2.15 — a direct-child unlock keeps the LIVE flat root inline-clean:
+  // its measured height lives in the FLAT_ROOT_HEIGHT_ATTR marker plus a
+  // dynamic rule in editor-owned CSS. Exports drop the editor root (and its
+  // CSS) and sweep every data-wfp-edit-* attribute, so the exported page
+  // would re-collapse and reflow content below the root. Convert the marker
+  // into inline height on the CLONE only, before the attribute sweep. Named
+  // distinctly from PR #14's flat-position-context persistence so the two
+  // sit side by side once that lands.
+  function persistFlatRootHeightOnExport(clone) {
+    clone.querySelectorAll(`[${FLAT_ROOT_HEIGHT_ATTR}]`).forEach((el) => {
+      const value = parseFloat(el.getAttribute(FLAT_ROOT_HEIGHT_ATTR));
+      if (Number.isFinite(value) && value >= 0) {
+        el.style.height = `${value}px`;
+      }
+    });
   }
 
   function stripEditorArtifactsFromDocument(clone) {

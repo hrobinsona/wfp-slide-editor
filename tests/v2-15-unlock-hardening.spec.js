@@ -21,7 +21,13 @@
 // Load pattern follows tests/v2-4-modes.spec.js (public fixtures served by
 // the dev server, editor injected via addScriptTag).
 import { test, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { EDITOR_PATH, disableFsa } from './_helpers.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const OUTPUT_DIR = path.join(__dirname, 'output');
 
 const ROOT = '#wfp-editor-root';
 const RESET_BTN = `${ROOT} .wfpe-inspector .wfpe-reset-btn`;
@@ -421,5 +427,143 @@ test.describe('v2.15 — body-as-flat-root pinning skips editor and non-rendered
     }));
     expect(dragged.position).toBe('absolute');
     expect(dragged.frozen).toBe('true');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round — flat-root height persistence. Pinning every child of the
+// flat root absolute collapses the root's intrinsic height, so BODY-LEVEL
+// siblings of the root (header/main/footer pages) reflowed: the footer
+// jumped up by the root's full content height. The height must be held
+// WITHOUT inline styles on the live root, and must survive export (where
+// editor CSS and data-wfp-edit-* markers are gone).
+// ---------------------------------------------------------------------------
+
+// main carries stylesheet position:relative on purpose: the exported file
+// has no editor CSS, and the flat-position-context export persistence is a
+// separate change (PR #14). This spec verifies HEIGHT persistence on its
+// own terms, independent of that.
+async function loadHeaderMainFooterPage(page) {
+  await disableFsa(page);
+  await page.setContent(`
+    <!doctype html>
+    <html>
+    <head><style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      header { height: 80px; background: rgb(221, 232, 240); }
+      main { position: relative; padding: 20px; background: rgb(251, 252, 253); }
+      .doc-block { height: 120px; margin: 0 0 20px; background: rgb(228, 236, 248); }
+      footer { height: 60px; background: rgb(204, 216, 224); }
+    </style></head>
+    <body>
+      <header>Page header</header>
+      <main id="doc-main">
+        <div class="doc-block" data-testid="doc-block-0">Block 0</div>
+        <div class="doc-block" data-testid="doc-block-1">Block 1</div>
+      </main>
+      <footer data-testid="page-footer">Page footer</footer>
+    </body>
+    </html>
+  `);
+  await page.addScriptTag({ path: EDITOR_PATH });
+  await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+  expect(await page.evaluate(() =>
+    document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root')
+  )).toBe('true');
+  await page.keyboard.press('e');
+}
+
+function getFooterTop(page) {
+  return page.evaluate(() =>
+    document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top
+  );
+}
+
+test.describe('v2.15 — flat-root height survives direct-child pinning', () => {
+  test('a direct-child drag keeps the footer anchored without inline styles on the root', async ({ page }) => {
+    await loadHeaderMainFooterPage(page);
+
+    const footerBefore = await getFooterTop(page);
+    const mainAttrsBefore = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return { style: main.getAttribute('style'), flexFrozen: main.getAttribute('data-wfp-edit-flex-frozen') };
+    });
+
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 40, 20);
+
+    const after = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return {
+        footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+        mainInlineStyle: main.getAttribute('style'),
+        mainHeight: main.getBoundingClientRect().height,
+        sibling: {
+          frozen: document.querySelector('[data-testid="doc-block-1"]').getAttribute('data-wfp-edit-frozen'),
+          top: document.querySelector('[data-testid="doc-block-1"]').getBoundingClientRect().top,
+        },
+      };
+    });
+
+    // The root's box held its pre-pin height, so the footer never moved…
+    expect(Math.abs(after.footerTop - footerBefore)).toBeLessThan(2);
+    expect(after.mainHeight).toBeGreaterThan(100);
+    // …and the live root is still inline-untouched.
+    expect(after.mainInlineStyle).toBeNull();
+    expect(after.sibling.frozen).toBe('true');
+
+    // Undo releases the held height along with the pins.
+    await page.keyboard.press('ControlOrMeta+z');
+    const undone = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return {
+        footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+        mainStyle: main.getAttribute('style'),
+        mainFlexFrozen: main.getAttribute('data-wfp-edit-flex-frozen'),
+        heightMarker: main.getAttribute('data-wfp-edit-flat-root-height'),
+        blockStyle: document.querySelector('[data-testid="doc-block-0"]').getAttribute('style'),
+      };
+    });
+    expect(Math.abs(undone.footerTop - footerBefore)).toBeLessThan(2);
+    expect(undone.mainStyle).toBe(mainAttrsBefore.style);
+    expect(undone.mainFlexFrozen).toBe(mainAttrsBefore.flexFrozen);
+    expect(undone.heightMarker).toBeNull();
+    expect(undone.blockStyle).toBeNull();
+  });
+
+  test('export after a direct-child drag preserves the footer position in the standalone file', async ({ page, context }) => {
+    await loadHeaderMainFooterPage(page);
+
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 40, 20);
+    const liveFooterTop = await getFooterTop(page);
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 8_000 });
+    await page.keyboard.press('ControlOrMeta+s');
+    const download = await downloadPromise;
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const outPath = path.join(
+      OUTPUT_DIR,
+      `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+    );
+    await download.saveAs(outPath);
+    const html = fs.readFileSync(outPath, 'utf-8');
+
+    // Editor residue is fully scrubbed; the held height became inline on the
+    // exported root (the only element allowed to gain inline style at
+    // export time, precisely because the live DOM never carries it).
+    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toContain('id="wfp-editor-root"');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${outPath}`);
+    const exported = await exportedPage.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      mainInlineHeight: document.querySelector('#doc-main').style.height,
+    }));
+    expect(exported.mainInlineHeight).not.toBe('');
+    expect(Math.abs(exported.footerTop - liveFooterTop)).toBeLessThanOrEqual(1);
+    await exportedPage.close();
   });
 });

@@ -316,6 +316,7 @@
         beforeStyle: el.getAttribute('style'),
         beforeFrozen: el.getAttribute('data-wfp-edit-frozen'),
         beforeFlexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+        beforeFlatRootHeight: el.getAttribute(FLAT_ROOT_HEIGHT_ATTR),
         pinnedStyle: null,
         isContainer: false,
         children: [],
@@ -481,6 +482,49 @@
     recordFlowPin(group, container);
   }
 
+  // v2.15 — with every flat-root child absolute, the root's intrinsic
+  // height collapses and BODY-LEVEL siblings of the root (header/main/
+  // footer pages) reflow. Hold the measured pre-pin height without inline
+  // styles on the live root: stamp a data-wfp-edit-* marker and back it
+  // with a dynamic rule in editor-owned CSS keyed to the marker's exact
+  // value (precedent: applyOverviewCellDimensions). Rules are additive and
+  // never removed — undo/Reset drop the ATTRIBUTE, which un-matches the
+  // selector, and redo re-matches it. The export scrubber converts the
+  // marker into inline height on the clone (persistFlatRootHeightOnExport)
+  // because exported files carry neither editor CSS nor markers.
+  let flatRootHeightStyleEl = null;
+  const flatRootHeightRuleValues = new Set();
+
+  function measureFlatRootCssHeight(rootEl) {
+    // offsetHeight is the border-box height; translate to a `height` value
+    // that reproduces it under the root's own box-sizing.
+    const cs = getComputedStyle(rootEl);
+    let cssHeight = rootEl.offsetHeight;
+    if (cs.boxSizing !== 'border-box') {
+      cssHeight -=
+        (parseFloat(cs.paddingTop) || 0) +
+        (parseFloat(cs.paddingBottom) || 0) +
+        (parseFloat(cs.borderTopWidth) || 0) +
+        (parseFloat(cs.borderBottomWidth) || 0);
+    }
+    return Math.max(0, Math.round(cssHeight * 100) / 100);
+  }
+
+  function applyFlatRootHeightHold(rootEl, cssHeight) {
+    const value = String(cssHeight);
+    if (!flatRootHeightStyleEl) {
+      flatRootHeightStyleEl = document.createElement('style');
+      root.appendChild(flatRootHeightStyleEl);
+    }
+    if (!flatRootHeightRuleValues.has(value)) {
+      flatRootHeightRuleValues.add(value);
+      flatRootHeightStyleEl.textContent += `
+        [${FLAT_ROOT_HEIGHT_ATTR}="${value}"] { height: ${value}px !important; }
+      `;
+    }
+    rootEl.setAttribute(FLAT_ROOT_HEIGHT_ATTR, value);
+  }
+
   // v2.15 — pinContainerChildren for the slide/flat root itself: identical
   // child pinning, but the root's inline style is never written. Native
   // slides own fixed 1920x1080 stylesheet dimensions, and the flat root's
@@ -497,6 +541,12 @@
     const childRects = snapshotChildOffsets(children, rootEl);
     const rootRectBefore = rootEl.getBoundingClientRect();
     touchElement(rootEl);
+    // Hold the flat root's height BEFORE the children leave the flow so
+    // content below the root never reflows, even transiently. Slides are
+    // excluded: they own explicit stylesheet dimensions and never collapse.
+    if (rootEl.getAttribute('data-wfp-edit-flat-root') === 'true') {
+      applyFlatRootHeightHold(rootEl, measureFlatRootCssHeight(rootEl));
+    }
     pinSnapshottedChildren(childRects, group);
 
     // A padding-less root (typically document.body) can itself move when its
@@ -534,7 +584,8 @@
     return (
       record.el.getAttribute('style') === record.beforeStyle &&
       record.el.getAttribute('data-wfp-edit-frozen') === record.beforeFrozen &&
-      record.el.getAttribute('data-wfp-edit-flex-frozen') === record.beforeFlexFrozen
+      record.el.getAttribute('data-wfp-edit-flex-frozen') === record.beforeFlexFrozen &&
+      record.el.getAttribute(FLAT_ROOT_HEIGHT_ATTR) === record.beforeFlatRootHeight
     );
   }
 
@@ -544,6 +595,7 @@
     else el.setAttribute('style', record.beforeStyle);
     restoreOptionalAttribute(el, 'data-wfp-edit-frozen', record.beforeFrozen);
     restoreOptionalAttribute(el, 'data-wfp-edit-flex-frozen', record.beforeFlexFrozen);
+    restoreOptionalAttribute(el, FLAT_ROOT_HEIGHT_ATTR, record.beforeFlatRootHeight);
   }
 
   function restoreFlowUnlockGroup(group, selectedEl) {

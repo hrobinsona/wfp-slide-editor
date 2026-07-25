@@ -125,11 +125,29 @@ idempotency/restore latch containers use; it restores through the ordinary
 unlock-group machinery and is scrubbed on export. A static non-flat root
 cannot anchor absolute children without a write, so only in that case it falls
 back to the ordinary container pin (inline `position: relative` plus dimension
-locks). A root whose only child is the unlock target keeps the group-of-one
-safety net. Accepted tradeoff: with every child absolute, a flat root's
-intrinsic height collapses; content still renders at its pinned offsets and
-the page still scrolls to it, because absolutely-positioned descendants extend
-their containing block's scrollable overflow.
+locks); those inline writes survive export and freeze that root at its
+authoring-viewport dimensions — the same px-based tradeoff every container pin
+carries. A root with no pinnable sibling keeps the group-of-one safety net.
+
+Because the flat root can resolve to `document.body`, root-child pinning
+operates on a filtered pinnable list: editor-injected DOM (`#wfp-editor-root`)
+and non-rendered children (`script`/`style`/`link`/`meta`/`noscript`/
+`template`, or any 0x0-rect child) are excluded from the sibling-count guard,
+the group records, and the pin writes alike. The pin also re-anchors against
+the root's pre-pin viewport position: a padding-less root shifts when its
+first child's margin stops collapsing through it as the children leave the
+flow, and the compensation keeps the pinned children visually fixed.
+
+Pinning every child absolute would collapse the flat root's intrinsic height
+and reflow body-level siblings (header/main/footer pages). The measured
+pre-pin height is therefore held without inline styles on the live root: the
+root is stamped with `data-wfp-edit-flat-root-height` and a dynamic rule keyed
+to that exact value is appended to editor-owned CSS, so undo/Reset restore by
+removing the attribute while redo re-matches the still-present rule. Exports
+carry neither editor CSS nor markers, so the export clone converts the marker
+into inline `height` on the root before the attribute sweep — the one place
+the exported root gains inline style, precisely because the live root never
+does.
 
 The unlock itself is deadzone-gated for both drag and resize gestures: a
 handle or element mousedown records geometry only, and no transaction, style

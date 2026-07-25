@@ -61,6 +61,13 @@
     w: 'ew-resize',
   };
   const ROOT_ID = 'wfp-editor-root';
+  // v2.15 — a direct-child unlock pins every child of the flat root
+  // absolute, collapsing the root's intrinsic height. The measured height
+  // is held via this marker plus a dynamic rule in editor-owned CSS (the
+  // live root never gets inline styles); export converts the marker into
+  // inline height on the clone. Shared between the unlock engine and the
+  // export scrubber.
+  const FLAT_ROOT_HEIGHT_ATTR = 'data-wfp-edit-flat-root-height';
   const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
