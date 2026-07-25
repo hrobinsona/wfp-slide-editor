@@ -97,6 +97,15 @@
       '<path d="M18 6 6 18" />' +
       '<path d="m6 6 12 12" />' +
       '</svg>',
+    grip:
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="8" cy="7" r="1.5" />' +
+      '<circle cx="16" cy="7" r="1.5" />' +
+      '<circle cx="8" cy="12" r="1.5" />' +
+      '<circle cx="16" cy="12" r="1.5" />' +
+      '<circle cx="8" cy="17" r="1.5" />' +
+      '<circle cx="16" cy="17" r="1.5" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -187,6 +196,7 @@
   // shared column handles for free — independently fixed elements can't.
   const stack = document.createElement('div');
   stack.className = 'wfpe-stack';
+  stack.dataset.side = 'right';
   stack.appendChild(toolbar);
   root.appendChild(stack);
 
@@ -248,6 +258,7 @@
   inspector.className = 'wfpe-inspector';
   inspector.dataset.visible = 'false';
   inspector.dataset.state = 'expanded';
+  inspector.dataset.avoidance = 'clear';
 
   const inspectorHeader = document.createElement('div');
   inspectorHeader.className = 'wfpe-inspector-header';
@@ -735,6 +746,7 @@
     toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
     exportMenu.dataset.abovePanel = String(inspectorVisible);
     inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
+    positionInspectorStack();
   }
   function openExportMenu() {
     state.exportMenuOpen = true;
@@ -1058,7 +1070,9 @@
     saveAnnotation(getAnnotationEditorTarget(), annotationTextarea.value);
   });
   annotationTextarea.addEventListener('input', () => {
+    autoGrowAnnotationTextarea();
     updateAnnotationDraftStatus(getAnnotationEditorTarget());
+    positionInspectorStack();
   });
   annotationDeleteBtn.addEventListener('click', (e) => {
     e.preventDefault();

@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.14)
+# Requirements: Current Product Contract (v2.14.2)
 
 ## Goal
 
@@ -36,6 +36,9 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 
 - Fixed ink-glass toolbar mounted under `#wfp-editor-root`.
 - Controls: Edit, Overview, Export, Undo, Redo.
+- The toolbar and inspector move as one stable side-docked instrument when
+  necessary to keep a resting selection visible; the toolbar itself never
+  fades.
 - Toolbar controls never become slide selection targets.
 - All editor UI is removed from exported HTML.
 
@@ -84,9 +87,21 @@ The inspector is visible when an element is selected and supports:
 - Duplicate selected element.
 - Delete selected element.
 - Agent note save/delete for focused handoff annotations.
+- The Agent note authoring area grows with the draft up to a compact bound,
+  then scrolls, so realistic multi-line instructions can be proofread at
+  1280×720 without pushing the inspector off-screen.
 - Minimise/expand state remembered within the editor session.
 
 Inspector clicks must not accidentally select slide content or end inline text editing unless that is the intended control behaviour.
+
+At rest, the editor instrument stays on its current viewport side while that
+side is clear, and moves to the opposite side when the selected element would
+otherwise sit beneath it. If both side positions overlap an unusually wide
+selection, only the inspector uses a visibly translucent fallback that restores
+on deliberate hover/focus; the toolbar remains fully opaque. Placement is
+re-evaluated after selection/layout changes, viewport changes, Overview
+transitions, note auto-growth, and inspector minimise/expand without oscillating
+between clear positions.
 
 ### Adaptive Inspector Fade (v2.12)
 
@@ -145,6 +160,8 @@ Inspector clicks must not accidentally select slide content or end inline text e
 
 - Overview mode displays all slides in a grid without permanently wrapping or cloning the slide deck.
 - Thumbnail grid uses the v2 ink-glass visual language.
+- Every thumbnail persistently shows a concise drag grip and delete control;
+  neither capability depends on hover for discovery.
 - Click a thumbnail to make that slide active and return to normal slide view.
 - Drag thumbnails to reorder slides.
 - Delete a slide from its thumbnail `x` button, or with Backspace/Delete when a thumbnail delete target is active.

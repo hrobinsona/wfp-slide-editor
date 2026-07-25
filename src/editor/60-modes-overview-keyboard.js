@@ -105,6 +105,12 @@
       badge.className = 'wfpe-overview-badge';
       badge.textContent = String(i + 1);
       thumb.appendChild(badge);
+      const dragHandle = document.createElement('span');
+      dragHandle.className = 'wfpe-overview-drag-handle';
+      dragHandle.title = `Drag slide ${i + 1} to reorder`;
+      dragHandle.setAttribute('aria-hidden', 'true');
+      dragHandle.innerHTML = ICONS.grip;
+      thumb.appendChild(dragHandle);
       // Delete button (v2.1.4). Carries the slide index so the click
       // handler can resolve the live .deck child without walking the
       // DOM up from event.target.

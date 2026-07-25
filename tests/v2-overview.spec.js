@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, EDITOR_PATH } from './_helpers.js';
 
 // v2.1.0 — Activation + toolbar Overview button.
 // - Hotkey `O` toggles overview from any state (edit on or off).
@@ -13,6 +13,13 @@ import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
 const overviewBtnSel = '#wfp-editor-root .wfpe-toolbar [data-action="overview"]';
 const editBadgeSel = '#wfp-editor-root .wfpe-mode-badge';
 const ringSel = '#wfp-editor-root .wfpe-selection-ring';
+
+async function loadSanitizedForeignDeck(page) {
+  await page.goto('/fixtures/foreign-deck.html');
+  await page.locator('.presentation > .slide').first().waitFor({ state: 'attached' });
+  await page.addScriptTag({ path: EDITOR_PATH });
+  await page.waitForFunction(() => window.__wfpEditorReady === true);
+}
 
 test.describe('v2.1.0 — Overview activation', () => {
   test('toolbar gains an Overview icon button between Edit and Export, defaulting to off', async ({ page }) => {
@@ -787,8 +794,8 @@ test.describe('v2.1.3 — Drag to reorder', () => {
 });
 
 // v2.1.4 — Delete slide. Strict TDD for logic; build-first for the
-// hover-revealed × button visual. Each thumb carries a Liquid-Glass
-// styled × button in its top-right corner. Clicking × deletes the
+// persistent drag/delete affordance visual. Each thumb carries a concise
+// drag grip and a Liquid-Glass × button. Clicking × deletes the
 // corresponding slide; Backspace / Delete while a thumb is hovered
 // (or focused) does the same. Last-slide guard with a toast. Active
 // fallback per BRIEF. One delete = one history entry, undoable via
@@ -817,27 +824,31 @@ test.describe('v2.1.4 — Delete slide', () => {
   // the deck without vertical scrolling becoming part of the assertion.
   test.use({ viewport: { width: 1920, height: 1080 } });
 
-  test('each thumb has a × button (hidden by default, revealed on hover)', async ({ page }) => {
-    await loadFixtureWithEditor(page, 'Townhall-1.html');
+  test('each thumb persistently shows a drag grip and × delete button', async ({ page }) => {
+    await disableFsa(page);
+    await loadSanitizedForeignDeck(page);
     await page.keyboard.press('o');
     await page.waitForFunction(() => {
       return document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0;
     });
 
-    const slideCount = await page.locator('.deck > .slide').count();
+    const slideCount = await page.locator('.presentation > .slide').count();
     const buttonCount = await page.locator(deleteBtnSel).count();
+    const handleCount = await page.locator('#wfp-editor-root .wfpe-overview-drag-handle').count();
     expect(buttonCount).toBe(slideCount);
+    expect(handleCount).toBe(slideCount);
 
-    // Default state: hidden.
     const firstBtnDisplay = await page.locator(deleteBtnSel).first().evaluate((el) => getComputedStyle(el).display);
-    expect(firstBtnDisplay).toBe('none');
-
-    // Hover a thumb → its × becomes visible.
-    const hovered = await hoverThumb(page, 2);
-    const hoveredBtnDisplay = await hovered
-      .locator('.wfpe-overview-delete')
+    const firstHandleDisplay = await page.locator('#wfp-editor-root .wfpe-overview-drag-handle')
+      .first()
       .evaluate((el) => getComputedStyle(el).display);
-    expect(hoveredBtnDisplay).not.toBe('none');
+    expect(firstBtnDisplay).not.toBe('none');
+    expect(firstHandleDisplay).not.toBe('none');
+
+    const download = await triggerExport(page);
+    const html = await readExportedHtml(download);
+    expect(html).not.toContain('wfpe-overview-drag-handle');
+    expect(html).not.toContain('wfpe-overview-delete');
   });
 
   test('clicking × deletes the slide and rebuilds the overlay', async ({ page }) => {
@@ -1228,6 +1239,7 @@ test.describe('v2.1.5 — Export round-trip', () => {
     expect(html).not.toContain('wfpe-overview-thumb');
     expect(html).not.toContain('wfpe-overview-overlay');
     expect(html).not.toContain('wfpe-overview-delete');
+    expect(html).not.toContain('wfpe-overview-drag-handle');
     expect(html).not.toContain('wfpe-overview-badge');
     expect(html).not.toContain('wfpe-overview-drop-indicator');
     // No data-wfp-edit-* anywhere.

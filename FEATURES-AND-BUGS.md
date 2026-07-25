@@ -49,21 +49,46 @@ reorder/delete; v2.13 makes it more visible. Candidate: detect and re-run
 the deck's own counter update where a hook exists (`foreignFixtureShow`
 style globals), or document as a known foreign-deck limitation.
 
-## Open — bugs
-
-### Stale annotation-marker size assertions (16px vs 13px)
-
-- **Status:** open — spun off as a background task chip on 2026-07-24
-- **Raised:** 2026-07-24, found by the runnable-subset regression run
-
-`tests/v2-agent-annotations.spec.js` ("…are undoable", ~line 171) asserts
-the annotation badge is 16×16px, but commit `379a2a4` (v2.12.2 coral-glass
-note dot) restyled `.wfpe-annotation-badge` to 13×13px
-(`src/editor/20-dom-css.js`). The restyle is intentional per its commit
-message, so the test is stale, not the code. Test-only fix; check the spec
-for other 16px badge references.
-
 ## Resolved
+
+### Annotation-marker visual assertion lagged the shipped 13px coral dot
+
+- **Status:** fixed 2026-07-25 (test hardening; branch `codex/fix-editor-usability`)
+- **Raised:** 2026-07-24, runnable-subset regression run
+
+The annotation spec now asserts the v2.12.2 13×13px coral-glass marker and
+its shipped `#f0685b` centre colour rather than the retired 16px recipe.
+
+### Inspector obscured top-right selections before a gesture
+
+- **Status:** fixed 2026-07-25 (ISS-003; branch `codex/fix-editor-usability`)
+- **Raised:** 2026-07-24, sanitized foreign-deck usability QA
+
+The editor instrument now chooses a stable left/right dock at rest, retaining
+its current side while clear and moving only when the opposite side avoids the
+selection. A viewport-spanning selection uses a translucent inspector-only
+fallback; the toolbar stays opaque and the existing during-gesture adaptive
+fade/value tag remains intact.
+
+### Agent-note drafts were cramped for realistic instructions
+
+- **Status:** fixed 2026-07-25 (ISS-004; branch `codex/fix-editor-usability`)
+- **Raised:** 2026-07-24, sanitized foreign-deck usability QA
+
+The note textarea now grows from its compact baseline to a viewport-aware bound
+before scrolling. A roughly 136-character instruction remains directly
+proofreadable at 1280×720 while saved/draft, Escape, reply, save, and delete
+behaviour continue through the existing annotation paths.
+
+### Overview reorder/delete depended on hover discovery
+
+- **Status:** fixed 2026-07-25 (ISS-005; branch `codex/fix-editor-usability`)
+- **Raised:** 2026-07-24, sanitized foreign-deck usability QA
+
+Each editor-owned thumbnail now persistently shows a concise drag grip and its
+delete button. The full thumbnail remains the native drag source, and existing
+click navigation, focus, hover, keyboard delete, last-slide guard, and export
+cleanup paths are unchanged.
 
 ### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 

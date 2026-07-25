@@ -49,6 +49,14 @@
       gap: 1px;                  /* the seams */
       pointer-events: none;
     }
+    /* v2.14.2 — rest-state selection avoidance. The instrument begins at
+       the familiar right edge, but can move as one stable unit to the left
+       edge when the selected element occupies its footprint. */
+    #${ROOT_ID} .wfpe-stack[data-side="left"] {
+      right: auto;
+      left: 16px;
+      align-items: flex-start;
+    }
     #${ROOT_ID} .wfpe-toolbar {
       width: 214px;              /* collapsed: 58px via [data-collapsed];
                                     v2.11.1: 246 - 32 after Handoff merged
@@ -426,6 +434,16 @@
        85-adaptive-fade). Pointer-events stay live. After the suppressed
        rule so a mid-gesture fade wins over the export-menu dim. */
     #${ROOT_ID} .wfpe-inspector[data-fade="true"] { opacity: 0.16; }
+    /* Extremely wide selections can intersect both side docks. In that
+       case only the inspector becomes a readable outline at rest; the
+       toolbar remains the fully opaque editor anchor. */
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]) {
+      opacity: 0.18;
+    }
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):hover,
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):focus-within {
+      opacity: 1;
+    }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
@@ -796,8 +814,8 @@
     #${ROOT_ID} .wfpe-annotation-input {
       appearance: none;
       -webkit-appearance: none;
-      min-height: 42px;
-      max-height: 160px;
+      min-height: 52px;
+      max-height: 112px;
       box-sizing: border-box;
       width: 100%;
       padding: 6px 8px;
@@ -807,7 +825,8 @@
       box-shadow: inset 0 1px 2px rgba(0,0,0,0.22);
       font: 11px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: #fff;
-      resize: vertical;
+      resize: none;
+      overflow-y: hidden;
       outline: none;
     }
     #${ROOT_ID} .wfpe-annotation-input::placeholder { color: rgba(255,255,255,0.55); }
@@ -1293,6 +1312,33 @@
       opacity: 0.4;
       cursor: grabbing;
     }
+    /* Persistent drag cue. The full thumbnail remains the HTML5 drag
+       source; this compact top-centre grip makes that capability visible. */
+    #${ROOT_ID} .wfpe-overview-drag-handle {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 30px;
+      height: 22px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.68);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+      color: rgba(255, 255, 255, 0.92);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 1;
+    }
+    #${ROOT_ID} .wfpe-overview-drag-handle svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
     #${ROOT_ID} .wfpe-overview-thumb::after {
       content: '';
       position: absolute;
@@ -1340,8 +1386,8 @@
       transform: scale(1.06);
       outline: none;
     }
-    /* × delete button (v2.1.4) — Liquid Glass pill, top-right of each
-       thumb, revealed on thumb hover or focus. Same dark-glass tint as
+    /* × delete button (v2.1.4, persistent since v2.14.2) — Liquid Glass
+       pill, top-right of each thumb. Same dark-glass tint as
        the slide-number badge so they read as a matched pair (badge =
        passive label, × = active affordance). */
     #${ROOT_ID} .wfpe-overview-delete {
@@ -1361,16 +1407,11 @@
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
-      display: none;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
       z-index: 1;
       transition: background-color 120ms ease, transform 120ms ease;
-    }
-    #${ROOT_ID} .wfpe-overview-thumb:hover .wfpe-overview-delete,
-    #${ROOT_ID} .wfpe-overview-thumb:focus-within .wfpe-overview-delete,
-    #${ROOT_ID} .wfpe-overview-delete:focus {
-      display: inline-flex;
     }
     #${ROOT_ID} .wfpe-overview-delete:hover {
       background: rgba(15, 23, 42, 0.92);

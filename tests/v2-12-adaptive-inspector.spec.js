@@ -83,15 +83,17 @@ async function waitForRestore(page) {
 }
 
 // Reposition an (already absolutely positioned) harness element so its box
-// intersects the docked inspector's top-right footprint.
-async function moveUnderInspector(page, selector, left = 700, top = 40) {
+// spans both legal dock sides. This exercises the deliberate fallback path
+// while leaving ordinary one-sided selections free to trigger auto-placement.
+async function moveUnderInspector(page, selector, _left = 700, top = 40) {
   await page.evaluate(
-    ({ sel, l, t }) => {
+    ({ sel, t }) => {
       const el = document.querySelector(sel);
-      el.style.left = `${l}px`;
+      el.style.left = '0';
       el.style.top = `${t}px`;
+      el.style.width = '1280px';
     },
-    { sel: selector, l: left, t: top },
+    { sel: selector, t: top },
   );
 }
 
@@ -103,6 +105,63 @@ function elCenter(page, selector) {
 }
 
 test.describe('v2.12 — adaptive inspector fade', () => {
+  test('rest-state dock avoids a top-right selection, tracks geometry, and falls back without fading the toolbar', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadHarness(page);
+    await page.keyboard.press('e');
+
+    await selectByMouse(page, '.s1 .corner-noise', { x: 300, y: 40 });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-stack')?.dataset.side === 'left');
+
+    let state = await page.evaluate(() => {
+      const selection = document.querySelector('.s1 .corner-noise').getBoundingClientRect();
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector').getBoundingClientRect();
+      const stack = document.querySelector('#wfp-editor-root .wfpe-stack');
+      return {
+        side: stack.dataset.side,
+        overlaps: selection.right > inspector.left && selection.left < inspector.right &&
+          selection.bottom > inspector.top && selection.top < inspector.bottom,
+      };
+    });
+    expect(state.side).toBe('left');
+    expect(state.overlaps).toBe(false);
+
+    // Selection tracking re-evaluates geometry at rest and returns to the
+    // opposite side only once the current side becomes blocked.
+    await page.evaluate(() => {
+      const el = document.querySelector('.s1 .corner-noise');
+      el.style.right = 'auto';
+      el.style.left = '0';
+      el.style.width = '420px';
+    });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-stack')?.dataset.side === 'right');
+
+    // A viewport-spanning selection blocks both sides. The panel becomes
+    // non-obstructive, while the toolbar remains fully opaque.
+    await page.evaluate(() => {
+      const el = document.querySelector('.s1 .corner-noise');
+      el.style.left = '0';
+      el.style.right = '0';
+      el.style.width = 'auto';
+    });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-inspector')?.dataset.avoidance === 'overlap');
+    state = await page.evaluate(() => {
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const toolbar = document.querySelector('#wfp-editor-root .wfpe-toolbar');
+      return {
+        avoidance: inspector.dataset.avoidance,
+        inspectorOpacity: Number(getComputedStyle(inspector).opacity),
+        toolbarOpacity: Number(getComputedStyle(toolbar).opacity),
+      };
+    });
+    expect(state.avoidance).toBe('overlap');
+    expect(state.inspectorOpacity).toBeLessThanOrEqual(0.2);
+    expect(state.toolbarOpacity).toBe(1);
+  });
+
   test('drag fades the panel only while the element is under it, re-tested per move', async ({ page }) => {
     await loadHarness(page);
     await page.keyboard.press('e');

@@ -10,6 +10,7 @@ const OUTPUT_DIR = path.join(__dirname, 'output');
 const FIXTURE_PATH = path.join(PROJECT_ROOT, 'fixtures', 'foreign-deck.html');
 const NOTE = 'ANNOTATION TEST UNIQUE: review this rewritten subsection for clarity.';
 const NOTE_EDITED = 'ANNOTATION TEST UNIQUE: make this sharper and call out the missing point.';
+const PROOFREAD_NOTE = 'Tighten this paragraph, preserve the measured result, explain the comparison in plain language, and end with one concrete implication for readers.';
 
 const rowSel = '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]';
 const textareaSel = '#wfp-editor-root .wfpe-annotation-input';
@@ -122,6 +123,36 @@ function extractHandoffPayload(html) {
 }
 
 test.describe('v2.5 — agent handoff annotations', () => {
+  test('a realistic instruction auto-grows into a proofreadable area at 1280×720', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active h1');
+    // Let the dock's opening fold settle before Playwright focuses the
+    // textarea; otherwise scrollIntoView can programmatically scroll the
+    // still-clipped grid wrapper rather than the page a user actually sees.
+    await page.waitForTimeout(450);
+    await page.locator(textareaSel).fill(PROOFREAD_NOTE);
+
+    const metrics = await page.evaluate(() => {
+      const textarea = document.querySelector('#wfp-editor-root .wfpe-annotation-input');
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const rect = inspector.getBoundingClientRect();
+      return {
+        length: textarea.value.length,
+        clientHeight: textarea.clientHeight,
+        scrollHeight: textarea.scrollHeight,
+        overflowY: getComputedStyle(textarea).overflowY,
+        inspectorBottom: rect.bottom,
+      };
+    });
+    expect(metrics.length).toBeGreaterThanOrEqual(130);
+    expect(metrics.clientHeight).toBeGreaterThan(52);
+    expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
+    expect(metrics.overflowY).toBe('hidden');
+    expect(metrics.inspectorBottom).toBeLessThanOrEqual(720);
+    await expect(page.locator(statusSel)).toHaveText('Unsaved');
+  });
+
   test('annotation row visibility follows single selection, multi-select, and Overview', async ({ page }) => {
     await loadReady(page);
 
@@ -168,11 +199,11 @@ test.describe('v2.5 — agent handoff annotations', () => {
         tailContent: tail.content,
       };
     });
-    expect(markerStyle.width).toBe('16px');
-    expect(markerStyle.height).toBe('16px');
+    expect(markerStyle.width).toBe('13px');
+    expect(markerStyle.height).toBe('13px');
     expect(markerStyle.radius).toBe('50%');
     expect(markerStyle.background).toMatch(/radial-gradient/);
-    expect(markerStyle.background).toMatch(/244,\s*132,\s*123/);
+    expect(markerStyle.background).toMatch(/240,\s*104,\s*91/);
     expect(markerStyle.tailContent).toBe('none');
 
     await page.locator(textareaSel).fill(NOTE_EDITED);
