@@ -129,11 +129,18 @@ locks); those inline writes survive export and freeze that root at its
 authoring-viewport dimensions — the same px-based tradeoff every container pin
 carries. A root with no pinnable sibling keeps the group-of-one safety net.
 
-Because the flat root can resolve to `document.body`, root-child pinning
-operates on a filtered pinnable list: editor-injected DOM (`#wfp-editor-root`)
-and non-rendered children (`script`/`style`/`link`/`meta`/`noscript`/
-`template`, or any 0x0-rect child) are excluded from the sibling-count guard,
-the group records, and the pin writes alike. The pin also re-anchors against
+Every pin path — container and root alike — filters its child list: pinning
+editor-injected DOM (`#wfp-editor-root`) would destroy the overlay's
+`position: fixed`, and pinning a non-rendered child
+(`script`/`style`/`link`/`meta`/`noscript`/`template`) writes an inline style
+that survives export, because the export scrubber only removes
+`data-wfp-edit-*` attributes. Both exclusions apply to the group records and
+the pin writes alike, so the two always agree. The root path adds one more
+rule — 0x0-rect children are excluded — because the flat root can resolve to
+`document.body`, where a `display: none` panel must not count towards "is
+there a sibling worth protecting?". That rule is deliberately root-only: an
+ordinary container can hold an empty but layout-participating child whose pin
+still matters. The root pin also re-anchors against
 the root's pre-pin viewport position: a padding-less root shifts when its
 first child's margin stops collapsing through it as the children leave the
 flow, and the compensation keeps the pinned children visually fixed.

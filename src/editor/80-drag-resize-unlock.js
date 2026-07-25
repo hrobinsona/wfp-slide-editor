@@ -290,7 +290,7 @@
   }
 
   function snapshotChildOffsetsRelativeTo(container) {
-    return snapshotChildOffsets([...container.children], container);
+    return snapshotChildOffsets(getPinnableContainerChildren(container), container);
   }
 
   // v2.15 — the slide/flat root can be document.body (resolveFlatRoot's
@@ -298,17 +298,33 @@
   // elements are DIRECT siblings of the unlock target. Pinning must never
   // touch editor-injected DOM (inline position:absolute would destroy the
   // fixed overlay) or non-rendered elements (inline styles on <script> and
-  // friends would survive into exports). Root-child pinning and its group
-  // records both operate on this filtered list so they always agree.
+  // friends survive into exports — the export scrubber only removes
+  // data-wfp-edit-* attributes). Neither exclusion is root-specific: a
+  // static non-flat slide reaches pinContainerChildren with the same
+  // hazards, and an ordinary flex container can hold an inline <script>
+  // too, so EVERY pin path filters on the tag/editor-root rules.
   const NON_RENDERED_ROOT_CHILD_TAGS = new Set([
     'SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE',
   ]);
 
-  function isPinnableRootChild(child) {
+  function isPinnableContainerChild(child) {
     if (isInsideEditorRoot(child)) return false;
-    if (NON_RENDERED_ROOT_CHILD_TAGS.has(child.tagName)) return false;
+    return !NON_RENDERED_ROOT_CHILD_TAGS.has(child.tagName);
+  }
+
+  // The extra 0x0-rect rule is ROOT-ONLY on purpose: it exists so a hidden
+  // body-level panel doesn't count as a sibling worth protecting, and an
+  // ordinary container can legitimately hold an empty but layout-
+  // participating child (a zero-height flex spacer, a collapsed row) whose
+  // pin still matters.
+  function isPinnableRootChild(child) {
+    if (!isPinnableContainerChild(child)) return false;
     const rect = child.getBoundingClientRect();
     return rect.width > 0 || rect.height > 0;
+  }
+
+  function getPinnableContainerChildren(containerEl) {
+    return [...containerEl.children].filter(isPinnableContainerChild);
   }
 
   function getPinnableRootChildren(rootEl) {
@@ -398,7 +414,10 @@
     // style rather than an intermediate mechanical style.
     for (const container of containers) {
       const containerRecord = addFlowUnlockGroupMember(group, container, true);
-      containerRecord.children = [...container.children];
+      // Same filtered list pinContainerChildren pins, so records and pinning
+      // agree — an unpinned <script> must not appear as a group member whose
+      // retention could hold its container pinned on Reset.
+      containerRecord.children = getPinnableContainerChildren(container);
       for (const child of containerRecord.children) {
         addFlowUnlockGroupMember(group, child);
       }

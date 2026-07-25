@@ -480,6 +480,20 @@ function getFooterTop(page) {
   );
 }
 
+// Cmd+S with the FSA API disabled (see disableFsa) → legacy download.
+async function saveExportedHtml(page) {
+  const downloadPromise = page.waitForEvent('download', { timeout: 8_000 });
+  await page.keyboard.press('ControlOrMeta+s');
+  const download = await downloadPromise;
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+  const outPath = path.join(
+    OUTPUT_DIR,
+    `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+  );
+  await download.saveAs(outPath);
+  return { outPath, html: fs.readFileSync(outPath, 'utf-8') };
+}
+
 test.describe('v2.15 — flat-root height survives direct-child pinning', () => {
   test('a direct-child drag keeps the footer anchored without inline styles on the root', async ({ page }) => {
     await loadHeaderMainFooterPage(page);
@@ -642,6 +656,7 @@ async function loadStaticSlideDeck(page) {
           <h2 data-testid="static-heading">Static slide</h2>
           <div class="stack-item" data-testid="stack-item-0">Item 0</div>
           <div class="stack-item" data-testid="stack-item-1">Item 1</div>
+          <script data-testid="slide-script">window.__slideScriptRan = true;</script>
         </section>
         <section class="slide"><h2>Second</h2></section>
       </div>
@@ -710,5 +725,31 @@ test.describe('v2.15 — static non-flat slide root falls back to the container 
       headingStyle: null,
       itemStyle: null,
     });
+  });
+
+  // The container pin path must honour the same non-rendered/editor-DOM
+  // exclusions the root path does. A <script> child of the static slide used
+  // to be pinned as `position: absolute; ... width: 0px; height: 0px`, and
+  // that inline style survived export — the scrubber only removes
+  // data-wfp-edit-* attributes.
+  test('a script child of the static slide is never inline-styled, live or in the export', async ({ page }) => {
+    await loadStaticSlideDeck(page);
+
+    await page.locator('[data-testid="stack-item-0"]').click();
+    await dragBySelector(page, '[data-testid="stack-item-0"]', 45, 25);
+
+    // Sanity: the drag really did take the container pin path.
+    expect(await page.evaluate(
+      () => document.querySelector('.slide.active').getAttribute('data-wfp-edit-flex-frozen')
+    )).toBe('true');
+
+    expect(await page.locator('[data-testid="slide-script"]').evaluate((el) => ({
+      style: el.getAttribute('style'),
+      frozen: el.getAttribute('data-wfp-edit-frozen'),
+    }))).toEqual({ style: null, frozen: null });
+
+    const { html } = await saveExportedHtml(page);
+    expect(html).not.toMatch(/<script[^>]*\sstyle=/i);
+    expect(html).toContain('window.__slideScriptRan');
   });
 });
