@@ -208,6 +208,8 @@ the larger inspector.
 
 The v2.12 adaptive fade (design 7, `feature-briefs/v2.12-adaptive-inspector.md`, module `src/editor/85-adaptive-fade.js`) makes the docked panel get out of the way by itself: any live manipulation — drag-move, resize, font scrub/steppers, opacity slider, weight/align commits, inline text edit — sets `data-fade="true"` on `.wfpe-inspector` (opacity 0.16, pointer-events kept) and pins the coral `.wfpe-scrub-tag` value chip to the selection, restoring ~380ms after the gesture settles. The fade is overlap-gated: it only applies when the selection's bounding box intersects the inspector's live rect, re-tested on every move of a drag/resize and on every `input` of a text edit. The value tag shows regardless of overlap and display-suppresses the v2.2 dim bubble while visible (the bubble's `textContent` keeps tracking). The FONT field is scrubbable — drag left/right for ~1px per 3px, one history entry per gesture; a clean click still focuses the input for typed commits. The toolbar never fades.
 
+While an element sits selected, the R2 idle `requestAnimationFrame` loop dirty-checks the selection's and every known-annotated element's visibility and bounding rect each tick and only runs the full ring/inspector/marker refresh when one of those actually changed, so a stationary selection costs no continuous layout work; the check is deliberately geometry-only, so a host script changing a non-geometric style (opacity, colour, font-size) with no rect/visibility change and no editor event will not refresh the inspector's readouts until something else triggers a full refresh.
+
 ## Overview Mode
 
 Overview mode is a temporary editor surface for slide-level changes.

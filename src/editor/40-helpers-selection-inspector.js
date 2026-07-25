@@ -357,14 +357,25 @@
     marker.style.top = `${Math.max(4, top)}px`;
   }
 
+  // All elements bearing a saved annotation, regardless of current
+  // visibility (has a note, but not necessarily connected / on the active
+  // slide / on screen). getAnnotatedElements(document) is the expensive
+  // part — a document-wide attribute query — and refreshAnnotationMarkers()
+  // below is the only place that re-runs it, caching the unfiltered result
+  // on state.annotatedElementsCache (see 10-state.js for why it lives on
+  // state rather than a module let) so the idle selection-tracking tick
+  // (further down) never queries the document itself; it just re-checks
+  // each already-known element's current visibility and rect.
   function refreshAnnotationMarkers() {
     if (!annotationLayer) return;
     if (!state.editMode || state.overviewMode) {
       annotationLayer.replaceChildren();
+      state.annotatedElementsCache = [];
       return;
     }
     const activeSlide = getActiveSlide();
-    const annotated = getAnnotatedElements(document).filter((el) => isAnnotationMarkerVisibleFor(el, activeSlide));
+    state.annotatedElementsCache = getAnnotatedElements(document);
+    const annotated = state.annotatedElementsCache.filter((el) => isAnnotationMarkerVisibleFor(el, activeSlide));
     const existing = new Map(
       [...annotationLayer.querySelectorAll('.wfpe-annotation-badge')]
         .map((marker) => [marker.dataset.annotationId || '', marker])
@@ -422,6 +433,11 @@
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
+    // refreshExportUi() -> refreshAnnotationMarkers() just refreshed
+    // annotatedElementsCache; recapture the idle-tracking baseline now so
+    // the new/changed annotation is tracked immediately rather than only
+    // after the next unrelated full refresh.
+    startSelectionTracking();
     showToast(el, nextText ? 'Agent note saved.' : 'Agent note deleted.');
     return true;
   }
@@ -438,6 +454,7 @@
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
+    startSelectionTracking(); // keep the idle-tracking baseline current — see saveAnnotation
     showToast(el, 'Agent note deleted.');
     return true;
   }
@@ -923,6 +940,10 @@
   }
 
   let selectionRafId = 0;
+  // Rects captured right after the most recent full refresh, used by the
+  // idle tick below to detect whether anything actually moved before
+  // paying for another full refresh. Null while nothing is tracked.
+  let selectionTrackingSnapshot = null;
 
   function shouldTrackSelection() {
     return (
@@ -934,18 +955,111 @@
   }
 
   function stopSelectionTracking() {
+    selectionTrackingSnapshot = null;
     if (!selectionRafId) return;
     cancelAnimationFrame(selectionRafId);
     selectionRafId = 0;
   }
 
+  // ---------------------------------------------------------------------------
+  // Idle-tick dirty check (perf).
+  //
+  // Every frame while an element sits selected, this loop used to re-run
+  // the FULL refreshSelection() path — getComputedStyle reads, inspector
+  // input writes, autoGrowAnnotationTextarea's two forced reflows,
+  // positionInspectorStack's offset reads, and a document-wide annotation
+  // marker query — even when nothing had moved. That's continuous layout
+  // work for as long as anything stays selected.
+  //
+  // refreshSelection() itself and every event-driven call site (click,
+  // drag/resize commit, undo/redo, slide change, inspector commits, the
+  // v2.12 gesture fade, etc.) are untouched — those still force a full
+  // refresh immediately, exactly as before. Only the idle rAF loop gets
+  // cheaper: each tick just re-checks the selected element(s) and every
+  // known-annotated element's visibility + rect against the values cached
+  // from the last full refresh (no document query — annotatedElementsCache
+  // above already has the element list). Nothing changed → reschedule and
+  // do no other work. Something changed (the selection moved, a
+  // no-selection-change host animation moved/revealed/hid an annotated
+  // element) → run the full refreshSelection() exactly as before, which
+  // recaptures the baseline for the next tick. This is deliberately
+  // geometry-only: a host script changing a non-geometric style (e.g.
+  // opacity, colour, font-size) directly, with no rect/visibility change
+  // and no editor event, will not refresh the inspector's readouts until
+  // something else triggers a full refresh.
+  // ---------------------------------------------------------------------------
+  function rectsRoughlyEqual(a, b) {
+    return (
+      Math.abs(a.left - b.left) < 0.1 &&
+      Math.abs(a.top - b.top) < 0.1 &&
+      Math.abs(a.width - b.width) < 0.1 &&
+      Math.abs(a.height - b.height) < 0.1
+    );
+  }
+
+  // Tracks EVERY known-annotated element (not just the currently-visible
+  // ones) with its own visibility verdict, so an element that is revealed
+  // (or hidden) by host code with no other geometry change still flips
+  // the check below — not just elements that were already on screen.
+  function captureSelectionTrackingSnapshot() {
+    const activeSlide = getActiveSlide();
+    return {
+      members: getSelectedElements().map((el) => ({ el, rect: el.getBoundingClientRect() })),
+      annotated: state.annotatedElementsCache.map((el) => {
+        const visible = el.isConnected && isAnnotationMarkerVisibleFor(el, activeSlide);
+        return { el, visible, rect: visible ? el.getBoundingClientRect() : null };
+      }),
+    };
+  }
+
+  function selectionTrackingSnapshotIsStale(snapshot, members) {
+    if (!snapshot) return true;
+    if (members.length !== snapshot.members.length) return true;
+    for (let i = 0; i < members.length; i++) {
+      const cached = snapshot.members[i];
+      if (members[i] !== cached.el || !rectsRoughlyEqual(members[i].getBoundingClientRect(), cached.rect)) {
+        return true;
+      }
+    }
+    const activeSlide = getActiveSlide();
+    for (const entry of snapshot.annotated) {
+      const visible = entry.el.isConnected && isAnnotationMarkerVisibleFor(entry.el, activeSlide);
+      if (visible !== entry.visible) return true;
+      if (visible && !rectsRoughlyEqual(entry.el.getBoundingClientRect(), entry.rect)) return true;
+    }
+    return false;
+  }
+
   function startSelectionTracking() {
-    if (selectionRafId || !shouldTrackSelection()) return;
-    selectionRafId = requestAnimationFrame(() => {
-      selectionRafId = 0;
-      if (!shouldTrackSelection()) return;
+    if (!shouldTrackSelection()) return;
+    // Always refresh the baseline, even if a frame is already scheduled.
+    // Event-driven refreshes (e.g. every tick of a drag) call this too;
+    // without an unconditional recapture here, the idle loop's next tick
+    // would keep comparing against a pre-gesture snapshot and force one
+    // redundant extra full refresh right after the gesture ends.
+    selectionTrackingSnapshot = captureSelectionTrackingSnapshot();
+    if (selectionRafId) return;
+    selectionRafId = requestAnimationFrame(selectionTrackingTick);
+  }
+
+  function selectionTrackingTick() {
+    selectionRafId = 0;
+    // Inlines shouldTrackSelection()'s checks so getSelectedElements() (a
+    // slide-scoped query plus a per-member containment check) runs once
+    // per tick instead of twice.
+    if (!state.editMode || state.overviewMode || state.editingText) return;
+    const members = getSelectedElements();
+    if (!members.length) return;
+    if (selectionTrackingSnapshotIsStale(selectionTrackingSnapshot, members)) {
+      // Something moved (or selection membership changed) since the last
+      // snapshot — full refresh, exactly like every other call site.
+      // refreshSelection() re-invokes startSelectionTracking() itself,
+      // which recaptures the baseline and reschedules the next tick.
       refreshSelection();
-    });
+      return;
+    }
+    // Nothing changed — skip the expensive path and just keep watching.
+    selectionRafId = requestAnimationFrame(selectionTrackingTick);
   }
 
   function clearDisconnectedSelection() {
