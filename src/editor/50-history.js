@@ -150,6 +150,7 @@
       state.history.shift();
       state.historyIndex--;
     }
+    pruneInactiveFlowUnlockGroups();
   }
 
   function pushElementInsertEntry(op) {

@@ -110,6 +110,7 @@
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
     flowUnlockGroups: new WeakMap(), // Element → ordered unlock-group memberships. The latest active group owns Reset for that element; inactive entries remain only so undo/redo can reactivate their provenance.
+    flowUnlockGroupRegistry: new Set(), // Iterable companion used to prune inactive groups once no retained history transition can reactivate them. Pruning clears strong record→Element references, including detached members.
   };
   const deckContext = resolveDeckRoot();
   // ===========================================================================
@@ -117,6 +118,8 @@
   // ===========================================================================
   const root = document.createElement('div');
   root.id = ROOT_ID;
+  root.dataset.flowUnlockGroupCount = '0';
+  root.dataset.flowUnlockRecordCount = '0';
   Object.assign(root.style, {
     position: 'fixed',
     inset: '0',
@@ -4129,6 +4132,7 @@
       state.history.shift();
       state.historyIndex--;
     }
+    pruneInactiveFlowUnlockGroups();
   }
 
   function pushElementInsertEntry(op) {
@@ -4671,6 +4675,7 @@
       state.history.shift();
       state.historyIndex--;
     }
+    pruneInactiveFlowUnlockGroups();
     // Once any slide-level op lands, a deck's cached slide list (often
     // built once at script load via document.querySelectorAll) can be
     // stale relative to the live deck — its arrow-nav would index into
@@ -5592,6 +5597,41 @@
     if (!memberships.includes(group)) memberships.push(group);
   }
 
+  function refreshFlowUnlockDiagnostics() {
+    let recordCount = 0;
+    for (const group of state.flowUnlockGroupRegistry) {
+      recordCount += group.records.size;
+    }
+    root.dataset.flowUnlockGroupCount = String(state.flowUnlockGroupRegistry.size);
+    root.dataset.flowUnlockRecordCount = String(recordCount);
+  }
+
+  function pruneInactiveFlowUnlockGroups() {
+    if (state.flowUnlockGroupRegistry.size === 0) return;
+    const retainedByHistory = new Set();
+    for (const entry of state.history) {
+      for (const transition of entry.flowGroupStates || []) {
+        retainedByHistory.add(transition.group);
+      }
+    }
+
+    let pruned = false;
+    for (const group of [...state.flowUnlockGroupRegistry]) {
+      if (group.active || retainedByHistory.has(group)) continue;
+      for (const record of group.records.values()) {
+        const memberships = state.flowUnlockGroups.get(record.el);
+        if (!memberships) continue;
+        const index = memberships.indexOf(group);
+        if (index !== -1) memberships.splice(index, 1);
+        if (memberships.length === 0) state.flowUnlockGroups.delete(record.el);
+      }
+      group.records.clear();
+      state.flowUnlockGroupRegistry.delete(group);
+      pruned = true;
+    }
+    if (pruned) refreshFlowUnlockDiagnostics();
+  }
+
   function getActiveFlowUnlockGroup(el) {
     const memberships = state.flowUnlockGroups.get(el) || [];
     for (let i = memberships.length - 1; i >= 0; i--) {
@@ -5625,10 +5665,12 @@
     }
 
     if (group.records.size === 0) return getActiveFlowUnlockGroup(el);
+    state.flowUnlockGroupRegistry.add(group);
     for (const record of group.records.values()) {
       registerFlowUnlockGroupMember(group, record.el);
     }
     setFlowUnlockGroupActive(group, true);
+    refreshFlowUnlockDiagnostics();
     return group;
   }
 

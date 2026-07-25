@@ -395,6 +395,7 @@
       state.history.shift();
       state.historyIndex--;
     }
+    pruneInactiveFlowUnlockGroups();
     // Once any slide-level op lands, a deck's cached slide list (often
     // built once at script load via document.querySelectorAll) can be
     // stale relative to the live deck — its arrow-nav would index into

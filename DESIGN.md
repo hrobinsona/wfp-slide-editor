@@ -139,6 +139,22 @@ by later Reset commands. Consequently, a later ordinary edit resets through
 pre-unlock metadata. All eligible records and lifecycle transitions share one
 normal history entry, without replacing DOM nodes or disconnecting selection.
 
+Inactive provenance is retained only while history can reactivate it. Every
+history push performs redo truncation and the 50-entry cap eviction first,
+then scans retained lifecycle transitions. An inactive group with no remaining
+transition is removed from each member's membership stack, its records map is
+cleared, and it leaves the iterable registry; this releases all additional
+strong references owned by flow-unlock provenance, including group records for
+disconnected/deleted members. The pre-existing session edit ledger
+(`state.editedElements`) remains intentionally session-scoped and never pruned,
+as described under Handoff Ground Truth; this cleanup neither adds to nor
+redesigns that separate retention policy. Active groups are never pruned merely
+because their original unlock entry aged out — they still define live Reset
+behaviour. The editor root's `data-flow-unlock-group-count` and
+`data-flow-unlock-record-count` diagnostics expose the bounded provenance
+registry for fixture-driven lifecycle coverage and are removed with the rest
+of editor chrome on export.
+
 ## Inspector
 
 The inspector is an editor-owned control panel bound to `state.selected`. It writes directly to inline styles using DOM style APIs, not string replacement. Controls should commit predictable atomic history entries:

@@ -179,6 +179,16 @@ function getNestedFlowGroupState(page) {
   });
 }
 
+function getFlowUnlockDiagnostics(page) {
+  return page.evaluate(() => {
+    const root = document.querySelector('#wfp-editor-root');
+    return {
+      groups: Number(root.dataset.flowUnlockGroupCount),
+      records: Number(root.dataset.flowUnlockRecordCount),
+    };
+  });
+}
+
 async function expectSelectionConnected(page) {
   const selection = await page.evaluate(() => {
     const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
@@ -442,5 +452,69 @@ test.describe('v2.5 — reset styles (restore pre-edit original)', () => {
     await page.locator(RESET_BTN).click();
     expect(await getFlowGroupState(page)).toEqual(original);
     await expectSelectionConnected(page);
+  });
+
+  test('retired provenance is pruned after history eviction, including detached members', async ({ page }) => {
+    await addFlowUnlockGroup(page);
+    await selectByMouse(page, '[data-test-flow-item="plan"]');
+
+    // 31 unlock/reset pairs plus one early delete = 63 history entries.
+    // With HISTORY_MAX=50, only the newest 25 two-entry groups remain
+    // reactivatable. The first group's deleted Publish member must not keep
+    // that evicted group alive through its records map.
+    for (let i = 0; i < 31; i++) {
+      await dragBy(page, '[data-test-flow-item="plan"]', 22 + (i % 2), 12);
+      await page.locator(RESET_BTN).click();
+
+      if (i === 0) {
+        await selectByMouse(page, '[data-test-flow-item="publish"]');
+        await page.keyboard.press('Delete');
+        expect(await page.locator('[data-test-flow-item="publish"]').count()).toBe(0);
+        await selectByMouse(page, '[data-test-flow-item="plan"]');
+      }
+    }
+
+    const diagnostics = await getFlowUnlockDiagnostics(page);
+    expect(diagnostics.groups).toBe(25);
+    expect(diagnostics.records).toBe(75);
+  });
+
+  test('redo truncation prunes abandoned groups through element and slide history', async ({ page }) => {
+    await addFlowUnlockGroup(page);
+    const original = await getFlowGroupState(page);
+    await selectByMouse(page, '[data-test-flow-item="plan"]');
+
+    // An ordinary element entry truncates the redoable unlock.
+    await dragBy(page, '[data-test-flow-item="plan"]', 40, 20);
+    await page.keyboard.press('Control+z');
+    await setSelectedFontSize(page, 35);
+    expect(await getFlowUnlockDiagnostics(page)).toMatchObject({ groups: 0, records: 0 });
+    await page.locator(RESET_BTN).click();
+    expect(await getFlowGroupState(page)).toEqual(original);
+
+    // A slide-op entry uses a separate history-push path and must trigger the
+    // same cleanup after truncating a second redoable unlock.
+    await dragBy(page, '[data-test-flow-item="plan"]', 40, 20);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('o');
+    const beforeSlides = await page.locator('.deck > .slide').count();
+    await page.locator('#wfp-editor-root .wfpe-overview-add').last().click();
+    expect(await page.locator('.deck > .slide').count()).toBe(beforeSlides + 1);
+    expect(await getFlowUnlockDiagnostics(page)).toMatchObject({ groups: 0, records: 0 });
+    await page.keyboard.press('Escape');
+
+    // Cleanup must not weaken latest-active ownership for later overlapping
+    // groups created in the same session.
+    await addNestedFlowUnlockGroup(page);
+    await selectByMouse(page, '[data-test-nested-part="lane-a"]');
+    await dragBy(page, '[data-test-nested-part="lane-a"]', -50, 25);
+    await selectByMouse(page, '[data-test-nested-part="b1"]');
+    await dragBy(page, '[data-test-nested-part="b1"]', 25, 15);
+    const nestedFrozen = await getNestedFlowGroupState(page);
+    await selectByMouse(page, '[data-test-nested-part="lane-a"]');
+    await page.locator(RESET_BTN).click();
+    const resetOlderGroup = await getNestedFlowGroupState(page);
+    expect(resetOlderGroup.outer).toEqual(nestedFrozen.outer);
+    expect(resetOlderGroup['lane-b']).toEqual(nestedFrozen['lane-b']);
   });
 });

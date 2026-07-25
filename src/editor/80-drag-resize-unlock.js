@@ -291,6 +291,41 @@
     if (!memberships.includes(group)) memberships.push(group);
   }
 
+  function refreshFlowUnlockDiagnostics() {
+    let recordCount = 0;
+    for (const group of state.flowUnlockGroupRegistry) {
+      recordCount += group.records.size;
+    }
+    root.dataset.flowUnlockGroupCount = String(state.flowUnlockGroupRegistry.size);
+    root.dataset.flowUnlockRecordCount = String(recordCount);
+  }
+
+  function pruneInactiveFlowUnlockGroups() {
+    if (state.flowUnlockGroupRegistry.size === 0) return;
+    const retainedByHistory = new Set();
+    for (const entry of state.history) {
+      for (const transition of entry.flowGroupStates || []) {
+        retainedByHistory.add(transition.group);
+      }
+    }
+
+    let pruned = false;
+    for (const group of [...state.flowUnlockGroupRegistry]) {
+      if (group.active || retainedByHistory.has(group)) continue;
+      for (const record of group.records.values()) {
+        const memberships = state.flowUnlockGroups.get(record.el);
+        if (!memberships) continue;
+        const index = memberships.indexOf(group);
+        if (index !== -1) memberships.splice(index, 1);
+        if (memberships.length === 0) state.flowUnlockGroups.delete(record.el);
+      }
+      group.records.clear();
+      state.flowUnlockGroupRegistry.delete(group);
+      pruned = true;
+    }
+    if (pruned) refreshFlowUnlockDiagnostics();
+  }
+
   function getActiveFlowUnlockGroup(el) {
     const memberships = state.flowUnlockGroups.get(el) || [];
     for (let i = memberships.length - 1; i >= 0; i--) {
@@ -324,10 +359,12 @@
     }
 
     if (group.records.size === 0) return getActiveFlowUnlockGroup(el);
+    state.flowUnlockGroupRegistry.add(group);
     for (const record of group.records.values()) {
       registerFlowUnlockGroupMember(group, record.el);
     }
     setFlowUnlockGroupActive(group, true);
+    refreshFlowUnlockDiagnostics();
     return group;
   }
 
