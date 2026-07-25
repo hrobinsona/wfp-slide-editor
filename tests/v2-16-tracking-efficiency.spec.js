@@ -21,7 +21,13 @@ import { EDITOR_PATH } from './_helpers.js';
 //    and settles (rather than closing immediately) when that session was
 //    opened by keyboard, since a native range input fires `change`
 //    immediately after every keyboard-driven `input` — including every
-//    tick of OS key auto-repeat — unlike a mouse drag.
+//    tick of OS key auto-repeat — unlike a mouse drag. Holding state.txn
+//    open across that settle window is only safe because it is registered
+//    with 50-history.js's pending-txn-flush mechanism: any other gesture
+//    that calls beginTxn() while the window is open (a text edit, a drag)
+//    forces the pending session to finalize as its own history entry
+//    first, so it can neither merge an unrelated change into itself nor
+//    swallow another beginTxn() call's own options.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -129,19 +135,42 @@ test.describe('Selection tracking perf (idle dirty-check)', () => {
     // Annotate one element, then select a different one — the marker for
     // the annotated element must keep tracking even though it isn't the
     // selection driving the loop.
+    //
+    // Saving the annotation via direct DOM dispatch — not Playwright's
+    // locator .fill()/.click(), which perform a real scroll-into-view step
+    // first — matters here: that step's settle can still fire `scroll`
+    // events for several frames afterward, and the editor's own unrelated,
+    // pre-existing `window.addEventListener('scroll', refreshSelection,
+    // true)` (70-selection-events.js) would drive a full refresh on its
+    // own, masking whether the idle tick's annotated-element comparison
+    // does anything at all. The explicit scroll-count assertion below
+    // keeps that confound from silently coming back.
     await clickToSelect(page, '.slide.active .foreign-note');
-    await page.locator('#wfp-editor-root .wfpe-annotation-input').fill('Track me while unselected.');
-    await page.locator('#wfp-editor-root .wfpe-annotation-save-btn').click();
+    await page.evaluate(() => {
+      const textarea = document.querySelector('#wfp-editor-root .wfpe-annotation-input');
+      textarea.value = 'Track me while unselected.';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      document.querySelector('#wfp-editor-root .wfpe-annotation-save-btn').dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }),
+      );
+    });
     await clickToSelect(page, '.slide.active .resize-target');
     await expect(page.locator('#wfp-editor-root .wfpe-annotation-badge')).toHaveCount(1);
 
     await page.evaluate(() => {
+      window.__wfpeScrollCount = 0;
+      window.addEventListener('scroll', () => { window.__wfpeScrollCount += 1; }, true);
       const el = document.querySelector('.slide.active .foreign-note');
       const cs = getComputedStyle(el);
       el.style.left = `${(parseFloat(cs.left) || 0) + 30}px`;
     });
 
     await waitForAnimationFrames(page, 6);
+
+    // Confirms this test genuinely isolates the idle tick's own
+    // comparison: nothing else (scroll-triggered or otherwise) drove a
+    // refresh during the observation window.
+    expect(await page.evaluate(() => window.__wfpeScrollCount)).toBe(0);
 
     const marker = await page.evaluate(() => {
       const badge = document.querySelector('#wfp-editor-root .wfpe-annotation-badge');
@@ -249,14 +278,118 @@ test.describe('Opacity slider keyboard input', () => {
 
     const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
     await slider.focus();
-    await page.keyboard.press('ArrowLeft');
+    // ArrowRight, not ArrowLeft: starting on the first slide, the
+    // fixture's own nav script clamps ArrowLeft to a no-op regardless of
+    // whether the guard leaks, so it can't prove anything either way.
+    // ArrowRight would visibly advance to slide 2 if this leaked, which is
+    // what makes the assertion below load-bearing.
+    await page.keyboard.press('ArrowRight');
 
-    // ArrowLeft is the slide-navigation key outside the inspector; it must
-    // not have reached the fixture's own keydown handler while focused on
-    // the slider, i.e. the active slide must be unchanged.
     const stillOnFirstSlide = await page.evaluate(
       () => document.querySelector('.slide.active')?.id === 'foreign-slide-1',
     );
     expect(stillOnFirstSlide).toBe(true);
+  });
+
+  test('an opacity keyboard burst finalizes as its own entry when a text edit starts within the settle window', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .foreign-title');
+
+    const before = await readOpacity(page, '.slide.active .foreign-title');
+    const originalText = await page.evaluate(() => document.querySelector('.slide.active .foreign-title').textContent);
+
+    const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+    await slider.focus();
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    const afterPresses = await readOpacity(page, '.slide.active .foreign-title');
+    expect(afterPresses).toBeCloseTo(before - 0.02, 2);
+
+    // Start (and commit) a text edit on the SAME element WITHOUT waiting
+    // for the settle window to expire. Without the pending-txn-flush fix,
+    // beginTxn()'s reentry guard would let this silently reuse the
+    // opacity session's still-open transaction — captureHtml:true would
+    // never take effect, so no innerHTML snapshot is captured and the
+    // typed text becomes permanently un-undoable.
+    await page.evaluate(() => {
+      const el = document.querySelector('.slide.active .foreign-title');
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('dblclick', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+      }));
+    });
+    await page.evaluate(() => {
+      document.querySelector('.slide.active .foreign-title').textContent = 'EDITED TEXT';
+    });
+    await page.keyboard.press('Escape'); // commits the text edit (endTextEdit, not a revert)
+    expect(await page.evaluate(() => document.querySelector('.slide.active .foreign-title').textContent)).toBe('EDITED TEXT');
+
+    // One undo reverts the text edit — its own, separate entry — leaving
+    // the opacity change from before it untouched...
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => document.querySelector('.slide.active .foreign-title').textContent)).toBe(originalText);
+    expect(await readOpacity(page, '.slide.active .foreign-title')).toBeCloseTo(afterPresses, 2);
+
+    // ...and a second undo is the one that reverts the opacity burst.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readOpacity(page, '.slide.active .foreign-title')).toBeCloseTo(before, 2);
+  });
+
+  test('an opacity keyboard burst finalizes as its own entry when a drag starts within the settle window', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+
+    const before = await readOpacity(page, '.slide.active .resize-target');
+    const leftBefore = await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft);
+
+    const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+    await slider.focus();
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowLeft');
+    const afterPresses = await readOpacity(page, '.slide.active .resize-target');
+    expect(afterPresses).toBeCloseTo(before - 0.02, 2);
+
+    // Drag the SAME element WITHOUT waiting for the settle window to
+    // expire, via real mouse gestures — the drag's own mousedown calls
+    // preventDefault() (80-drag-resize-unlock.js), which suppresses the
+    // blur that would otherwise have flushed the opacity session another
+    // way, so this specifically exercises the pending-txn-flush fix
+    // rather than a blur-driven flush. Without the fix, beginTxn()'s
+    // reentry guard would let the drag silently merge into the opacity
+    // session's still-open transaction, so one undo would revert both the
+    // move and the opacity change together instead of as two steps.
+    const target = await page.evaluate(() => {
+      const el = document.querySelector('.slide.active .resize-target');
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    });
+    await page.mouse.move(target.x, target.y);
+    await page.mouse.down();
+    await page.mouse.move(target.x + 60, target.y + 40, { steps: 5 });
+    await page.mouse.up();
+
+    const leftAfterDrag = await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft);
+    expect(leftAfterDrag).not.toBe(leftBefore);
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(afterPresses, 2);
+
+    // The document-level keydown handler defers entirely to any focused
+    // <input> — the drag's preventDefault() kept focus on the slider
+    // throughout, so undo needs an explicit blur first, same as the other
+    // keyboard tests above.
+    await slider.evaluate((el) => el.blur());
+
+    // One undo reverts the drag — its own, separate entry — leaving the
+    // opacity change untouched...
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => document.querySelector('.slide.active .resize-target').offsetLeft)).toBe(leftBefore);
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(afterPresses, 2);
+
+    // ...and a second undo is the one that reverts the opacity burst.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
   });
 });
