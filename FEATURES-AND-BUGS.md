@@ -11,30 +11,6 @@ that a fresh session can act on it without archaeology.
 
 ## Open — behaviour iterations
 
-### Reset does not restore unlock-frozen sibling groups
-
-- **Status:** open
-- **Raised:** 2026-07-24, during the reset-warps-element bug fix
-
-Reset restores the selected element's inline `style` to its pre-edit
-original (`state.originalStyles`, captured at the element's first committed
-transaction). It is deliberately scoped to that one element: when a
-flow-layout element is dragged, `unlockToAbsolute`/`pinContainerChildren`
-(`src/editor/80-drag-resize-unlock.js`) pin its ancestor containers
-(explicit width/height, `position: relative`) and absolutely position every
-sibling, all marked `data-wfp-edit-frozen`/`data-wfp-edit-flex-frozen`.
-Resetting that element reverts only its own styles — the container stays
-pinned and siblings stay absolute, so the element re-enters flow inside a
-frozen container and can land somewhere unhelpful (e.g. stretched across a
-flex row as its only in-flow child).
-
-A fuller reset would restore the whole unlock group. The open design
-question: siblings edited *after* the freeze have their own intentional
-edits, and group-restore would silently revert them. Per-element originals
-already exist for every pinned element (recorded in the same transaction as
-the freeze), so the data is there; the policy isn't. See the scope comment
-above the reset handler in `src/editor/30-ui-inspector-controls.js`.
-
 ### Editor-owned nav leaves foreign slide counters stale
 
 - **Status:** open
@@ -64,6 +40,21 @@ message, so the test is stale, not the code. Test-only fix; check the spec
 for other 16px badge references.
 
 ## Resolved
+
+### Reset did not restore unlock-frozen sibling groups
+
+- **Status:** fixed 2026-07-25 (ISS-002; branch `codex/fix-flow-reset`)
+- **Raised:** 2026-07-24, during the reset-warps-element bug fix
+
+Reset previously restored only the selected element's inline style, leaving
+mechanically pinned siblings absolute and their container frozen. Flow unlock
+now records a group-wide pre-unlock snapshot plus each exact editor-written pin.
+Reset restores eligible members and obsolete freeze markers in one history
+transaction, with full undo/redo and connected selection. A member whose style
+diverged after pinning is preserved as a deliberate later edit; any container
+it still depends on also remains pinned. Synthetic Plan/Review/Publish coverage
+in `tests/v2-5-reset-styles.spec.js` exercises both full and partial group
+restoration.
 
 ### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 

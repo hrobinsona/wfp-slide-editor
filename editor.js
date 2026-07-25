@@ -109,6 +109,7 @@
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
+    flowUnlockGroups: new WeakMap(), // Element → latest unlock group containing it. Each group records pre-unlock styles/markers plus exact mechanical pin styles so Reset can restore eligible members atomically without discarding later sibling edits.
   };
   const deckContext = resolveDeckRoot();
   // ===========================================================================
@@ -2639,25 +2640,28 @@
     refreshInspector();
   });
 
-  // Reset restores the element's pre-edit inline style as one history
-  // entry. state.originalStyles holds the `style` attribute captured at
-  // the element's first committed change; no record means the editor
-  // never touched it, so an idle click can't mutate the element or push
-  // a no-op entry. The snapshot/endTxn pair makes the restore undoable
-  // via the existing snapshot machinery. Scoped to the style attribute by
-  // design: data-wfp-edit-* markers stay (export scrubs them), and
-  // unlock-frozen siblings/containers keep their pins — reset never
-  // touches elements other than the selected one.
+  // Reset restores an ordinary element's pre-edit inline style as one
+  // history entry. A flow-unlocked element delegates to its recorded unlock
+  // group so untouched mechanical pins and their freeze markers can return
+  // to the pre-unlock state in that same entry. Later deliberate sibling
+  // edits are retained; any container they still depend on stays pinned.
+  // No original/group record means the editor never touched the element, so
+  // an idle click cannot mutate it or push a no-op entry.
   resetBtn.addEventListener('click', (e) => {
     e.preventDefault();
     const el = state.selected;
     if (!el) return;
-    if (!state.originalStyles.has(el)) return; // never edited — already original
-    const original = state.originalStyles.get(el);
+    const unlockGroup = state.flowUnlockGroups.get(el);
+    if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
     const ctx = startInspectorTxn();
-    touchElement(el);
-    if (original === null) el.removeAttribute('style');
-    else el.setAttribute('style', original);
+    if (unlockGroup) {
+      restoreFlowUnlockGroup(unlockGroup, el);
+    } else {
+      const original = state.originalStyles.get(el);
+      touchElement(el);
+      if (original === null) el.removeAttribute('style');
+      else el.setAttribute('style', original);
+    }
     endInspectorTxn(ctx);
     refreshSelection();
   });
@@ -5530,7 +5534,62 @@
     });
   }
 
-  function pinContainerChildren(container) {
+  function addFlowUnlockGroupMember(group, el, isContainer = false) {
+    let record = group.records.get(el);
+    if (!record) {
+      record = {
+        el,
+        beforeStyle: el.getAttribute('style'),
+        beforeFrozen: el.getAttribute('data-wfp-edit-frozen'),
+        beforeFlexFrozen: el.getAttribute('data-wfp-edit-flex-frozen'),
+        pinnedStyle: null,
+        isContainer: false,
+        children: [],
+      };
+      group.records.set(el, record);
+    }
+    if (isContainer) record.isContainer = true;
+    return record;
+  }
+
+  function prepareFlowUnlockGroup(ancestors, el) {
+    const containers = ancestors.filter(
+      (container) => container.dataset.wfpEditFlexFrozen !== 'true'
+    );
+    const group = { records: new Map() };
+
+    // Snapshot the whole group before the first write. In nested layouts an
+    // outer pin mutates the inner container before that inner container is
+    // pinned itself; recording up front preserves the genuine pre-unlock
+    // style rather than an intermediate mechanical style.
+    for (const container of containers) {
+      const containerRecord = addFlowUnlockGroupMember(group, container, true);
+      containerRecord.children = [...container.children];
+      for (const child of containerRecord.children) {
+        addFlowUnlockGroupMember(group, child);
+      }
+    }
+
+    // A direct child of the slide has no ancestor container to pin, but the
+    // safety-net absolute conversion is still an unlock group of one.
+    if (group.records.size === 0 && getComputedStyle(el).position !== 'absolute') {
+      addFlowUnlockGroupMember(group, el);
+    }
+
+    if (group.records.size === 0) return state.flowUnlockGroups.get(el) || null;
+    for (const record of group.records.values()) {
+      state.flowUnlockGroups.set(record.el, group);
+    }
+    return group;
+  }
+
+  function recordFlowPin(group, el) {
+    if (!group) return;
+    const record = group.records.get(el);
+    if (record) record.pinnedStyle = el.getAttribute('style');
+  }
+
+  function pinContainerChildren(container, group = null) {
     if (container.dataset.wfpEditFlexFrozen === 'true') return;
 
     // CRITICAL: read every offset BEFORE any writes. Once we set
@@ -5569,9 +5628,75 @@
       // v2.14 — record the exact pinned style so the edit ledger can label
       // untouched pins as mechanical; any later user write diverges from it.
       state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
+      recordFlowPin(group, m.child);
     }
     container.dataset.wfpEditFlexFrozen = 'true';
     state.pinnedStyles.set(container, container.getAttribute('style'));
+    recordFlowPin(group, container);
+  }
+
+  function restoreOptionalAttribute(el, name, value) {
+    if (value === null) el.removeAttribute(name);
+    else el.setAttribute(name, value);
+  }
+
+  function flowUnlockRecordIsAtRest(record) {
+    return (
+      record.el.getAttribute('style') === record.beforeStyle &&
+      record.el.getAttribute('data-wfp-edit-frozen') === record.beforeFrozen &&
+      record.el.getAttribute('data-wfp-edit-flex-frozen') === record.beforeFlexFrozen
+    );
+  }
+
+  function restoreFlowUnlockRecord(record) {
+    const el = record.el;
+    if (record.beforeStyle === null) el.removeAttribute('style');
+    else el.setAttribute('style', record.beforeStyle);
+    restoreOptionalAttribute(el, 'data-wfp-edit-frozen', record.beforeFrozen);
+    restoreOptionalAttribute(el, 'data-wfp-edit-flex-frozen', record.beforeFlexFrozen);
+  }
+
+  function restoreFlowUnlockGroup(group, selectedEl) {
+    if (!group || !group.records) return;
+    const restorable = new Map();
+
+    for (const record of group.records.values()) {
+      const currentStyle = record.el.getAttribute('style');
+      // The selected element is the explicit reset target. Other members are
+      // mechanical only while they still equal the exact editor-written pin.
+      // A member already restored by a prior partial reset is also safe.
+      restorable.set(
+        record.el,
+        record.el === selectedEl ||
+          currentStyle === record.pinnedStyle ||
+          currentStyle === record.beforeStyle
+      );
+    }
+
+    // A pinned container is a positioning dependency, not just another
+    // mechanical style. If any direct child retains a later deliberate edit,
+    // keep the container pinned so that edit's containing block and visual
+    // position do not change underneath it. Repeat for nested containers.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const record of group.records.values()) {
+        if (!record.isContainer || !restorable.get(record.el)) continue;
+        const hasRetainedChild = record.children.some(
+          (child) => group.records.has(child) && !restorable.get(child)
+        );
+        if (hasRetainedChild) {
+          restorable.set(record.el, false);
+          changed = true;
+        }
+      }
+    }
+
+    for (const record of group.records.values()) {
+      if (!restorable.get(record.el) || flowUnlockRecordIsAtRest(record)) continue;
+      touchElement(record.el);
+      restoreFlowUnlockRecord(record);
+    }
   }
 
   function unlockToAbsolute(el) {
@@ -5594,8 +5719,9 @@
     }
     ancestors.reverse(); // outermost first
 
+    const unlockGroup = prepareFlowUnlockGroup(ancestors, el);
     for (const container of ancestors) {
-      pinContainerChildren(container);
+      pinContainerChildren(container, unlockGroup);
     }
 
     // After pinContainerChildren, `el` is one of the pinned children and
@@ -5618,6 +5744,7 @@
       el.style.height = `${height}px`;
       el.dataset.wfpEditFrozen = 'true';
       state.pinnedStyles.set(el, el.getAttribute('style')); // v2.14 — see pinContainerChildren
+      recordFlowPin(unlockGroup, el);
     }
 
     showToast(el, 'Unlocked. Now positioned absolutely.');

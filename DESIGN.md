@@ -114,6 +114,21 @@ When a user drags a flow-positioned element, including a flow element inside a m
 
 This is more complex than the original v1 sketch because real slide layouts use nested flex/grid structures. The behaviour is correct only if undo restores both the moved element and any touched containers without leaving stale selected DOM references.
 
+Flow-unlock Reset uses a separate session-only provenance map,
+`state.flowUnlockGroups`. Before the first pin write, the editor records every
+affected member's inline style and freeze-marker values, then records the exact
+style produced by pinning. This distinction matters because
+`state.originalStyles` is the pristine value before an element's first editor
+change, whereas a group reset needs the layout immediately before that unlock.
+Reset restores the selected member plus members whose current style still
+equals that mechanical pin; a later style divergence is treated as deliberate
+user intent and retained. Container records also carry their direct pinned
+children. A container is restored only when all of those children are safe to
+restore, otherwise it remains pinned as the containing block for the retained
+edit. All eligible records are touched inside one normal history transaction,
+so undo/redo round-trips the full reset without replacing DOM nodes or
+disconnecting selection.
+
 ## Inspector
 
 The inspector is an editor-owned control panel bound to `state.selected`. It writes directly to inline styles using DOM style APIs, not string replacement. Controls should commit predictable atomic history entries:
@@ -123,9 +138,10 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 - Typography weight/align segmented controls (v2.10).
 - Colour controls.
 - Opacity.
-- Reset inline styles to the pre-edit original (`state.originalStyles`
-  WeakMap, recorded at each element's first committed transaction in
-  `endTxn`).
+- Reset ordinary inline styles to the pre-edit original
+  (`state.originalStyles` WeakMap, recorded at each element's first committed
+  transaction in `endTxn`), or restore an eligible flow-unlock group from
+  `state.flowUnlockGroups`.
 - Agent note save/delete.
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
