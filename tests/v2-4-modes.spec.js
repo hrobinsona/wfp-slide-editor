@@ -757,6 +757,11 @@ test.describe('v2.4.3 — Flat document mode', () => {
 
     // The fix persists a style property, never the marker attribute.
     expect(exported.html).not.toContain('data-wfp-edit-flat-position-context');
+    // …and it stamps the CLONE only. Without this, a stamp applied to the live
+    // documentElement would satisfy every other assertion here.
+    expect(
+      await page.evaluate(() => document.querySelector('#flat-article').getAttribute('style')),
+    ).toBeNull();
 
     const exportedPage = await context.newPage();
     await exportedPage.goto(`file://${exported.path}`);

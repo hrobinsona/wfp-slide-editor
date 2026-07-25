@@ -280,9 +280,12 @@ block instead of re-anchoring to the viewport — the live root stays pristine.
 Asset absolutization is a property of the export's destination, not of the
 pipeline, so `buildExportHtml`/`buildHandoffExportHtml` take an
 `absolutizeAssets` option (default `true`). Downloads leave the deck's folder
-and need absolute URLs to keep resolving; save-in-place rewrites the source
-file in its own folder and passes `false`, keeping relative references
-relative so the deck survives being moved, renamed, or shared.
+and need absolute URLs to keep resolving; save-in-place normally rewrites the
+source file in its own folder and passes `false`, keeping relative references
+relative so the deck survives being moved, renamed, or shared. The picker can
+still bind a file in some other folder, which relative references would not
+survive — but baking one machine's absolute paths into the user's own source
+file is the worse default.
 
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
 
