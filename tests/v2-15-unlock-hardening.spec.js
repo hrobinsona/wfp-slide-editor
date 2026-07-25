@@ -834,3 +834,108 @@ test.describe('v2.15 — static non-flat slide root falls back to the container 
     expect(html).toContain('window.__slideScriptRan');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round — a stale flex-frozen latch on the root. A PARTIAL group Reset
+// keeps the root latched (one deliberately-edited child holds the container
+// record) while restoring its other children to flow. The latch then no
+// longer describes reality, and a later direct-child unlock that trusted it
+// skipped sibling pinning altogether: the restored siblings collapsed
+// upwards by a full block height.
+// ---------------------------------------------------------------------------
+
+async function loadPartialResetPage(page) {
+  await disableFsa(page);
+  await page.setContent(`
+    <!doctype html>
+    <html>
+    <head><style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      header { height: 40px; background: rgb(221, 232, 240); }
+      main { position: relative; padding: 16px; background: rgb(251, 252, 253); }
+      .doc-block { height: 90px; margin: 0 0 16px; background: rgb(228, 236, 248); }
+      footer { height: 40px; background: rgb(204, 216, 224); }
+    </style></head>
+    <body>
+      <header>Page header</header>
+      <main id="doc-main">
+        <div class="doc-block" data-testid="doc-block-0">Block 0</div>
+        <div class="doc-block" data-testid="doc-block-1">Block 1</div>
+        <div class="doc-block" data-testid="doc-block-2">Block 2</div>
+        <div class="doc-block" data-testid="doc-block-3">Block 3</div>
+      </main>
+      <footer data-testid="page-footer">Page footer</footer>
+    </body>
+    </html>
+  `);
+  await page.addScriptTag({ path: EDITOR_PATH });
+  await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+  await page.keyboard.press('e');
+}
+
+function getRootChildTops(page) {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('#doc-main > *')].map(
+      (el) => el.getBoundingClientRect().top
+    )
+  );
+}
+
+test.describe('v2.15 — a stale root latch does not disable sibling pinning', () => {
+  test('a direct-child unlock after a PARTIAL group Reset still pins the siblings left in flow', async ({ page }) => {
+    await loadPartialResetPage(page);
+
+    // 1. Unlock block 0 — pins all four children and latches the root.
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 30, 15);
+
+    // 2. Deliberately move an already-pinned sibling so Reset must retain it.
+    await page.locator('[data-testid="doc-block-2"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-2"]', 20, 10);
+
+    // 3. Reset block 0. Block 2's retained edit keeps the root's record (and
+    //    so its latch) while blocks 0, 1 and 3 go back into flow.
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await page.locator(RESET_BTN).click();
+    const afterReset = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return {
+        rootFlexFrozen: main.getAttribute('data-wfp-edit-flex-frozen'),
+        restoredToFlow: ['doc-block-0', 'doc-block-1', 'doc-block-3'].map(
+          (id) => document.querySelector(`[data-testid="${id}"]`).getAttribute('style')
+        ),
+        retained: document.querySelector('[data-testid="doc-block-2"]').getAttribute('data-wfp-edit-frozen'),
+      };
+    });
+    expect(afterReset.rootFlexFrozen).toBe('true');
+    expect(afterReset.restoredToFlow).toEqual([null, null, null]);
+    expect(afterReset.retained).toBe('true');
+
+    // 4. Unlock one of the siblings that returned to flow. The stale latch
+    //    must not suppress the pin: nothing else may move.
+    const topsBefore = await getRootChildTops(page);
+    const retainedStyleBefore = await page.evaluate(
+      () => document.querySelector('[data-testid="doc-block-2"]').getAttribute('style')
+    );
+    await page.locator('[data-testid="doc-block-1"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-1"]', 40, 20);
+    const topsAfter = await getRootChildTops(page);
+
+    for (const index of [0, 2, 3]) {
+      expect(Math.abs(topsAfter[index] - topsBefore[index])).toBeLessThan(2);
+    }
+    // The dragged block followed the pointer, and the siblings that were in
+    // flow got pinned; the retained one keeps its own edit untouched.
+    expect(topsAfter[1] - topsBefore[1]).toBeCloseTo(20, 0);
+    expect(await page.evaluate(() => ({
+      block0: document.querySelector('[data-testid="doc-block-0"]').getAttribute('data-wfp-edit-frozen'),
+      block3: document.querySelector('[data-testid="doc-block-3"]').getAttribute('data-wfp-edit-frozen'),
+      block2Style: document.querySelector('[data-testid="doc-block-2"]').getAttribute('style'),
+    }))).toEqual({
+      block0: 'true',
+      block3: 'true',
+      block2Style: retainedStyleBefore,
+    });
+  });
+});

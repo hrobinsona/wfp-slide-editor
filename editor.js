@@ -6298,10 +6298,12 @@
 
     // v2.15 — direct child of the slide/flat root: the root joins the group
     // as a container member (its flex-frozen latch must restore on Reset/
-    // undo) and each PINNABLE direct child is recorded — the same filtered
-    // list pinRootChildren pins, so records and pinning agree — but
-    // pinRootChildren never writes a style on the root itself.
-    if (rootChildPin && rootChildPin.rootEl.dataset.wfpEditFlexFrozen !== 'true') {
+    // undo) and every child pinRootChildren is about to pin is recorded, so
+    // records and pinning agree — but pinRootChildren never writes a style
+    // on the root itself. No latch check here: unlockToAbsolute only builds
+    // a rootChildPin when there is genuinely something to pin, including the
+    // stale-latch case where the root is already marked frozen.
+    if (rootChildPin) {
       const rootRecord = addFlowUnlockGroupMember(group, rootChildPin.rootEl, true);
       rootRecord.children = [...rootChildPin.children];
       for (const child of rootRecord.children) {
@@ -6487,14 +6489,21 @@
   // contract is "no inline root mutation" (its positioning context comes
   // from the fixture stylesheet or the editor's
   // data-wfp-edit-flat-position-context CSS). The root still takes the
-  // flex-frozen MARKER: it is the same idempotency latch containers use to
-  // skip re-pinning while an active group owns the children, it restores
-  // through the ordinary group/history machinery, and the export scrubber
-  // already strips every data-wfp-edit-* attribute.
+  // flex-frozen MARKER: it records that an active group owns the children,
+  // it restores through the ordinary group/history machinery, and the export
+  // scrubber already strips every data-wfp-edit-* attribute. Unlike a
+  // container's latch it is not treated as a skip signal — see
+  // unlockToAbsolute for why.
   function pinRootChildren(rootEl, children, group = null) {
-    if (rootEl.dataset.wfpEditFlexFrozen === 'true') return;
+    // No latch early-return: unlockToAbsolute passes only the children that
+    // still need pinning, so a latch left behind by a partial Reset must not
+    // suppress protection for the siblings that went back into flow. An
+    // already-present height marker DOES mean the hold is still in force,
+    // and re-measuring it against a half-pinned layout would be wrong.
+    const holdsHeight =
+      rootEl.getAttribute('data-wfp-edit-flat-root') === 'true' &&
+      !rootEl.hasAttribute(FLAT_ROOT_HEIGHT_ATTR);
 
-    const holdsHeight = rootEl.getAttribute('data-wfp-edit-flat-root') === 'true';
     const childRects = snapshotChildOffsets(children, rootEl);
     const rootRectBefore = rootEl.getBoundingClientRect();
     // Read the follow anchor BEFORE the height hold: applying an explicit
@@ -6658,20 +6667,27 @@
     // document.body, the editor overlay and <script> elements are direct
     // siblings that must count for nothing and never be pinned. A root with
     // no pinnable sibling keeps the group-of-one safety net.
+    //
+    // The root's flex-frozen latch is NOT consulted as a skip signal. It
+    // means "an active pin holds these children", and a partial group Reset
+    // can outlive that: one deliberately-edited child keeps the whole root
+    // latched (see restoreFlowUnlockGroup's container-retention pass) while
+    // its siblings are restored to flow. Trusting the stale latch skipped
+    // sibling protection entirely on the next unlock. The pin set is
+    // therefore recomputed from the children that are still pinned — the
+    // already-pinned ones are left untouched (re-pinning would clobber the
+    // user's edit) and only the in-flow remainder is pinned.
     let rootChildPin = null;
-    if (
-      ancestors.length === 0 &&
-      slide &&
-      el.parentElement === slide &&
-      slide.dataset.wfpEditFlexFrozen !== 'true'
-    ) {
-      const pinnableChildren = getPinnableRootChildren(slide);
-      if (pinnableChildren.length > 1) {
+    if (ancestors.length === 0 && slide && el.parentElement === slide) {
+      const unpinnedChildren = getPinnableRootChildren(slide).filter(
+        (child) => child.dataset.wfpEditFrozen !== 'true'
+      );
+      if (unpinnedChildren.length > 1) {
         const isFlatRoot = slide.getAttribute('data-wfp-edit-flat-root') === 'true';
         if (!isFlatRoot && getComputedStyle(slide).position === 'static') {
           ancestors.push(slide);
         } else {
-          rootChildPin = { rootEl: slide, children: pinnableChildren };
+          rootChildPin = { rootEl: slide, children: unpinnedChildren };
         }
       }
     }

@@ -120,9 +120,17 @@ with one difference: the root element itself never receives inline style
 writes. Native slides own fixed 1920x1080 stylesheet dimensions, and the flat
 root's contract is no inline root mutation (its positioning context comes from
 the fixture stylesheet or the editor's `data-wfp-edit-flat-position-context`
-CSS). The root does take the `data-wfp-edit-flex-frozen` marker as the same
-idempotency/restore latch containers use; it restores through the ordinary
-unlock-group machinery and is scrubbed on export. A static non-flat root
+CSS). The root does take the `data-wfp-edit-flex-frozen` marker, and it
+restores through the ordinary unlock-group machinery and is scrubbed on
+export — but unlike a container's it is not read back as a skip signal.
+A partial group Reset can leave it stale: one deliberately-edited child holds
+the root's container record (see the retention pass below) while its siblings
+are restored to flow, and trusting the latch then skipped sibling pinning on
+the next unlock entirely. The pin set is therefore recomputed each time from
+the children that are still frozen: already-pinned children are left alone so
+a user edit is never clobbered, and only the in-flow remainder is pinned. The
+equivalent latch on ordinary containers is still a plain skip, which is
+pre-existing behaviour and unchanged here. A static non-flat root
 cannot anchor absolute children without a write, so only in that case it falls
 back to the ordinary container pin (inline `position: relative` plus dimension
 locks); those inline writes survive export and freeze that root at its
@@ -140,10 +148,10 @@ rule — 0x0-rect children are excluded — because the flat root can resolve to
 `document.body`, where a `display: none` panel must not count towards "is
 there a sibling worth protecting?". That rule is deliberately root-only: an
 ordinary container can hold an empty but layout-participating child whose pin
-still matters. The root pin also re-anchors against
-the root's pre-pin viewport position: a padding-less root shifts when its
-first child's margin stops collapsing through it as the children leave the
-flow, and the compensation keeps the pinned children visually fixed.
+still matters. The root pin also re-anchors against the root's pre-pin
+viewport position: a padding-less root shifts when its first child's margin
+stops collapsing through it as the children leave the flow, and the
+compensation keeps the pinned children visually fixed.
 
 Pinning every child absolute would collapse the flat root's intrinsic height
 and reflow body-level siblings (header/main/footer pages). A height is
