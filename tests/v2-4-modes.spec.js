@@ -707,6 +707,66 @@ test.describe('v2.4.3 — Flat document mode', () => {
     expect(html).not.toContain('contenteditable=');
     expect(html).not.toContain('wfpe-overview');
   });
+
+  // The editor gives a statically-positioned flat root a positioning context
+  // through an editor-stylesheet rule keyed on
+  // data-wfp-edit-flat-position-context. Export drops both the editor CSS and
+  // the marker, so anything the unlock pinned against that root has to keep a
+  // containing block some other way or it re-anchors to the viewport.
+  test('flat document export keeps pinned root children anchored to the flat root', async ({ page, context }) => {
+    await loadDocumentWithEditor(page, 'flat-document.html');
+    await page.keyboard.press('e');
+
+    const hero = page.locator('.flat-hero');
+    // Direct child of the flat root — the unlock pins it straight against the
+    // root's editor-owned positioning context (no intermediate container).
+    expect(await hero.evaluate((el) => el.parentElement.id)).toBe('flat-article');
+
+    const box = await hero.boundingBox();
+    expect(box).not.toBeNull();
+    // Grab inside the hero's bottom padding: clear of its text children and
+    // clear of the fixed editor toolbar at the top of the viewport.
+    const grabX = box.x + 30;
+    const grabY = box.y + box.height - 30;
+    await page.mouse.move(grabX, grabY);
+    await page.mouse.down();
+    await page.mouse.move(grabX + 40, grabY, { steps: 5 });
+    await page.mouse.up();
+
+    const measureHero = () => {
+      const el = document.querySelector('.flat-hero');
+      const root = document.querySelector('#flat-article');
+      const r = el.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      return {
+        relLeft: r.left - rootRect.left,
+        relTop: r.top - rootRect.top,
+        offsetParentTag: el.offsetParent ? el.offsetParent.tagName : null,
+        offsetParentId: el.offsetParent ? el.offsetParent.id : null,
+        rootPosition: getComputedStyle(root).position,
+        inlinePosition: el.style.position,
+      };
+    };
+
+    const live = await page.evaluate(measureHero);
+    expect(live.inlinePosition).toBe('absolute');
+    expect(live.offsetParentId).toBe('flat-article');
+
+    const download = await triggerExport(page);
+    const exported = await saveExportedHtml(download);
+
+    // The fix persists a style property, never the marker attribute.
+    expect(exported.html).not.toContain('data-wfp-edit-flat-position-context');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${exported.path}`);
+    const after = await exportedPage.evaluate(measureHero);
+    await exportedPage.close();
+
+    expect(after.rootPosition === 'static' && after.offsetParentId !== 'flat-article').toBe(false);
+    expect(Math.abs(after.relLeft - live.relLeft)).toBeLessThanOrEqual(1);
+    expect(Math.abs(after.relTop - live.relTop)).toBeLessThanOrEqual(1);
+  });
 });
 
 test.describe('v2.4.4 — Cross-mode export round-trip', () => {
@@ -813,7 +873,10 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
     expect(state.hasDeck).toBe(false);
     expect(state.slideCount).toBe(0);
     expect(state.rootExists).toBe(true);
-    expect(state.rootInlineStyle).toBeNull();
+    // The export replaces the editor-CSS positioning context with the single
+    // inline declaration that reproduces it — and nothing else. The live root
+    // stays pristine (asserted in the v2.4.3 marker test above).
+    expect(state.rootInlineStyle).toBe('position: relative;');
     expect(state.calloutPosition).toBe('absolute');
     expect(state.calloutLeft).not.toBe('');
     expect(state.editorRoot).toBe(false);

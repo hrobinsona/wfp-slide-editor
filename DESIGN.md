@@ -269,6 +269,17 @@ progress-dot active classes, and runs the same recognized-counter formatter
 against the clone at index 0 and the exported slide total. The live document is
 not changed.
 
+Anything the editor expresses through its own stylesheet has to be re-expressed
+inline on the clone, because the export keeps neither the editor CSS nor the
+`data-wfp-edit-*` markers that key it. Flat mode is the one case: a statically
+positioned flat root gets its positioning context from the
+`data-wfp-edit-flat-position-context` rule, so the clone builder stamps
+`position: relative` into that root's inline style (merging, not replacing)
+before the attribute sweep runs. Without it, elements the unlock pinned
+directly against the flat root lose their containing block on export and
+re-anchor to the viewport. The live root itself stays free of inline style —
+only the clone is stamped.
+
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
 
 Normal export remains the production-clean artifact and strips all `data-wfp-edit-*` attributes, including live annotation markers. Agent handoff export runs the same cleanup path, then deliberately adds a narrow handoff layer:

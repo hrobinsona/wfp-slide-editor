@@ -6917,6 +6917,25 @@
     });
   }
 
+  // Flat mode gives a statically-positioned flat root its positioning context
+  // through an editor-stylesheet rule keyed on
+  // data-wfp-edit-flat-position-context — deliberately, so the live document
+  // keeps a pristine root with no inline style. The export drops both the
+  // editor CSS and (via the data-wfp-edit-* sweep) the marker, so anything the
+  // unlock pinned against that root would re-anchor to the viewport. Persist
+  // the context as an inline declaration on the CLONE only, the same way
+  // pinContainerChildren persists position:relative on pinned containers.
+  // Must run before stripEditorArtifactsFromDocument removes the marker.
+  function persistFlatPositionContext(root) {
+    root
+      .querySelectorAll('[data-wfp-edit-flat-position-context="true"]')
+      .forEach((el) => {
+        // setProperty merges into any existing inline style rather than
+        // replacing it.
+        el.style.setProperty('position', 'relative');
+      });
+  }
+
   function hasDynamicProgressDotBuilder(root) {
     return [...root.querySelectorAll('script')].some((script) => {
       const text = script.textContent || '';
@@ -6991,6 +7010,7 @@
     clone.querySelectorAll('[data-wfp-edit-script]').forEach((s) => s.remove());
     clone.querySelectorAll('script[src*="editor.js"]').forEach((s) => s.remove());
 
+    persistFlatPositionContext(clone);
     absolutizeExportAssetUrls(clone);
     removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
