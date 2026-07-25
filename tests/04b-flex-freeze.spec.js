@@ -120,11 +120,17 @@ test.describe('Flex/grid sibling freeze on first grab', () => {
     expect(frozenCount).toBeGreaterThanOrEqual(1);
 
     // Every direct child of every frozen container should be marked
-    // data-wfp-edit-frozen, since freezing snapshots them all.
+    // data-wfp-edit-frozen, since freezing snapshots them all — except the
+    // children no pin path may touch: non-rendered elements (v2.15; inline
+    // styles on <script> and friends would survive export) and editor DOM.
     const allChildrenStamped = await page.evaluate(() => {
+      const skipTags = ['SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE'];
+      const editorRoot = document.getElementById('wfp-editor-root');
       const parents = [...document.querySelectorAll('[data-wfp-edit-flex-frozen="true"]')];
       return parents.every((p) =>
-        [...p.children].every((c) => c.dataset.wfpEditFrozen === 'true'),
+        [...p.children]
+          .filter((c) => !skipTags.includes(c.tagName) && !(editorRoot && editorRoot.contains(c)))
+          .every((c) => c.dataset.wfpEditFrozen === 'true'),
       );
     });
     expect(allChildrenStamped).toBe(true);
