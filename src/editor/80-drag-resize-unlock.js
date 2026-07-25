@@ -269,8 +269,8 @@
     };
   }
 
-  function snapshotChildOffsetsRelativeTo(container) {
-    return [...container.children].map((child) => {
+  function snapshotChildOffsets(children, container) {
+    return children.map((child) => {
       const pos = getChildOffsetRelativeToContainer(child, container);
       return {
         child,
@@ -280,6 +280,32 @@
         height: child.offsetHeight,
       };
     });
+  }
+
+  function snapshotChildOffsetsRelativeTo(container) {
+    return snapshotChildOffsets([...container.children], container);
+  }
+
+  // v2.15 — the slide/flat root can be document.body (resolveFlatRoot's
+  // last fallback), where #wfp-editor-root and the page's own <script>
+  // elements are DIRECT siblings of the unlock target. Pinning must never
+  // touch editor-injected DOM (inline position:absolute would destroy the
+  // fixed overlay) or non-rendered elements (inline styles on <script> and
+  // friends would survive into exports). Root-child pinning and its group
+  // records both operate on this filtered list so they always agree.
+  const NON_RENDERED_ROOT_CHILD_TAGS = new Set([
+    'SCRIPT', 'STYLE', 'LINK', 'META', 'NOSCRIPT', 'TEMPLATE',
+  ]);
+
+  function isPinnableRootChild(child) {
+    if (isInsideEditorRoot(child)) return false;
+    if (NON_RENDERED_ROOT_CHILD_TAGS.has(child.tagName)) return false;
+    const rect = child.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0;
+  }
+
+  function getPinnableRootChildren(rootEl) {
+    return [...rootEl.children].filter(isPinnableRootChild);
   }
 
   function addFlowUnlockGroupMember(group, el, isContainer = false) {
@@ -352,7 +378,7 @@
     return null;
   }
 
-  function prepareFlowUnlockGroup(ancestors, el, rootChildPinTarget = null) {
+  function prepareFlowUnlockGroup(ancestors, el, rootChildPin = null) {
     const containers = ancestors.filter(
       (container) => container.dataset.wfpEditFlexFrozen !== 'true'
     );
@@ -372,11 +398,12 @@
 
     // v2.15 — direct child of the slide/flat root: the root joins the group
     // as a container member (its flex-frozen latch must restore on Reset/
-    // undo) and every direct child is recorded, but pinRootChildren never
-    // writes a style on the root itself.
-    if (rootChildPinTarget && rootChildPinTarget.dataset.wfpEditFlexFrozen !== 'true') {
-      const rootRecord = addFlowUnlockGroupMember(group, rootChildPinTarget, true);
-      rootRecord.children = [...rootChildPinTarget.children];
+    // undo) and each PINNABLE direct child is recorded — the same filtered
+    // list pinRootChildren pins, so records and pinning agree — but
+    // pinRootChildren never writes a style on the root itself.
+    if (rootChildPin && rootChildPin.rootEl.dataset.wfpEditFlexFrozen !== 'true') {
+      const rootRecord = addFlowUnlockGroupMember(group, rootChildPin.rootEl, true);
+      rootRecord.children = [...rootChildPin.children];
       for (const child of rootRecord.children) {
         addFlowUnlockGroupMember(group, child);
       }
@@ -464,12 +491,35 @@
   // skip re-pinning while an active group owns the children, it restores
   // through the ordinary group/history machinery, and the export scrubber
   // already strips every data-wfp-edit-* attribute.
-  function pinRootChildren(rootEl, group = null) {
+  function pinRootChildren(rootEl, children, group = null) {
     if (rootEl.dataset.wfpEditFlexFrozen === 'true') return;
 
-    const childRects = snapshotChildOffsetsRelativeTo(rootEl);
+    const childRects = snapshotChildOffsets(children, rootEl);
+    const rootRectBefore = rootEl.getBoundingClientRect();
     touchElement(rootEl);
     pinSnapshottedChildren(childRects, group);
+
+    // A padding-less root (typically document.body) can itself move when its
+    // children leave the flow: the first child's margin no longer collapses
+    // through it, so the root's border box slides up by that collapsed
+    // margin and every pinned child — positioned relative to the root —
+    // slides with it. Compensate by re-anchoring the pins against the
+    // root's PRE-PIN viewport position so the visual result stays fixed.
+    const rootRectAfter = rootEl.getBoundingClientRect();
+    const scale = getCanvasScale() || 1;
+    const shiftX = (rootRectBefore.left - rootRectAfter.left) / scale;
+    const shiftY = (rootRectBefore.top - rootRectAfter.top) / scale;
+    if (Math.abs(shiftX) > 0.5 || Math.abs(shiftY) > 0.5) {
+      for (const m of childRects) {
+        m.child.style.left = `${m.left + shiftX}px`;
+        m.child.style.top = `${m.top + shiftY}px`;
+        // Refresh the mechanical-pin records: the label and Reset paths
+        // compare exact style strings, which the compensation just changed.
+        state.pinnedStyles.set(m.child, m.child.getAttribute('style'));
+        recordFlowPin(group, m.child);
+      }
+    }
+
     rootEl.dataset.wfpEditFlexFrozen = 'true';
     state.pinnedStyles.set(rootEl, rootEl.getAttribute('style'));
     recordFlowPin(group, rootEl);
@@ -577,30 +627,35 @@
     // from the editor's data-wfp-edit-flat-position-context CSS). A static
     // NON-flat root cannot anchor absolute children without a write, so it
     // falls back to the ordinary container pin — inline position: relative
-    // is acceptable there, and only there. A root whose only child is `el`
-    // has no siblings to protect and keeps the group-of-one safety net.
-    let rootChildPinTarget = null;
+    // is acceptable there, and only there. Sibling detection counts only
+    // PINNABLE children (see isPinnableRootChild): when the flat root is
+    // document.body, the editor overlay and <script> elements are direct
+    // siblings that must count for nothing and never be pinned. A root with
+    // no pinnable sibling keeps the group-of-one safety net.
+    let rootChildPin = null;
     if (
       ancestors.length === 0 &&
       slide &&
       el.parentElement === slide &&
-      slide.children.length > 1 &&
       slide.dataset.wfpEditFlexFrozen !== 'true'
     ) {
-      const isFlatRoot = slide.getAttribute('data-wfp-edit-flat-root') === 'true';
-      if (!isFlatRoot && getComputedStyle(slide).position === 'static') {
-        ancestors.push(slide);
-      } else {
-        rootChildPinTarget = slide;
+      const pinnableChildren = getPinnableRootChildren(slide);
+      if (pinnableChildren.length > 1) {
+        const isFlatRoot = slide.getAttribute('data-wfp-edit-flat-root') === 'true';
+        if (!isFlatRoot && getComputedStyle(slide).position === 'static') {
+          ancestors.push(slide);
+        } else {
+          rootChildPin = { rootEl: slide, children: pinnableChildren };
+        }
       }
     }
 
-    const unlockGroup = prepareFlowUnlockGroup(ancestors, el, rootChildPinTarget);
+    const unlockGroup = prepareFlowUnlockGroup(ancestors, el, rootChildPin);
     for (const container of ancestors) {
       pinContainerChildren(container, unlockGroup);
     }
-    if (rootChildPinTarget) {
-      pinRootChildren(rootChildPinTarget, unlockGroup);
+    if (rootChildPin) {
+      pinRootChildren(rootChildPin.rootEl, rootChildPin.children, unlockGroup);
     }
 
     // After pinContainerChildren, `el` is one of the pinned children and

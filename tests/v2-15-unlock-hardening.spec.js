@@ -303,3 +303,123 @@ test.describe('v2.15 — direct-child unlock pins slide/flat-root siblings', () 
     expect(await getFlatRootState(page)).toEqual(pinned);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round — body-as-flat-root hardening. resolveFlatRoot() falls back
+// to document.body when no main/article exists and body has multiple
+// candidate children. #wfp-editor-root and the page's <script> elements are
+// then DIRECT SIBLINGS of the unlock target, and the root-child pin must
+// never touch them (pinning the editor overlay kills its position:fixed and
+// inline-styling script tags leaks into exports).
+// ---------------------------------------------------------------------------
+
+async function loadBodyRootPage(page, { visibleChildren, hiddenChildren = 0 }) {
+  await disableFsa(page);
+  const divs = Array.from({ length: visibleChildren }, (_, i) => `
+    <div data-testid="body-child-${i}" style="width: 300px; height: 90px; background: rgb(${200 - i * 30}, 225, 240); margin: 12px;">Body child ${i}</div>
+  `).join('');
+  // Hidden body-level candidates keep body resolved as the flat root (the
+  // resolver counts them) while contributing 0x0 rects at pin time.
+  const hidden = Array.from({ length: hiddenChildren }, (_, i) => `
+    <div data-testid="body-hidden-${i}" style="display: none;">Hidden panel ${i}</div>
+  `).join('');
+  await page.setContent(`
+    <!doctype html>
+    <html>
+    <head><style>body { margin: 0; font-family: system-ui, sans-serif; }</style></head>
+    <body>
+      ${divs}
+      ${hidden}
+      <script>window.__bodyRootFixtureMarker = true;</script>
+    </body>
+    </html>
+  `);
+  await page.addScriptTag({ path: EDITOR_PATH });
+  await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+  // Sanity: body itself resolved as the flat root.
+  expect(await page.evaluate(() =>
+    document.body.getAttribute('data-wfp-edit-flat-root')
+  )).toBe('true');
+  await page.keyboard.press('e');
+}
+
+function getBodyRootPinState(page) {
+  return page.evaluate(() => {
+    const editorRoot = document.getElementById('wfp-editor-root');
+    return {
+      editorRootStyle: editorRoot.getAttribute('style'),
+      editorRootFrozen: editorRoot.getAttribute('data-wfp-edit-frozen'),
+      editorRootPosition: getComputedStyle(editorRoot).position,
+      styledScripts: [...document.querySelectorAll('script')].filter(
+        (s) => s.getAttribute('style') !== null
+      ).length,
+      frozenScripts: document.querySelectorAll('script[data-wfp-edit-frozen]').length,
+      bodyInlineStyle: document.body.getAttribute('style'),
+      bodyFlexFrozen: document.body.getAttribute('data-wfp-edit-flex-frozen'),
+    };
+  });
+}
+
+test.describe('v2.15 — body-as-flat-root pinning skips editor and non-rendered children', () => {
+  test('dragging a direct body child never pins the editor root or script elements', async ({ page }) => {
+    await loadBodyRootPage(page, { visibleChildren: 2 });
+
+    const editorRootStyleBefore = await page.evaluate(
+      () => document.getElementById('wfp-editor-root').getAttribute('style')
+    );
+    const siblingBefore = await page.locator('[data-testid="body-child-1"]').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top };
+    });
+
+    await page.locator('[data-testid="body-child-0"]').click();
+    await dragBySelector(page, '[data-testid="body-child-0"]', 50, 25);
+
+    const state = await getBodyRootPinState(page);
+    expect(state.editorRootStyle).toBe(editorRootStyleBefore);
+    expect(state.editorRootFrozen).toBeNull();
+    expect(state.editorRootPosition).toBe('fixed');
+    expect(state.styledScripts).toBe(0);
+    expect(state.frozenScripts).toBe(0);
+    expect(state.bodyInlineStyle).toBeNull();
+
+    // The real content sibling IS protected.
+    const sibling = await page.locator('[data-testid="body-child-1"]').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, frozen: el.getAttribute('data-wfp-edit-frozen') };
+    });
+    expect(sibling.frozen).toBe('true');
+    expect(Math.abs(sibling.left - siblingBefore.left)).toBeLessThan(2);
+    expect(Math.abs(sibling.top - siblingBefore.top)).toBeLessThan(2);
+  });
+
+  test('a single pinnable child plus hidden and editor chrome takes the group-of-one path, not the multi-child pin', async ({ page }) => {
+    // Body stays the resolved root (two resolver candidates), but only ONE
+    // child is pinnable at drag time — the other is display:none (0x0).
+    await loadBodyRootPage(page, { visibleChildren: 1, hiddenChildren: 1 });
+
+    await page.locator('[data-testid="body-child-0"]').click();
+    await dragBySelector(page, '[data-testid="body-child-0"]', 50, 25);
+
+    const state = await getBodyRootPinState(page);
+    // No sibling worth protecting: no root latch, no editor-root damage.
+    expect(state.bodyFlexFrozen).toBeNull();
+    expect(state.editorRootFrozen).toBeNull();
+    expect(state.editorRootPosition).toBe('fixed');
+    expect(state.styledScripts).toBe(0);
+
+    // The hidden candidate was never styled or marked.
+    expect(await page.locator('[data-testid="body-hidden-0"]').evaluate((el) => ({
+      style: el.getAttribute('style'),
+      frozen: el.getAttribute('data-wfp-edit-frozen'),
+    }))).toEqual({ style: 'display: none;', frozen: null });
+
+    // The dragged element itself still unlocked and moved.
+    const dragged = await page.locator('[data-testid="body-child-0"]').evaluate((el) => ({
+      position: el.style.position,
+      frozen: el.getAttribute('data-wfp-edit-frozen'),
+    }));
+    expect(dragged.position).toBe('absolute');
+    expect(dragged.frozen).toBe('true');
+  });
+});
