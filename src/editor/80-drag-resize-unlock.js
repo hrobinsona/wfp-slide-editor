@@ -118,8 +118,12 @@
     e.preventDefault();
     e.stopPropagation();
 
-    const wasAbsolute = getComputedStyle(el).position === 'absolute';
-    const r = {
+    // Mousedown only records gesture geometry — cheap reads, no txn, no
+    // style writes. All mutation (beginTxn, unlock-or-pin) is deferred until
+    // the pointer leaves the deadzone in onResizeMove, mirroring the drag
+    // engine, so a zero-move click on a handle leaves the element, the
+    // history, and any flow siblings completely untouched.
+    state.resize = {
       el,
       dir,
       startX: e.clientX,
@@ -128,28 +132,9 @@
       initTop: el.offsetTop,
       initWidth: el.offsetWidth,
       initHeight: el.offsetHeight,
+      wasAbsolute: getComputedStyle(el).position === 'absolute',
+      started: false,
     };
-    state.resize = r;
-
-    beginTxn();
-    touchElement(el);
-
-    // Resize on a flow-positioned element runs the same unlock conversion as
-    // a drag would (which now also freezes flex/grid siblings). After unlock,
-    // refetch offsets so subsequent dimensional writes are well-defined.
-    if (!wasAbsolute) {
-      const rect = unlockToAbsolute(el);
-      r.initLeft = rect.left;
-      r.initTop = rect.top;
-      r.initWidth = rect.width;
-      r.initHeight = rect.height;
-    } else {
-      // Lock in the current dimensions so deltas compose deterministically.
-      el.style.left = `${r.initLeft}px`;
-      el.style.top = `${r.initTop}px`;
-      el.style.width = `${r.initWidth}px`;
-      el.style.height = `${r.initHeight}px`;
-    }
 
     document.addEventListener('mousemove', onResizeMove, true);
     document.addEventListener('mouseup', onResizeUp, true);
@@ -161,9 +146,38 @@
     e.preventDefault();
     e.stopPropagation();
 
+    const dxView = e.clientX - r.startX;
+    const dyView = e.clientY - r.startY;
+
+    if (!r.started) {
+      const distSq = dxView * dxView + dyView * dyView;
+      if (distSq < DRAG_DEADZONE_PX * DRAG_DEADZONE_PX) return;
+      r.started = true;
+      beginTxn();
+      touchElement(r.el);
+
+      // Resize on a flow-positioned element runs the same unlock conversion
+      // as a drag would (which also freezes flex/grid siblings). The unlock
+      // changes offsets, so refetch the anchors from the element before any
+      // dimensional writes.
+      if (!r.wasAbsolute) {
+        const rect = unlockToAbsolute(r.el);
+        r.initLeft = rect.left;
+        r.initTop = rect.top;
+        r.initWidth = rect.width;
+        r.initHeight = rect.height;
+      } else {
+        // Lock in the current dimensions so deltas compose deterministically.
+        r.el.style.left = `${r.initLeft}px`;
+        r.el.style.top = `${r.initTop}px`;
+        r.el.style.width = `${r.initWidth}px`;
+        r.el.style.height = `${r.initHeight}px`;
+      }
+    }
+
     const scale = getCanvasScale();
-    const dx = (e.clientX - r.startX) / scale;
-    const dy = (e.clientY - r.startY) / scale;
+    const dx = dxView / scale;
+    const dy = dyView / scale;
 
     let left = r.initLeft;
     let top = r.initTop;
@@ -207,9 +221,13 @@
   function onResizeUp(_e) {
     document.removeEventListener('mousemove', onResizeMove, true);
     document.removeEventListener('mouseup', onResizeUp, true);
-    if (state.resize) {
-      state.resize = null;
-      state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+    const r = state.resize;
+    if (!r) return;
+    state.resize = null;
+    // Swallow the synthetic click that follows the release — even for a
+    // zero-move gesture — so releasing over the handle never deselects.
+    state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+    if (r.started) {
       endTxn();
       liveEditEnd();
     }
