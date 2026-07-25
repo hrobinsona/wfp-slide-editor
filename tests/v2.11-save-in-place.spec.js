@@ -365,6 +365,36 @@ test.describe('v2.11 — save-in-place engine', () => {
     expect(download.suggestedFilename()).toBe('foreign-deck-edited.html');
   });
 
+  // Absolutizing asset URLs is a download feature: the copy leaves the deck's
+  // folder, so relative references have to be resolved to survive the move.
+  // Save-in-place writes back into that same folder, where rewriting
+  // images/pic.png to file:///…/images/pic.png would break the deck the moment
+  // its folder is moved, renamed, or shared.
+  test('save-in-place leaves relative asset URLs alone; downloads still absolutize', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.evaluate(() => {
+      const img = document.createElement('img');
+      img.id = 'relative-asset-probe';
+      img.setAttribute('src', 'assets/probe.png');
+      document.querySelector('.slide.active').appendChild(img);
+    });
+
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    const written = await page.evaluate(() => window.__fsa.written[0]);
+    expect(written).toContain('src="assets/probe.png"');
+    expect(written).not.toMatch(/src="file:\/\/[^"]*assets\/probe\.png"/);
+
+    await page.locator(exportBtnSel).click();
+    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
+    await page.locator(cleanSel).click();
+    const download = await downloadPromise;
+    const { content } = await readDownloadAsString(download);
+    expect(content).toMatch(/src="file:\/\/[^"]*\/fixtures\/assets\/probe\.png"/);
+    expect(content).not.toContain('src="assets/probe.png"');
+  });
+
   test('menu Enter and clean-copy row behave with the engine active', async ({ page }) => {
     await installFsaStub(page);
     await loadReady(page);

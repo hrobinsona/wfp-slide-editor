@@ -271,14 +271,18 @@ not changed.
 
 Anything the editor expresses through its own stylesheet has to be re-expressed
 inline on the clone, because the export keeps neither the editor CSS nor the
-`data-wfp-edit-*` markers that key it. Flat mode is the one case: a statically
-positioned flat root gets its positioning context from the
-`data-wfp-edit-flat-position-context` rule, so the clone builder stamps
-`position: relative` into that root's inline style (merging, not replacing)
-before the attribute sweep runs. Without it, elements the unlock pinned
-directly against the flat root lose their containing block on export and
-re-anchor to the viewport. The live root itself stays free of inline style —
-only the clone is stamped.
+`data-wfp-edit-*` markers that key it. Flat mode is the one such case: the
+clone builder merges `position: relative` into the inline style of a root
+marked `data-wfp-edit-flat-position-context` before the attribute sweep runs,
+so elements the unlock pinned directly against that root keep their containing
+block instead of re-anchoring to the viewport — the live root stays pristine.
+
+Asset absolutization is a property of the export's destination, not of the
+pipeline, so `buildExportHtml`/`buildHandoffExportHtml` take an
+`absolutizeAssets` option (default `true`). Downloads leave the deck's folder
+and need absolute URLs to keep resolving; save-in-place rewrites the source
+file in its own folder and passes `false`, keeping relative references
+relative so the deck survives being moved, renamed, or shared.
 
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
 
