@@ -636,7 +636,13 @@
         touchElement(rootEl);
         rootEl.removeAttribute(FLAT_ROOT_HEIGHT_ATTR);
       }
-      state.flatRootHoldTargets.delete(rootEl);
+      // The TARGET deliberately survives an empty pinned set. Undoing the
+      // delete or Reset that emptied it re-attaches pinned children into a
+      // collapsed root, and solving back to the retained target is the only
+      // way to restore the pre-delete geometry — adopting the collapsed
+      // layout instead would freeze the very shift being repaired. A fresh
+      // pin re-captures it (see pinRootChildren) so a content edit between
+      // unlock cycles is not held against an outdated position.
       return;
     }
 
@@ -695,11 +701,14 @@
 
     const childRects = snapshotChildOffsets(children, rootEl);
     const rootRectBefore = rootEl.getBoundingClientRect();
-    // The target is the position following content must keep for the rest of
-    // the session: capture it from the pristine layout, BEFORE this pin (or
-    // any earlier one) takes children out of flow. Slides are excluded: they
-    // own explicit stylesheet dimensions and never collapse.
-    if (isFlatRoot && !state.flatRootHoldTargets.has(rootEl)) {
+    // The target is the position following content must keep while anything
+    // under this root is pinned. Capture it whenever this pin ESTABLISHES
+    // the hold — no child is pinned yet, so the layout being measured is the
+    // natural one — which also refreshes it after content changed between
+    // unlock cycles. A pin that merely extends an existing hold (the
+    // stale-latch remainder) keeps the target it already has. Slides are
+    // excluded: they own explicit stylesheet dimensions and never collapse.
+    if (isFlatRoot && !getPinnedRootChildren(rootEl).length) {
       state.flatRootHoldTargets.set(rootEl, readFlatRootFollowOffset(rootEl));
     }
     touchElement(rootEl);

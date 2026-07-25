@@ -1133,3 +1133,120 @@ test.describe('v2.15 — the hold survives an undo of a full Reset', () => {
     expect(Math.abs(after.footerTop - footerBefore)).toBeLessThan(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Merge-gate review — element DELETE is a pinned-set transition too. Unlocking
+// a flat root's children and then deleting them (inspector button or
+// Backspace/Delete) took the pinned set to zero without re-deriving the hold:
+// the marker and its !important rule stayed at the pre-delete value, propping
+// an emptied root open — and the stale height was baked into the EXPORTED
+// file. Insert (paste/duplicate) funnels through the same history entry point.
+// ---------------------------------------------------------------------------
+
+async function unlockThenSelect(page, testid) {
+  await page.locator('[data-testid="doc-block-0"]').click();
+  await dragBySelector(page, '[data-testid="doc-block-0"]', 30, 15);
+  await page.locator(`[data-testid="${testid}"]`).click();
+}
+
+function readHoldState(page) {
+  return page.evaluate(() => {
+    const main = document.querySelector('#doc-main');
+    return {
+      held: main.getAttribute('data-wfp-edit-flat-root-height'),
+      offsetHeight: main.offsetHeight,
+      childCount: main.children.length,
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+    };
+  });
+}
+
+test.describe('v2.15 — deleting pinned children releases the flat-root hold', () => {
+  test('deleting every pinned child collapses the root live AND in the export', async ({ page, context }) => {
+    await loadPartialResetPage(page, { padded: false });
+    const emptyFooterTop = await page.evaluate(() => {
+      // Where the footer sits with an empty root: the invariant an emptied
+      // document must land on, measured before any editing.
+      const main = document.querySelector('#doc-main');
+      const kept = [...main.children];
+      kept.forEach((c) => c.remove());
+      const top = document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top;
+      kept.forEach((c) => main.appendChild(c));
+      return top;
+    });
+
+    await unlockThenSelect(page, 'doc-block-0');
+    expect((await readHoldState(page)).held).not.toBeNull();
+
+    // Delete every child: the first via the inspector button, the rest via
+    // the Backspace shortcut — both route through deleteSelectedElement.
+    await page.locator(`${ROOT} .wfpe-inspector .wfpe-delete-btn`).click();
+    for (const id of ['doc-block-1', 'doc-block-2', 'doc-block-3']) {
+      await page.locator(`[data-testid="${id}"]`).click();
+      await page.keyboard.press('Backspace');
+    }
+
+    const emptied = await readHoldState(page);
+    expect(emptied.childCount).toBe(0);
+    // The hold is released, so the emptied root is not propped open…
+    expect(emptied.held).toBeNull();
+    expect(emptied.offsetHeight).toBeLessThan(20);
+    expect(Math.abs(emptied.footerTop - emptyFooterTop)).toBeLessThan(2);
+
+    // …and the export agrees with the live document.
+    const { outPath, html } = await saveExportedHtml(page);
+    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${outPath}`);
+    const exported = await exportedPage.evaluate(() => ({
+      inlineHeight: document.querySelector('#doc-main').style.height,
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+    }));
+    expect(exported.inlineHeight).toBe('');
+    expect(Math.abs(exported.footerTop - emptied.footerTop)).toBeLessThan(2);
+    await exportedPage.close();
+  });
+
+  test('undoing the delete re-derives the hold instead of leaving the root collapsed', async ({ page }) => {
+    await loadPartialResetPage(page, { padded: false });
+    const footerBefore = await getFooterTop(page);
+
+    await unlockThenSelect(page, 'doc-block-0');
+    const pinned = await readHoldState(page);
+    const blockTops = await getRootChildTops(page);
+
+    // Delete all four, then undo all four deletes.
+    await page.locator(`${ROOT} .wfpe-inspector .wfpe-delete-btn`).click();
+    for (const id of ['doc-block-1', 'doc-block-2', 'doc-block-3']) {
+      await page.locator(`[data-testid="${id}"]`).click();
+      await page.keyboard.press('Backspace');
+    }
+    expect((await readHoldState(page)).held).toBeNull();
+
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ControlOrMeta+z');
+
+    const restored = await readHoldState(page);
+    expect(restored.childCount).toBe(4);
+    // The hold came back — the re-attached children are pinned again, so the
+    // root must hold its box open exactly as before the deletes.
+    expect(restored.held).toBe(pinned.held);
+    expect(Math.abs(restored.footerTop - footerBefore)).toBeLessThan(2);
+    expect(await getRootChildTops(page)).toEqual(blockTops);
+  });
+
+  test('pasting into a held root leaves the hold and following content alone', async ({ page }) => {
+    await loadPartialResetPage(page, { padded: false });
+    const footerBefore = await getFooterTop(page);
+
+    await unlockThenSelect(page, 'doc-block-1');
+    const held = (await readHoldState(page)).held;
+
+    await page.keyboard.press('ControlOrMeta+c');
+    await page.keyboard.press('ControlOrMeta+v');
+
+    const after = await readHoldState(page);
+    expect(after.childCount).toBe(5);
+    expect(after.held).toBe(held);
+    expect(Math.abs(after.footerTop - footerBefore)).toBeLessThan(2);
+  });
+});
