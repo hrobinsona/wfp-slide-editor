@@ -193,9 +193,7 @@
       const slides = getSlides();
       const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
       if (idx >= 0 && slides[idx]) {
-        const dots = document.querySelectorAll('.progress-dot');
-        slides.forEach((s, i) => s.classList.toggle('active', i === idx));
-        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        synchronizeSlideState(slides[idx]);
       }
       // The re-parsed deck script cached slide 0 as current; hand plain-view
       // arrow nav to the editor's fresh-DOM implementation, the same

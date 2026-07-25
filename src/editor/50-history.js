@@ -245,6 +245,16 @@
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
+    if (
+      entry.slideOps &&
+      entry.slideOps.some((op) => (
+        op.type === 'reorder' ||
+        op.type === 'delete' ||
+        op.type === 'slideInsert'
+      ))
+    ) {
+      synchronizeSlideState();
+    }
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -258,6 +268,16 @@
     }
     if (entry.slideOps) {
       for (const op of entry.slideOps) redoSlideOp(op);
+    }
+    if (
+      entry.slideOps &&
+      entry.slideOps.some((op) => (
+        op.type === 'reorder' ||
+        op.type === 'delete' ||
+        op.type === 'slideInsert'
+      ))
+    ) {
+      synchronizeSlideState();
     }
     state.historyIndex++;
     refreshSelection();

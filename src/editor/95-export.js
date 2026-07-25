@@ -308,9 +308,11 @@
   }
 
   function normalizeExportStartupState(root) {
+    let startupSlideCount = 0;
     getExportDeckRoots(root).forEach((deck) => {
       const slides = [...deck.querySelectorAll(':scope > .slide')];
       if (!slides.length) return;
+      if (!startupSlideCount) startupSlideCount = slides.length;
       slides.forEach((slide, index) => {
         slide.classList.toggle('active', index === 0);
       });
@@ -323,6 +325,10 @@
         dot.classList.toggle('active', index === 0);
       });
     });
+
+    if (startupSlideCount) {
+      synchronizeRecognizedHostCounters(root, 0, startupSlideCount);
+    }
   }
 
   function buildExportClone() {

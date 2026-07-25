@@ -197,6 +197,7 @@ test.describe('spike — live agent round-trip', () => {
     await agentRewritesFile(page, simulateAgentImplementation(handoff, 'Launch readiness', 'Launch, agent-approved'));
     await waitForGeneration(page, 2);
     await expect(page.locator('#foreign-slide-3')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('3 / 4');
 
     // Leave edit mode; arrows must advance exactly one slide. The re-parsed
     // fixture script's closures reset to slide 0, so the editor's
@@ -206,10 +207,12 @@ test.describe('spike — live agent round-trip', () => {
 
     await page.keyboard.press('ArrowRight');
     await expect(page.locator('#foreign-slide-4')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('4 / 4');
     expect(await page.evaluate(() => document.querySelectorAll('.slide.active').length)).toBe(1);
 
     await page.keyboard.press('ArrowLeft');
     await expect(page.locator('#foreign-slide-3')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('3 / 4');
     expect(await page.evaluate(() => document.querySelectorAll('.slide.active').length)).toBe(1);
   });
 });

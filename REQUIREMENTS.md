@@ -146,13 +146,24 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Overview mode displays all slides in a grid without permanently wrapping or cloning the slide deck.
 - Thumbnail grid uses the v2 ink-glass visual language.
 - Click a thumbnail to make that slide active and return to normal slide view.
+- After thumbnail navigation, the editor owns subsequent plain-view arrows
+  using the live slide list; it does not defer to a host cursor that the
+  thumbnail activation could not update.
 - Drag thumbnails to reorder slides.
 - Delete a slide from its thumbnail `x` button, or with Backspace/Delete when a thumbnail delete target is active.
 - Insert a blank slide using the `+` affordances before, between, and after thumbnails.
 - Deleting the last remaining slide is blocked with a toast.
 - If the active slide is deleted, the editor activates the next slide at that position, or the new last slide.
 - Slide reorder, slide delete, and slide insert are undoable and redoable.
+- Once the editor owns slide navigation after an Overview mutation or live
+  refresh, every activation keeps the contract deck's existing progress-dot
+  active state aligned with the active slide and synchronizes recognized host
+  current/total counters with the live slide index and count. Host counters are
+  updated only when they expose a semantic slide/page counter hook and a
+  supported counter shape; unrelated host UI is untouched.
 - Exported HTML opens in normal slide view, not Overview mode.
+- Export startup normalization aligns recognized host current/total counters
+  with the exported first active slide and live exported slide count.
 
 ### Export
 
@@ -225,6 +236,9 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - The refresh replaces the document wholesale, re-executes the deck's own scripts exactly once against the new markup, and re-mounts the editor.
 - Restored across a refresh: edit mode, active slide (index clamped to the new deck), inspector minimised state, toolbar collapsed state, and the bound file handle. Selection is cleared, and undo history restarts — a refresh is a new history generation.
 - After a refresh the editor owns plain-view arrow navigation (the same takeover used after slide reorder/delete), because the deck script's cached slide state reset to the first slide.
+- Restoring the active slide after refresh uses the same slide-state
+  synchronization as editor-owned arrow navigation, including progress-dot
+  active state and recognized host current/total counters.
 - A refresh never interrupts an open interaction (transaction, text edit, drag, resize, Overview mode, or open export menu); the change applies on the next idle poll after the interaction ends.
 - The editor's own saves never trigger a refresh.
 - If reading the bound file fails for permissions, one toast announces "Live updates paused — file access needed. Save to re-link."; the next successful save re-links the watch and toasts "Live updates resumed.".

@@ -354,6 +354,39 @@ test.describe('Phase 8 — Export', () => {
     await fresh.close();
   });
 
+  test('export normalizes a static recognized counter to the startup slide', async ({ page }) => {
+    await page.setContent(`<!DOCTYPE html>
+      <html>
+      <body>
+        <div class="deck">
+          <div class="slide active" id="s0">Slide 1</div>
+          <div class="slide" id="s1">Slide 2</div>
+          <div class="slide" id="s2">Slide 3</div>
+        </div>
+        <div class="slide-count">1 / 3</div>
+      </body>
+      </html>`);
+    await page.addScriptTag({ path: EDITOR_PATH });
+    await page.waitForFunction(() => window.__wfpEditorReady === true);
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 3
+    );
+    await page.locator(
+      '#wfp-editor-root .wfpe-overview-thumb[data-wfp-edit-slide-index="2"]',
+    ).click();
+    await expect(page.locator('.slide-count')).toHaveText('3 / 3');
+
+    await page.keyboard.press('e');
+    const download = await triggerExport(page);
+    const { content } = await readDownloadAsString(download);
+    expect(content).toContain('<div class="slide-count">1 / 3</div>');
+
+    await expect(page.locator('#s2')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('3 / 3');
+  });
+
   test('export does not serialize runtime-generated progress dots', async ({
     page,
     context,
