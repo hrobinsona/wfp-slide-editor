@@ -26,6 +26,8 @@
  *          measurements in the handoff payload.
  * v2.14.1: overflow measurement fixes — skip parent-escape on unlock-frozen
  *          elements; tolerate sub-1 line-height descender overhang.
+ * v2.14.2: rest-state inspector avoidance, auto-growing agent notes, and
+ *          persistent Overview drag/delete affordances.
  *
  * Internal class names use the `wfpe-` prefix so they don't collide with
  * the WFP fixtures' own `wfp-badge` / `wfp-*` classes.
@@ -33,7 +35,7 @@
 (function () {
   'use strict';
 
-  const VERSION = '2.14.1';
+  const VERSION = '2.14.2';
   const OVERVIEW_SCALE = 0.22;
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
@@ -165,6 +167,14 @@
       align-items: flex-end;
       gap: 1px;                  /* the seams */
       pointer-events: none;
+    }
+    /* v2.14.2 — rest-state selection avoidance. The instrument begins at
+       the familiar right edge, but can move as one stable unit to the left
+       edge when the selected element occupies its footprint. */
+    #${ROOT_ID} .wfpe-stack[data-side="left"] {
+      right: auto;
+      left: 16px;
+      align-items: flex-start;
     }
     #${ROOT_ID} .wfpe-toolbar {
       width: 214px;              /* collapsed: 58px via [data-collapsed];
@@ -513,6 +523,7 @@
     #${ROOT_ID} .wfpe-inspector {
       display: flex;
       flex-direction: column;
+      max-height: calc(100vh - 72px);
       border-radius: 6px 6px 12px 12px;
       background:
         linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)),
@@ -533,6 +544,14 @@
         visibility 0s,
         opacity 380ms cubic-bezier(0.32,0.72,0,1);
     }
+    /* The stack is click-through by default, but every painted part of a
+       visible inspector must own its input surface — including row captions,
+       body padding, and the scrollbar. Key this to the dock state so the
+       natural-size panel inside the closed grid fold cannot intercept the
+       slide while it animates shut. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-visible="true"] .wfpe-inspector {
+      pointer-events: auto;
+    }
     /* 5b focus fold: while the export menu is docked above, the inspector
        recedes — dimmed, body folded to its 36px header. Dismissing the
        menu restores it. Shares the minimised fold/chevron mechanics. */
@@ -543,18 +562,21 @@
        85-adaptive-fade). Pointer-events stay live. After the suppressed
        rule so a mid-gesture fade wins over the export-menu dim. */
     #${ROOT_ID} .wfpe-inspector[data-fade="true"] { opacity: 0.16; }
+    /* Extremely wide selections can intersect both side docks. In that
+       case only the inspector becomes a readable outline at rest; the
+       toolbar remains the fully opaque editor anchor. */
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="false"]:not([data-fade="true"]) {
+      opacity: 0.18;
+    }
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="true"]:not([data-fade="true"]) {
+      opacity: 1;
+    }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
        fold animation completes so it is neither tabbable nor "visible". */
     #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] .wfpe-inspector {
       visibility: hidden;
       transition: visibility 0s 380ms;
-    }
-    #${ROOT_ID} .wfpe-inspector button,
-    #${ROOT_ID} .wfpe-inspector input,
-    #${ROOT_ID} .wfpe-inspector textarea,
-    #${ROOT_ID} .wfpe-inspector label {
-      pointer-events: auto;
     }
     /* Header — 36px, symmetric with the bar when the body is folded */
     #${ROOT_ID} .wfpe-inspector-header {
@@ -633,6 +655,19 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      box-sizing: border-box;
+      max-height: calc(100vh - 109px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.28) transparent;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(255,255,255,0.28);
     }
     /* Rows: 66px label column + control */
     #${ROOT_ID} .wfpe-inspector-row {
@@ -913,8 +948,8 @@
     #${ROOT_ID} .wfpe-annotation-input {
       appearance: none;
       -webkit-appearance: none;
-      min-height: 42px;
-      max-height: 160px;
+      min-height: 52px;
+      max-height: 112px;
       box-sizing: border-box;
       width: 100%;
       padding: 6px 8px;
@@ -924,7 +959,8 @@
       box-shadow: inset 0 1px 2px rgba(0,0,0,0.22);
       font: 11px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: #fff;
-      resize: vertical;
+      resize: none;
+      overflow-y: hidden;
       outline: none;
     }
     #${ROOT_ID} .wfpe-annotation-input::placeholder { color: rgba(255,255,255,0.55); }
@@ -1410,6 +1446,33 @@
       opacity: 0.4;
       cursor: grabbing;
     }
+    /* Persistent drag cue. The full thumbnail remains the HTML5 drag
+       source; this compact top-centre grip makes that capability visible. */
+    #${ROOT_ID} .wfpe-overview-drag-handle {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 30px;
+      height: 22px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.68);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+      color: rgba(255, 255, 255, 0.92);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 1;
+    }
+    #${ROOT_ID} .wfpe-overview-drag-handle svg {
+      width: 14px;
+      height: 14px;
+      fill: currentColor;
+    }
     #${ROOT_ID} .wfpe-overview-thumb::after {
       content: '';
       position: absolute;
@@ -1457,8 +1520,8 @@
       transform: scale(1.06);
       outline: none;
     }
-    /* × delete button (v2.1.4) — Liquid Glass pill, top-right of each
-       thumb, revealed on thumb hover or focus. Same dark-glass tint as
+    /* × delete button (v2.1.4, persistent since v2.14.2) — Liquid Glass
+       pill, top-right of each thumb. Same dark-glass tint as
        the slide-number badge so they read as a matched pair (badge =
        passive label, × = active affordance). */
     #${ROOT_ID} .wfpe-overview-delete {
@@ -1478,16 +1541,11 @@
       cursor: pointer;
       appearance: none;
       -webkit-appearance: none;
-      display: none;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
       z-index: 1;
       transition: background-color 120ms ease, transform 120ms ease;
-    }
-    #${ROOT_ID} .wfpe-overview-thumb:hover .wfpe-overview-delete,
-    #${ROOT_ID} .wfpe-overview-thumb:focus-within .wfpe-overview-delete,
-    #${ROOT_ID} .wfpe-overview-delete:focus {
-      display: inline-flex;
     }
     #${ROOT_ID} .wfpe-overview-delete:hover {
       background: rgba(15, 23, 42, 0.92);
@@ -1663,6 +1721,15 @@
       '<path d="M18 6 6 18" />' +
       '<path d="m6 6 12 12" />' +
       '</svg>',
+    grip:
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="8" cy="7" r="1.5" />' +
+      '<circle cx="16" cy="7" r="1.5" />' +
+      '<circle cx="8" cy="12" r="1.5" />' +
+      '<circle cx="16" cy="12" r="1.5" />' +
+      '<circle cx="8" cy="17" r="1.5" />' +
+      '<circle cx="16" cy="17" r="1.5" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -1753,6 +1820,7 @@
   // shared column handles for free — independently fixed elements can't.
   const stack = document.createElement('div');
   stack.className = 'wfpe-stack';
+  stack.dataset.side = 'right';
   stack.appendChild(toolbar);
   root.appendChild(stack);
 
@@ -1814,6 +1882,8 @@
   inspector.className = 'wfpe-inspector';
   inspector.dataset.visible = 'false';
   inspector.dataset.state = 'expanded';
+  inspector.dataset.avoidance = 'clear';
+  inspector.dataset.revealed = 'false';
 
   const inspectorHeader = document.createElement('div');
   inspectorHeader.className = 'wfpe-inspector-header';
@@ -2273,6 +2343,81 @@
 
   document.body.appendChild(root);
 
+  // The both-sides fallback is intentionally faint at rest. Mouse hover and
+  // keyboard focus reveal the complete panel before an action can occur.
+  // Touch/pen have no reliable pre-contact hover, so their first contact is
+  // consumed as an explicit reveal; the second can activate the control.
+  let fallbackMouseInside = false;
+  let suppressFallbackClick = false;
+  let fallbackClickResetTimer = null;
+  function isInspectorFallback() {
+    return inspector.dataset.avoidance === 'overlap';
+  }
+  function setInspectorFallbackRevealed(value) {
+    inspector.dataset.revealed = value ? 'true' : 'false';
+  }
+  inspector.addEventListener('pointerenter', (e) => {
+    if (e.pointerType !== 'mouse' || !isInspectorFallback()) return;
+    fallbackMouseInside = true;
+    suppressFallbackClick = false;
+    setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('pointerleave', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    fallbackMouseInside = false;
+    if (!inspector.contains(document.activeElement)) {
+      setInspectorFallbackRevealed(false);
+    }
+  });
+  inspector.addEventListener('focusin', () => {
+    if (isInspectorFallback()) setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (
+        isInspectorFallback() &&
+        !fallbackMouseInside &&
+        !inspector.contains(document.activeElement)
+      ) {
+        setInspectorFallbackRevealed(false);
+      }
+    });
+  });
+  inspector.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.dataset.revealed === 'true') return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressFallbackClick = true;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = setTimeout(() => {
+      suppressFallbackClick = false;
+      fallbackClickResetTimer = null;
+    }, 400);
+    setInspectorFallbackRevealed(true);
+  }, true);
+  inspector.addEventListener('click', (e) => {
+    if (
+      !isInspectorFallback() ||
+      (!suppressFallbackClick && inspector.dataset.revealed === 'true')
+    ) {
+      return;
+    }
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    e.preventDefault();
+    e.stopPropagation();
+    setInspectorFallbackRevealed(true);
+  }, true);
+  document.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.contains(e.target)) return;
+    fallbackMouseInside = false;
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    setInspectorFallbackRevealed(false);
+  }, true);
+
   // Toolbar button click handlers. These run in bubble phase after the
   // capture-phase onClick short-circuits on editor-root targets, so they
   // don't interfere with selection/deselection logic.
@@ -2301,6 +2446,7 @@
     toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
     exportMenu.dataset.abovePanel = String(inspectorVisible);
     inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
+    positionInspectorStack();
   }
   function openExportMenu() {
     state.exportMenuOpen = true;
@@ -2624,7 +2770,9 @@
     saveAnnotation(getAnnotationEditorTarget(), annotationTextarea.value);
   });
   annotationTextarea.addEventListener('input', () => {
+    autoGrowAnnotationTextarea();
     updateAnnotationDraftStatus(getAnnotationEditorTarget());
+    positionInspectorStack();
   });
   annotationDeleteBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -2703,7 +2851,10 @@
     if (!e) return false;
     return (
       isPointInsideElementBox(toolbar, e.clientX, e.clientY) ||
-      isPointInsideElementBox(inspector, e.clientX, e.clientY)
+      (
+        inspectorDock.dataset.visible === 'true' &&
+        isPointInsideElementBox(inspector, e.clientX, e.clientY)
+      )
     );
   }
 
@@ -2982,6 +3133,21 @@
     }
   }
 
+  function autoGrowAnnotationTextarea() {
+    const minHeight = 52;
+    // The textarea has a content cap; viewport pressure is handled by the
+    // inspector body's live `100vh` scroll bound rather than a guessed
+    // subtraction that cannot account for agent-reply blocks.
+    const maxHeight = 112;
+    annotationTextarea.style.height = 'auto';
+    // scrollHeight excludes the border while height is border-box; include
+    // the 1px top/bottom borders so the last line is never clipped by 2px.
+    const naturalHeight = Math.max(minHeight, annotationTextarea.scrollHeight + 2);
+    const nextHeight = Math.min(maxHeight, naturalHeight);
+    annotationTextarea.style.height = `${nextHeight}px`;
+    annotationTextarea.style.overflowY = naturalHeight > nextHeight ? 'auto' : 'hidden';
+  }
+
   function getAnnotationEditorTarget() {
     const selected = getSelectedElements();
     if (
@@ -3114,6 +3280,7 @@
       annotationDeleteBtn.disabled = true;
       updateAnnotationDraftStatus(null);
       renderAnnotationReply(null);
+      autoGrowAnnotationTextarea();
       return;
     }
     const targetChanged = annotationRow.__wfpeTarget !== el;
@@ -3127,9 +3294,11 @@
     if (options.force || targetChanged || (!preserveDraft && document.activeElement !== annotationTextarea)) {
       annotationTextarea.value = text;
     }
+    autoGrowAnnotationTextarea();
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
     renderAnnotationReply(el);
+    positionInspectorStack();
   }
 
   // Read-only "Agent …" line under the note textarea (v2.13): shows the
@@ -3500,6 +3669,9 @@
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
+      if (!state.drag && !state.resize && !state.txn && !state.editingText) {
+        positionInspectorStack();
+      }
       refreshAnnotationMarkers();
       startSelectionTracking();
     } else {
@@ -3973,12 +4145,70 @@
       'aria-label',
       state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
     );
+    positionInspectorStack();
     refreshExportUi();
   }
 
   function setInspectorMinimised(value) {
     state.inspectorMinimised = !!value;
     refreshInspector();
+  }
+
+  // Keep the complete editor instrument clear of the selected element at
+  // rest. The current side wins while it remains clear; switching happens
+  // only when that side overlaps and the opposite side does not. This
+  // hysteresis prevents placement oscillation as layout settles.
+  function positionInspectorStack() {
+    const visible = inspectorDock.dataset.visible === 'true';
+    if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
+      inspector.dataset.avoidance = 'clear';
+      inspector.dataset.revealed = 'false';
+      return;
+    }
+    // A live manipulation intentionally holds the dock still so v2.12's
+    // overlap-gated fade remains meaningful as content passes beneath it.
+    if (state.drag || state.resize || state.txn || state.editingText) return;
+
+    const selectionRect = getLiveSelectionRect();
+    if (!selectionRect) return;
+    const margin = 16;
+    const gutter = 10;
+    const width = Math.max(246, stack.offsetWidth || 0);
+    const toolbarHeight = toolbar.offsetHeight || 36;
+    const exportHeight = state.exportMenuOpen ? (exportMenu.offsetHeight + 1) : 0;
+    const bodyHeight = (state.inspectorMinimised || state.exportMenuOpen)
+      ? 0
+      : inspectorFoldInner.scrollHeight;
+    const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
+    const height = Math.min(
+      toolbarHeight + exportHeight + inspectorHeight + 2,
+      window.innerHeight - margin * 2
+    );
+    const expandedSelection = {
+      left: selectionRect.left - gutter,
+      top: selectionRect.top - gutter,
+      right: selectionRect.right + gutter,
+      bottom: selectionRect.bottom + gutter,
+    };
+    const candidates = {
+      left: { left: margin, top: margin, right: margin + width, bottom: margin + height },
+      right: {
+        left: window.innerWidth - margin - width,
+        top: margin,
+        right: window.innerWidth - margin,
+        bottom: margin + height,
+      },
+    };
+    const current = stack.dataset.side === 'left' ? 'left' : 'right';
+    const other = current === 'right' ? 'left' : 'right';
+    const currentBlocked = rectsOverlap(expandedSelection, candidates[current]);
+    const otherBlocked = rectsOverlap(expandedSelection, candidates[other]);
+    if (currentBlocked && !otherBlocked) stack.dataset.side = other;
+    const nextAvoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    if (inspector.dataset.avoidance !== nextAvoidance || nextAvoidance === 'clear') {
+      inspector.dataset.revealed = 'false';
+    }
+    inspector.dataset.avoidance = nextAvoidance;
   }
   // ===========================================================================
   // History (undo/redo)
@@ -4405,6 +4635,12 @@
       badge.className = 'wfpe-overview-badge';
       badge.textContent = String(i + 1);
       thumb.appendChild(badge);
+      const dragHandle = document.createElement('span');
+      dragHandle.className = 'wfpe-overview-drag-handle';
+      dragHandle.title = `Drag slide ${i + 1} to reorder`;
+      dragHandle.setAttribute('aria-hidden', 'true');
+      dragHandle.innerHTML = ICONS.grip;
+      thumb.appendChild(dragHandle);
       // Delete button (v2.1.4). Carries the slide index so the click
       // handler can resolve the live .deck child without walking the
       // DOM up from event.target.

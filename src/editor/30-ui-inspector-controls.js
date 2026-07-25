@@ -97,6 +97,15 @@
       '<path d="M18 6 6 18" />' +
       '<path d="m6 6 12 12" />' +
       '</svg>',
+    grip:
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="8" cy="7" r="1.5" />' +
+      '<circle cx="16" cy="7" r="1.5" />' +
+      '<circle cx="8" cy="12" r="1.5" />' +
+      '<circle cx="16" cy="12" r="1.5" />' +
+      '<circle cx="8" cy="17" r="1.5" />' +
+      '<circle cx="16" cy="17" r="1.5" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -187,6 +196,7 @@
   // shared column handles for free — independently fixed elements can't.
   const stack = document.createElement('div');
   stack.className = 'wfpe-stack';
+  stack.dataset.side = 'right';
   stack.appendChild(toolbar);
   root.appendChild(stack);
 
@@ -248,6 +258,8 @@
   inspector.className = 'wfpe-inspector';
   inspector.dataset.visible = 'false';
   inspector.dataset.state = 'expanded';
+  inspector.dataset.avoidance = 'clear';
+  inspector.dataset.revealed = 'false';
 
   const inspectorHeader = document.createElement('div');
   inspectorHeader.className = 'wfpe-inspector-header';
@@ -707,6 +719,81 @@
 
   document.body.appendChild(root);
 
+  // The both-sides fallback is intentionally faint at rest. Mouse hover and
+  // keyboard focus reveal the complete panel before an action can occur.
+  // Touch/pen have no reliable pre-contact hover, so their first contact is
+  // consumed as an explicit reveal; the second can activate the control.
+  let fallbackMouseInside = false;
+  let suppressFallbackClick = false;
+  let fallbackClickResetTimer = null;
+  function isInspectorFallback() {
+    return inspector.dataset.avoidance === 'overlap';
+  }
+  function setInspectorFallbackRevealed(value) {
+    inspector.dataset.revealed = value ? 'true' : 'false';
+  }
+  inspector.addEventListener('pointerenter', (e) => {
+    if (e.pointerType !== 'mouse' || !isInspectorFallback()) return;
+    fallbackMouseInside = true;
+    suppressFallbackClick = false;
+    setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('pointerleave', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    fallbackMouseInside = false;
+    if (!inspector.contains(document.activeElement)) {
+      setInspectorFallbackRevealed(false);
+    }
+  });
+  inspector.addEventListener('focusin', () => {
+    if (isInspectorFallback()) setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (
+        isInspectorFallback() &&
+        !fallbackMouseInside &&
+        !inspector.contains(document.activeElement)
+      ) {
+        setInspectorFallbackRevealed(false);
+      }
+    });
+  });
+  inspector.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.dataset.revealed === 'true') return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressFallbackClick = true;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = setTimeout(() => {
+      suppressFallbackClick = false;
+      fallbackClickResetTimer = null;
+    }, 400);
+    setInspectorFallbackRevealed(true);
+  }, true);
+  inspector.addEventListener('click', (e) => {
+    if (
+      !isInspectorFallback() ||
+      (!suppressFallbackClick && inspector.dataset.revealed === 'true')
+    ) {
+      return;
+    }
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    e.preventDefault();
+    e.stopPropagation();
+    setInspectorFallbackRevealed(true);
+  }, true);
+  document.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.contains(e.target)) return;
+    fallbackMouseInside = false;
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    setInspectorFallbackRevealed(false);
+  }, true);
+
   // Toolbar button click handlers. These run in bubble phase after the
   // capture-phase onClick short-circuits on editor-root targets, so they
   // don't interfere with selection/deselection logic.
@@ -735,6 +822,7 @@
     toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
     exportMenu.dataset.abovePanel = String(inspectorVisible);
     inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
+    positionInspectorStack();
   }
   function openExportMenu() {
     state.exportMenuOpen = true;
@@ -1058,7 +1146,9 @@
     saveAnnotation(getAnnotationEditorTarget(), annotationTextarea.value);
   });
   annotationTextarea.addEventListener('input', () => {
+    autoGrowAnnotationTextarea();
     updateAnnotationDraftStatus(getAnnotationEditorTarget());
+    positionInspectorStack();
   });
   annotationDeleteBtn.addEventListener('click', (e) => {
     e.preventDefault();

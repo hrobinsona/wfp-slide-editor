@@ -22,7 +22,10 @@
     if (!e) return false;
     return (
       isPointInsideElementBox(toolbar, e.clientX, e.clientY) ||
-      isPointInsideElementBox(inspector, e.clientX, e.clientY)
+      (
+        inspectorDock.dataset.visible === 'true' &&
+        isPointInsideElementBox(inspector, e.clientX, e.clientY)
+      )
     );
   }
 
@@ -301,6 +304,21 @@
     }
   }
 
+  function autoGrowAnnotationTextarea() {
+    const minHeight = 52;
+    // The textarea has a content cap; viewport pressure is handled by the
+    // inspector body's live `100vh` scroll bound rather than a guessed
+    // subtraction that cannot account for agent-reply blocks.
+    const maxHeight = 112;
+    annotationTextarea.style.height = 'auto';
+    // scrollHeight excludes the border while height is border-box; include
+    // the 1px top/bottom borders so the last line is never clipped by 2px.
+    const naturalHeight = Math.max(minHeight, annotationTextarea.scrollHeight + 2);
+    const nextHeight = Math.min(maxHeight, naturalHeight);
+    annotationTextarea.style.height = `${nextHeight}px`;
+    annotationTextarea.style.overflowY = naturalHeight > nextHeight ? 'auto' : 'hidden';
+  }
+
   function getAnnotationEditorTarget() {
     const selected = getSelectedElements();
     if (
@@ -433,6 +451,7 @@
       annotationDeleteBtn.disabled = true;
       updateAnnotationDraftStatus(null);
       renderAnnotationReply(null);
+      autoGrowAnnotationTextarea();
       return;
     }
     const targetChanged = annotationRow.__wfpeTarget !== el;
@@ -446,9 +465,11 @@
     if (options.force || targetChanged || (!preserveDraft && document.activeElement !== annotationTextarea)) {
       annotationTextarea.value = text;
     }
+    autoGrowAnnotationTextarea();
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
     renderAnnotationReply(el);
+    positionInspectorStack();
   }
 
   // Read-only "Agent …" line under the note textarea (v2.13): shows the
@@ -819,6 +840,9 @@
       positionRing(state.selected);
       positionDimBubble(state.selected);
       populateInspector(state.selected);
+      if (!state.drag && !state.resize && !state.txn && !state.editingText) {
+        positionInspectorStack();
+      }
       refreshAnnotationMarkers();
       startSelectionTracking();
     } else {
@@ -1292,10 +1316,68 @@
       'aria-label',
       state.inspectorMinimised ? 'Expand inspector' : 'Minimise inspector'
     );
+    positionInspectorStack();
     refreshExportUi();
   }
 
   function setInspectorMinimised(value) {
     state.inspectorMinimised = !!value;
     refreshInspector();
+  }
+
+  // Keep the complete editor instrument clear of the selected element at
+  // rest. The current side wins while it remains clear; switching happens
+  // only when that side overlaps and the opposite side does not. This
+  // hysteresis prevents placement oscillation as layout settles.
+  function positionInspectorStack() {
+    const visible = inspectorDock.dataset.visible === 'true';
+    if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
+      inspector.dataset.avoidance = 'clear';
+      inspector.dataset.revealed = 'false';
+      return;
+    }
+    // A live manipulation intentionally holds the dock still so v2.12's
+    // overlap-gated fade remains meaningful as content passes beneath it.
+    if (state.drag || state.resize || state.txn || state.editingText) return;
+
+    const selectionRect = getLiveSelectionRect();
+    if (!selectionRect) return;
+    const margin = 16;
+    const gutter = 10;
+    const width = Math.max(246, stack.offsetWidth || 0);
+    const toolbarHeight = toolbar.offsetHeight || 36;
+    const exportHeight = state.exportMenuOpen ? (exportMenu.offsetHeight + 1) : 0;
+    const bodyHeight = (state.inspectorMinimised || state.exportMenuOpen)
+      ? 0
+      : inspectorFoldInner.scrollHeight;
+    const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
+    const height = Math.min(
+      toolbarHeight + exportHeight + inspectorHeight + 2,
+      window.innerHeight - margin * 2
+    );
+    const expandedSelection = {
+      left: selectionRect.left - gutter,
+      top: selectionRect.top - gutter,
+      right: selectionRect.right + gutter,
+      bottom: selectionRect.bottom + gutter,
+    };
+    const candidates = {
+      left: { left: margin, top: margin, right: margin + width, bottom: margin + height },
+      right: {
+        left: window.innerWidth - margin - width,
+        top: margin,
+        right: window.innerWidth - margin,
+        bottom: margin + height,
+      },
+    };
+    const current = stack.dataset.side === 'left' ? 'left' : 'right';
+    const other = current === 'right' ? 'left' : 'right';
+    const currentBlocked = rectsOverlap(expandedSelection, candidates[current]);
+    const otherBlocked = rectsOverlap(expandedSelection, candidates[other]);
+    if (currentBlocked && !otherBlocked) stack.dataset.side = other;
+    const nextAvoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    if (inspector.dataset.avoidance !== nextAvoidance || nextAvoidance === 'clear') {
+      inspector.dataset.revealed = 'false';
+    }
+    inspector.dataset.avoidance = nextAvoidance;
   }

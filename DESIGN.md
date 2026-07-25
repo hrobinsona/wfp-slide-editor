@@ -4,7 +4,7 @@ This document captures architectural decisions and the reasoning behind them. Fo
 
 ## Current Status
 
-The shipped editor is v2.14: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, the v2.11 export action menu with save-in-place, the v2.12 adaptive inspector fade, the v2.13 live agent round-trip, and the v2.14 handoff ground truth (edit ledger + measurements) are all in `editor.js`.
+The shipped editor is v2.14.2: v1 element editing, v2 inspector, v2.1 Overview mode, v2.2 element copy/paste plus Overview blank-slide insertion, v2.3 move-only multi-select, v2.4 adaptive foreign/flat modes, v2.5 agent handoff annotations, v2.10 ink-glass chrome, the v2.11 export action menu with save-in-place, the v2.12 adaptive inspector fade, the v2.13 live agent round-trip, the v2.14 handoff ground truth (edit ledger + measurements), and the v2.14.2 editor-chrome usability pass are all in `editor.js`.
 
 The original design target was a small single file. That has held deployment simple, but the implementation is now about 3.4k lines. The no-build, no-framework runtime constraint still holds; the next engineering priority is to refactor internal boundaries without changing user behaviour.
 
@@ -172,7 +172,39 @@ The inspector is an editor-owned control panel bound to `state.selected`. It wri
 
 The inspector stays under `#wfp-editor-root`, uses editor-scoped CSS, and must not be exported.
 
-Since the v2.10 "Ink Glass" refresh (design 3b, `feature-briefs/v2-ink-glass-ui.md`), the toolbar and inspector form one two-segment instrument in the top-right corner: the panel lives inside a `.wfpe-inspector-dock` wrapper fixed 1px below the 36px icon-only bar, and selection drives `data-visible` on the dock plus `data-docked` on the toolbar (corner morph) together in `refreshInspector()`. Minimise folds `.wfpe-inspector-fold` via `grid-template-rows`; the bar itself can collapse to 58px via `state.toolbarCollapsed`. Both surfaces use a scheme-invariant dark "ink" glass — there are no `prefers-color-scheme` variants for editor chrome.
+Since the v2.10 "Ink Glass" refresh (design 3b, `feature-briefs/v2-ink-glass-ui.md`), the toolbar and inspector form one two-segment instrument: the panel lives inside a `.wfpe-inspector-dock` wrapper 1px below the 36px icon-only bar, and selection drives `data-visible` on the dock plus `data-docked` on the toolbar (corner morph) together in `refreshInspector()`. Minimise folds `.wfpe-inspector-fold` via `grid-template-rows`; the bar itself can collapse to 58px via `state.toolbarCollapsed`. Both surfaces use a scheme-invariant dark "ink" glass — there are no `prefers-color-scheme` variants for editor chrome.
+
+The v2.14.2 rest-state avoidance rule keeps that instrument side-docked but no
+longer assumes the right edge is always safe. `positionInspectorStack()` models
+the final stack footprint on the current and opposite sides. It retains the
+current side whenever clear, switches only when the current side overlaps and
+the opposite side is clear, and marks the inspector `data-avoidance="overlap"`
+when both are blocked. That last-resort state affects only inspector opacity and
+uses an explicit `data-revealed` activation state; the toolbar remains opaque.
+Mouse hover and keyboard `focusin` reveal the complete panel before activation.
+Touch/pen cannot preview hover, so capture-phase pointer/click guards consume the
+first contact as reveal and allow the second to activate. Leaving with neither
+mouse nor focus inside hides it again. Placement is held during active
+drag/resize/text transactions so the v2.12 live overlap fade continues to work,
+then reconciled at gesture end. The stable-side-first decision is the
+anti-oscillation rule.
+
+The instrument stack remains click-through by default, but a
+`data-visible="true"` inspector dock explicitly restores hit-testing on the
+whole panel. Body padding, captions, and the scrollbar therefore own wheel and
+pointer/touch input just like form controls. A closed dock immediately inherits
+the stack's `pointer-events: none`, preventing its natural-size folded content
+from intercepting the slide during the visibility transition.
+
+Agent note height is content-driven rather than user-resized:
+`autoGrowAnnotationTextarea()` measures `scrollHeight`, grows from 52px to a
+112px content bound, then enables textarea scrolling. Viewport pressure is not
+estimated in JavaScript: `.wfpe-inspector` and `.wfpe-inspector-body` use live
+`100vh` bounds, with the body as the scroll surface. This naturally accounts for
+saved-note population, agent reply blocks, and narrow windows while keeping the
+header fixed and footer/note actions reachable by scrolling. Auto-growth runs on
+draft input and populated saved state, and asks the placement rule to re-check
+the larger inspector.
 
 The v2.12 adaptive fade (design 7, `feature-briefs/v2.12-adaptive-inspector.md`, module `src/editor/85-adaptive-fade.js`) makes the docked panel get out of the way by itself: any live manipulation — drag-move, resize, font scrub/steppers, opacity slider, weight/align commits, inline text edit — sets `data-fade="true"` on `.wfpe-inspector` (opacity 0.16, pointer-events kept) and pins the coral `.wfpe-scrub-tag` value chip to the selection, restoring ~380ms after the gesture settles. The fade is overlap-gated: it only applies when the selection's bounding box intersects the inspector's live rect, re-tested on every move of a drag/resize and on every `input` of a text edit. The value tag shows regardless of overlap and display-suppresses the v2.2 dim bubble while visible (the bubble's `textContent` keeps tracking). The FONT field is scrubbable — drag left/right for ~1px per 3px, one history entry per gesture; a clean click still focuses the input for typed commits. The toolbar never fades.
 
@@ -185,6 +217,9 @@ Current approach:
 - Toggle a body/editor state flag.
 - Use scoped editor CSS to render slides as a thumbnail grid.
 - Add overlay thumbnail chrome from `#wfp-editor-root`.
+- Persistently render one drag grip and one delete control per thumbnail; the
+  grip is a pointer-transparent cue because the thumbnail remains the actual
+  native HTML5 drag source.
 - Keep normal slide DOM as the source of truth.
 - Reorder actual `.slide` elements in `.deck`.
 - Delete actual `.slide` elements from `.deck`.

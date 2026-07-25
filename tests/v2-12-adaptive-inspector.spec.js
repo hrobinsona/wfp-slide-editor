@@ -83,15 +83,17 @@ async function waitForRestore(page) {
 }
 
 // Reposition an (already absolutely positioned) harness element so its box
-// intersects the docked inspector's top-right footprint.
-async function moveUnderInspector(page, selector, left = 700, top = 40) {
+// spans both legal dock sides. This exercises the deliberate fallback path
+// while leaving ordinary one-sided selections free to trigger auto-placement.
+async function moveUnderInspector(page, selector, _left = 700, top = 40) {
   await page.evaluate(
-    ({ sel, l, t }) => {
+    ({ sel, t }) => {
       const el = document.querySelector(sel);
-      el.style.left = `${l}px`;
+      el.style.left = '0';
       el.style.top = `${t}px`;
+      el.style.width = '1280px';
     },
-    { sel: selector, l: left, t: top },
+    { sel: selector, t: top },
   );
 }
 
@@ -103,6 +105,194 @@ function elCenter(page, selector) {
 }
 
 test.describe('v2.12 — adaptive inspector fade', () => {
+  test('rest-state dock avoids a top-right selection, tracks geometry, and falls back without fading the toolbar', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadHarness(page);
+    await page.keyboard.press('e');
+
+    await selectByMouse(page, '.s1 .corner-noise', { x: 300, y: 40 });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-stack')?.dataset.side === 'left');
+
+    let state = await page.evaluate(() => {
+      const selection = document.querySelector('.s1 .corner-noise').getBoundingClientRect();
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector').getBoundingClientRect();
+      const stack = document.querySelector('#wfp-editor-root .wfpe-stack');
+      return {
+        side: stack.dataset.side,
+        overlaps: selection.right > inspector.left && selection.left < inspector.right &&
+          selection.bottom > inspector.top && selection.top < inspector.bottom,
+      };
+    });
+    expect(state.side).toBe('left');
+    expect(state.overlaps).toBe(false);
+
+    // Selection tracking re-evaluates geometry at rest and returns to the
+    // opposite side only once the current side becomes blocked.
+    await page.evaluate(() => {
+      const el = document.querySelector('.s1 .corner-noise');
+      el.style.right = 'auto';
+      el.style.left = '0';
+      el.style.width = '420px';
+    });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-stack')?.dataset.side === 'right');
+
+    // A viewport-spanning selection blocks both sides. The panel becomes
+    // non-obstructive, while the toolbar remains fully opaque.
+    await page.evaluate(() => {
+      const el = document.querySelector('.s1 .corner-noise');
+      el.style.left = '0';
+      el.style.right = '0';
+      el.style.width = 'auto';
+    });
+    await page.waitForFunction(() =>
+      document.querySelector('#wfp-editor-root .wfpe-inspector')?.dataset.avoidance === 'overlap');
+    state = await page.evaluate(() => {
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const toolbar = document.querySelector('#wfp-editor-root .wfpe-toolbar');
+      return {
+        avoidance: inspector.dataset.avoidance,
+        inspectorOpacity: Number(getComputedStyle(inspector).opacity),
+        toolbarOpacity: Number(getComputedStyle(toolbar).opacity),
+      };
+    });
+    expect(state.avoidance).toBe('overlap');
+    expect(state.inspectorOpacity).toBeLessThanOrEqual(0.2);
+    expect(state.toolbarOpacity).toBe(1);
+  });
+
+  test('fallback reveal is predictable for mouse, keyboard, and first-touch activation', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadHarness(page);
+    await page.keyboard.press('e');
+    await moveUnderInspector(page, '.s1 .headline');
+    await selectByMouse(page, '.s1 .headline', { x: 20, y: 15 });
+
+    const inspector = page.locator(INSPECTOR);
+    const minimise = page.locator(`${ROOT} .wfpe-inspector-minimise`);
+    await expect(inspector).toHaveAttribute('data-avoidance', 'overlap');
+    await expect(inspector).toHaveAttribute('data-revealed', 'false');
+
+    // Mouse hover reveals the whole panel before its first click; that click
+    // is therefore an intentional control activation.
+    await minimise.hover();
+    await expect(inspector).toHaveAttribute('data-revealed', 'true');
+    await minimise.click();
+    await expect(inspector).toHaveAttribute('data-state', 'minimised');
+    await minimise.click();
+    await expect(inspector).toHaveAttribute('data-state', 'expanded');
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.mouse.move(640, 690);
+    await expect(inspector).toHaveAttribute('data-revealed', 'false');
+
+    // Keyboard focus reveals before the focused control can be operated and
+    // remains revealed while focus advances within the panel.
+    await minimise.focus();
+    await expect(inspector).toHaveAttribute('data-revealed', 'true');
+    await page.keyboard.press('Tab');
+    expect(await page.evaluate(() =>
+      document.querySelector('#wfp-editor-root .wfpe-inspector').contains(document.activeElement)
+    )).toBe(true);
+    await expect(inspector).toHaveAttribute('data-revealed', 'true');
+    await page.locator(`${ROOT} .wfpe-mode-badge`).focus();
+    await expect(inspector).toHaveAttribute('data-revealed', 'false');
+
+    // Touch has no hover preview: the first contact is consumed as reveal,
+    // and only a second contact activates the nearly-invisible control.
+    await page.evaluate(() => {
+      const button = document.querySelector('#wfp-editor-root .wfpe-inspector-minimise');
+      button.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+      }));
+      button.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+      }));
+      button.click();
+    });
+    await expect(inspector).toHaveAttribute('data-revealed', 'true');
+    await expect(inspector).toHaveAttribute('data-state', 'expanded');
+
+    await page.evaluate(() => {
+      const button = document.querySelector('#wfp-editor-root .wfpe-inspector-minimise');
+      button.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+      }));
+      button.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'touch',
+      }));
+      button.click();
+    });
+    await expect(inspector).toHaveAttribute('data-state', 'minimised');
+  });
+
+  test('placement state responds to resize, minimise, export suppression, and Overview transitions', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadHarness(page);
+    await page.keyboard.press('e');
+    await moveUnderInspector(page, '.s1 .headline');
+    await selectByMouse(page, '.s1 .headline', { x: 20, y: 15 });
+
+    const inspector = page.locator(INSPECTOR);
+    const dock = page.locator(`${ROOT} .wfpe-inspector-dock`);
+    const toolbar = page.locator(`${ROOT} .wfpe-toolbar`);
+    await expect(inspector).toHaveAttribute('data-avoidance', 'overlap');
+
+    // The same selection no longer blocks either edge in a wider viewport.
+    await page.setViewportSize({ width: 1800, height: 720 });
+    await expect(inspector).toHaveAttribute('data-avoidance', 'clear');
+
+    const expandedHeight = await inspector.evaluate((el) => el.getBoundingClientRect().height);
+    await page.locator(`${ROOT} .wfpe-inspector-minimise`).click();
+    await expect(inspector).toHaveAttribute('data-state', 'minimised');
+    const minimisedHeight = await inspector.evaluate((el) => el.getBoundingClientRect().height);
+    expect(minimisedHeight).toBeLessThan(expandedHeight);
+    await page.locator(`${ROOT} .wfpe-inspector-minimise`).click();
+    await expect(inspector).toHaveAttribute('data-state', 'expanded');
+
+    await page.locator(`${ROOT} button[data-action="export"]`).click();
+    await expect(inspector).toHaveAttribute('data-suppressed', 'true');
+    await expect(toolbar).toHaveCSS('opacity', '1');
+    await page.locator(`${ROOT} button[data-action="export"]`).click();
+    await expect(inspector).toHaveAttribute('data-suppressed', 'false');
+
+    await page.keyboard.press('o');
+    await expect(dock).toHaveAttribute('data-visible', 'false');
+    await expect(inspector).toHaveAttribute('data-avoidance', 'clear');
+    await page.keyboard.press('o');
+    await expect(dock).toHaveAttribute('data-visible', 'false');
+  });
+
+  test('live drag holds the chosen side, then reconciles placement after drop', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadHarness(page);
+    await page.keyboard.press('e');
+    await selectByMouse(page, '.s1 .headline');
+
+    const stack = page.locator(`${ROOT} .wfpe-stack`);
+    await expect(stack).toHaveAttribute('data-side', 'right');
+    const start = await elCenter(page, '.s1 .headline');
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 470, start.y, { steps: 8 });
+
+    const during = await fadeState(page, '.s1 .headline');
+    expect(during.overlap).toBe(true);
+    expect(during.faded).toBe(true);
+    await expect(stack).toHaveAttribute('data-side', 'right');
+
+    await page.mouse.up();
+    await expect(stack).toHaveAttribute('data-side', 'left');
+  });
+
   test('drag fades the panel only while the element is under it, re-tested per move', async ({ page }) => {
     await loadHarness(page);
     await page.keyboard.press('e');

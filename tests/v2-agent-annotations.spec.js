@@ -10,6 +10,9 @@ const OUTPUT_DIR = path.join(__dirname, 'output');
 const FIXTURE_PATH = path.join(PROJECT_ROOT, 'fixtures', 'foreign-deck.html');
 const NOTE = 'ANNOTATION TEST UNIQUE: review this rewritten subsection for clarity.';
 const NOTE_EDITED = 'ANNOTATION TEST UNIQUE: make this sharper and call out the missing point.';
+const PROOFREAD_NOTE = 'Tighten this paragraph, preserve the measured result, explain the comparison in plain language, and end with one concrete implication for readers.';
+const LONG_NOTE = `${PROOFREAD_NOTE} `.repeat(7).trim();
+const LONG_REPLY = 'Agent needs clarification about the intended comparison and the supporting evidence. '.repeat(14).trim();
 
 const rowSel = '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]';
 const textareaSel = '#wfp-editor-root .wfpe-annotation-input';
@@ -122,6 +125,189 @@ function extractHandoffPayload(html) {
 }
 
 test.describe('v2.5 — agent handoff annotations', () => {
+  test('a realistic instruction auto-grows into a proofreadable area at 1280×720', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active h1');
+    // Let the dock's opening fold settle before Playwright focuses the
+    // textarea; otherwise scrollIntoView can programmatically scroll the
+    // still-clipped grid wrapper rather than the page a user actually sees.
+    await page.waitForTimeout(450);
+    await page.locator(textareaSel).fill(PROOFREAD_NOTE);
+
+    const metrics = await page.evaluate(() => {
+      const textarea = document.querySelector('#wfp-editor-root .wfpe-annotation-input');
+      const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+      const rect = inspector.getBoundingClientRect();
+      return {
+        length: textarea.value.length,
+        clientHeight: textarea.clientHeight,
+        scrollHeight: textarea.scrollHeight,
+        overflowY: getComputedStyle(textarea).overflowY,
+        inspectorBottom: rect.bottom,
+      };
+    });
+    expect(metrics.length).toBeGreaterThanOrEqual(130);
+    expect(metrics.clientHeight).toBeGreaterThan(52);
+    expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
+    expect(metrics.overflowY).toBe('hidden');
+    expect(metrics.inspectorBottom).toBeLessThanOrEqual(720);
+    await expect(page.locator(statusSel)).toHaveText('Unsaved');
+
+    await page.locator(textareaSel).press('Escape');
+    await expect(page.locator(textareaSel)).toHaveValue('');
+    const resetHeight = await page.locator(textareaSel)
+      .evaluate((el) => getComputedStyle(el).height);
+    expect(resetHeight).toBe('52px');
+  });
+
+  test('saved notes, replies, and actions remain reachable in bounded inspectors', async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 420, height: 560 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await loadReady(page);
+      await saveNote(page, '.slide.active h1', LONG_NOTE);
+      await page.evaluate((reply) => {
+        const el = document.querySelector('.slide.active h1');
+        el.setAttribute('data-wfp-edit-annotation-status', 'needs-input');
+        el.setAttribute('data-wfp-edit-annotation-reply', reply);
+      }, LONG_REPLY);
+      await clickToSelect(page, '.slide.active .foreign-note');
+      await clickToSelect(page, '.slide.active h1');
+      await page.waitForTimeout(450);
+
+      const metrics = await page.evaluate(() => {
+        const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const textarea = document.querySelector('#wfp-editor-root .wfpe-annotation-input');
+        const reply = document.querySelector('#wfp-editor-root .wfpe-annotation-reply');
+        const rect = inspector.getBoundingClientRect();
+        return {
+          inspectorTop: rect.top,
+          inspectorBottom: rect.bottom,
+          bodyClientHeight: body.clientHeight,
+          bodyScrollHeight: body.scrollHeight,
+          textareaHeight: getComputedStyle(textarea).height,
+          textareaOverflow: getComputedStyle(textarea).overflowY,
+          textareaClientHeight: textarea.clientHeight,
+          textareaScrollHeight: textarea.scrollHeight,
+          value: textarea.value,
+          replyVisible: getComputedStyle(reply).display !== 'none',
+        };
+      });
+
+      expect(metrics.inspectorTop).toBeGreaterThanOrEqual(0);
+      expect(metrics.inspectorBottom).toBeLessThanOrEqual(viewport.height);
+      expect(metrics.bodyScrollHeight).toBeGreaterThan(metrics.bodyClientHeight);
+      expect(metrics.textareaHeight).toBe('112px');
+      expect(metrics.textareaOverflow).toBe('auto');
+      expect(metrics.textareaScrollHeight).toBeGreaterThan(metrics.textareaClientHeight);
+      expect(metrics.value).toBe(LONG_NOTE);
+      expect(metrics.replyVisible).toBe(true);
+
+      for (const selector of [
+        '#wfp-editor-root .wfpe-annotation-actions',
+        '#wfp-editor-root .wfpe-action-row',
+      ]) {
+        await page.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'end' }));
+        const visible = await page.evaluate((sel) => {
+          const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body').getBoundingClientRect();
+          const action = document.querySelector(sel).getBoundingClientRect();
+          return action.top >= body.top - 1 && action.bottom <= body.bottom + 1;
+        }, selector);
+        expect(visible).toBe(true);
+      }
+    }
+  });
+
+  test('visible inspector body owns real touch and wheel input in clear-side mode', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      hasTouch: true,
+    });
+    const page = await context.newPage();
+    try {
+      await loadReady(page);
+      await saveNote(page, '.slide.active h1', LONG_NOTE);
+      await page.evaluate((reply) => {
+        const el = document.querySelector('.slide.active h1');
+        el.setAttribute('data-wfp-edit-annotation-status', 'needs-input');
+        el.setAttribute('data-wfp-edit-annotation-reply', reply);
+      }, LONG_REPLY);
+      await clickToSelect(page, '.slide.active .foreign-note');
+      await clickToSelect(page, '.slide.active h1');
+      await page.waitForTimeout(450);
+
+      const surface = await page.evaluate(() => {
+        const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const slide = document.querySelector('.slide.active');
+        const rect = body.getBoundingClientRect();
+        body.scrollTop = 0;
+        window.__wfpeSurfaceInput = { bodyPointerDowns: 0, slidePointerDowns: 0 };
+        body.addEventListener('pointerdown', () => {
+          window.__wfpeSurfaceInput.bodyPointerDowns += 1;
+        });
+        slide.addEventListener('pointerdown', () => {
+          window.__wfpeSurfaceInput.slidePointerDowns += 1;
+        });
+        // Six pixels inside the body sits in its 13px padding gutter rather
+        // than over a form descendant. It must still be an editor hit target
+        // and a usable scroll surface.
+        const x = rect.left + 6;
+        const y = rect.top + Math.min(80, rect.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return {
+          avoidance: inspector.dataset.avoidance,
+          x,
+          y,
+          hitInsideEditor: !!hit?.closest('#wfp-editor-root'),
+          bodyClientHeight: body.clientHeight,
+          bodyScrollHeight: body.scrollHeight,
+        };
+      });
+
+      expect(surface.avoidance).toBe('clear');
+      expect(surface.hitInsideEditor).toBe(true);
+      expect(surface.bodyScrollHeight).toBeGreaterThan(surface.bodyClientHeight);
+
+      // Playwright's touchscreen sends browser input rather than a synthetic
+      // DOM event. The body must receive it; it must not fall through to the
+      // selected slide beneath the transparent chrome.
+      await page.touchscreen.tap(surface.x, surface.y);
+      expect(await page.evaluate(() => window.__wfpeSurfaceInput)).toEqual({
+        bodyPointerDowns: 1,
+        slidePointerDowns: 0,
+      });
+
+      // A real wheel gesture over the same non-control gutter scrolls the
+      // inspector body. This covers the scrollbar/surface path that
+      // programmatic scrollIntoView cannot validate.
+      await page.mouse.move(surface.x, surface.y);
+      await page.mouse.wheel(0, 600);
+      await expect.poll(() => page.locator('#wfp-editor-root .wfpe-inspector-body')
+        .evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+      await page.mouse.wheel(0, 10_000);
+      const actionsVisible = await page.evaluate(() => {
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const actions = document.querySelector('#wfp-editor-root .wfpe-action-row');
+        const bodyRect = body.getBoundingClientRect();
+        const actionRect = actions.getBoundingClientRect();
+        return (
+          body.scrollTop > 0 &&
+          actionRect.top >= bodyRect.top - 1 &&
+          actionRect.bottom <= bodyRect.bottom + 1
+        );
+      });
+      expect(actionsVisible).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
   test('annotation row visibility follows single selection, multi-select, and Overview', async ({ page }) => {
     await loadReady(page);
 
@@ -168,11 +354,11 @@ test.describe('v2.5 — agent handoff annotations', () => {
         tailContent: tail.content,
       };
     });
-    expect(markerStyle.width).toBe('16px');
-    expect(markerStyle.height).toBe('16px');
+    expect(markerStyle.width).toBe('13px');
+    expect(markerStyle.height).toBe('13px');
     expect(markerStyle.radius).toBe('50%');
     expect(markerStyle.background).toMatch(/radial-gradient/);
-    expect(markerStyle.background).toMatch(/244,\s*132,\s*123/);
+    expect(markerStyle.background).toMatch(/240,\s*104,\s*91/);
     expect(markerStyle.tailContent).toBe('none');
 
     await page.locator(textareaSel).fill(NOTE_EDITED);

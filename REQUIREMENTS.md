@@ -1,4 +1,4 @@
-# Requirements: Current Product Contract (v2.14)
+# Requirements: Current Product Contract (v2.14.2)
 
 ## Goal
 
@@ -36,6 +36,9 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 
 - Fixed ink-glass toolbar mounted under `#wfp-editor-root`.
 - Controls: Edit, Overview, Export, Undo, Redo.
+- The toolbar and inspector move as one stable side-docked instrument when
+  necessary to keep a resting selection visible; the toolbar itself never
+  fades.
 - Toolbar controls never become slide selection targets.
 - All editor UI is removed from exported HTML.
 
@@ -94,9 +97,31 @@ The inspector is visible when an element is selected and supports:
 - Duplicate selected element.
 - Delete selected element.
 - Agent note save/delete for focused handoff annotations.
+- The Agent note authoring area grows with the draft up to a compact bound,
+  then scrolls, so realistic multi-line instructions can be proofread at
+  1280×720 without pushing the inspector off-screen.
 - Minimise/expand state remembered within the editor session.
 
 Inspector clicks must not accidentally select slide content or end inline text editing unless that is the intended control behaviour.
+
+At rest, the editor instrument stays on its current viewport side while that
+side is clear, and moves to the opposite side when the selected element would
+otherwise sit beneath it. If both side positions overlap an unusually wide
+selection, only the inspector uses a visibly translucent fallback that restores
+on deliberate mouse hover or keyboard focus; the toolbar remains fully opaque.
+Touch/pen contacts without hover use the first contact to reveal the panel and
+require a second contact to activate a control, preventing accidental actions
+through nearly invisible chrome. Placement is
+re-evaluated after selection/layout changes, viewport changes, Overview
+transitions, note auto-growth, and inspector minimise/expand without oscillating
+between clear positions.
+
+The inspector is bounded to the live viewport. When a long note, agent reply, or
+narrow viewport makes the control set taller than the available space, the
+inspector body scrolls while its header and all actions remain reachable. Every
+painted part of a visible inspector, including body padding, row captions, and
+the scrollbar, owns pointer, touch, and wheel input; a hidden inspector remains
+fully click-through to the slide.
 
 ### Adaptive Inspector Fade (v2.12)
 
@@ -155,6 +180,8 @@ Inspector clicks must not accidentally select slide content or end inline text e
 
 - Overview mode displays all slides in a grid without permanently wrapping or cloning the slide deck.
 - Thumbnail grid uses the v2 ink-glass visual language.
+- Every thumbnail persistently shows a concise drag grip and delete control;
+  neither capability depends on hover for discovery.
 - Click a thumbnail to make that slide active and return to normal slide view.
 - After thumbnail navigation, the editor owns subsequent plain-view arrows
   using the live slide list; it does not defer to a host cursor that the
