@@ -196,7 +196,14 @@
     pruneInactiveFlowUnlockGroups();
   }
 
+  // The single funnel for "an element was attached to or detached from the
+  // document" (paste/duplicate insert, element delete). Both change what is
+  // under a flat root, and deleting its pinned children down to zero must
+  // release the height hold rather than leave an emptied root propped open —
+  // in the live document AND in the export, which reads the same marker.
+  // Undo/redo of these ops re-derive through their own reconcile.
   function pushElementInsertEntry(op) {
+    reconcileFlatRootHolds();
     pushHistoryEntry([], [op]);
   }
 
@@ -325,6 +332,10 @@
     ) {
       synchronizeSlideState();
     }
+    // v2.15 — the flat-root height hold is derived from which children are
+    // pinned, and this entry may have changed that set. Re-deriving is a
+    // no-op whenever the snapshot pair was already consistent.
+    reconcileFlatRootHolds();
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -355,6 +366,7 @@
       synchronizeSlideState();
     }
     state.historyIndex++;
+    reconcileFlatRootHolds(); // see undo()
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();

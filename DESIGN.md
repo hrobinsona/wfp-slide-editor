@@ -114,6 +114,136 @@ When a user drags a flow-positioned element, including a flow element inside a m
 
 This is more complex than the original v1 sketch because real slide layouts use nested flex/grid structures. The behaviour is correct only if undo restores both the moved element and any touched containers without leaving stale selected DOM references.
 
+Unlocking a DIRECT child of the slide/flat root has no intermediate container
+to pin, so the root's own children are pinned the same way a container's are —
+with one difference: the root element itself never receives inline style
+writes. Native slides own fixed 1920x1080 stylesheet dimensions, and the flat
+root's contract is no inline root mutation (its positioning context comes from
+the fixture stylesheet or the editor's `data-wfp-edit-flat-position-context`
+CSS). The root does take the `data-wfp-edit-flex-frozen` marker, and it
+restores through the ordinary unlock-group machinery and is scrubbed on
+export — but unlike a container's it is not read back as a skip signal.
+A partial group Reset can leave it stale: one deliberately-edited child holds
+the root's container record (see the retention pass below) while its siblings
+are restored to flow, and trusting the latch then skipped sibling pinning on
+the next unlock entirely. The pin set is therefore recomputed each time from
+the children that are still frozen: already-pinned children are left alone so
+a user edit is never clobbered, and only the in-flow remainder is pinned. The
+equivalent latch on ordinary containers is still a plain skip, which is
+pre-existing behaviour and unchanged here. A static non-flat root
+cannot anchor absolute children without a write, so only in that case it falls
+back to the ordinary container pin (inline `position: relative` plus dimension
+locks); those inline writes survive export and freeze that root at its
+authoring-viewport dimensions — the same px-based tradeoff every container pin
+carries. A root with no pinnable sibling keeps the group-of-one safety net.
+
+Every pin path — container and root alike — filters its child list: pinning
+editor-injected DOM (`#wfp-editor-root`) would destroy the overlay's
+`position: fixed`, and pinning a non-rendered child
+(`script`/`style`/`link`/`meta`/`noscript`/`template`) writes an inline style
+that survives export, because the export scrubber only removes
+`data-wfp-edit-*` attributes. Both exclusions apply to the group records and
+the pin writes alike, so the two always agree. The root path adds one more
+rule — 0x0-rect children are excluded — because the flat root can resolve to
+`document.body`, where a `display: none` panel must not count towards "is
+there a sibling worth protecting?". That rule is deliberately root-only: an
+ordinary container can hold an empty but layout-participating child whose pin
+still matters. The root pin also re-anchors against the root's pre-pin
+viewport position: a padding-less root shifts when its first child's margin
+stops collapsing through it as the children leave the flow, and the
+compensation keeps the pinned children visually fixed.
+
+Pinning every child absolute would collapse the flat root's intrinsic height
+and reflow body-level siblings (header/main/footer pages). A height is
+therefore held without inline styles on the live root: the root is stamped
+with `data-wfp-edit-flat-root-height` and a dynamic rule keyed to that exact
+value is appended to editor-owned CSS, so undo/Reset restore by removing the
+attribute while redo re-matches the still-present rule. Exports carry neither
+editor CSS nor markers, so the export clone converts the marker into inline
+`height` on the root before the attribute sweep — the one place the exported
+root gains inline style, precisely because the live root never does.
+
+The held value is not simply the root's pre-pin border box. On a padding-less,
+border-less root the children's vertical margins collapse THROUGH it: the
+first child's top margin is the root's top margin, and the last child's bottom
+margin is its bottom margin. Pinning deletes both (an out-of-flow child has no
+margin to collapse) and an explicit height stops the bottom one collapsing
+even before the children move, so holding the border-box height left following
+content ~48px too high in the reported case. Instead of modelling the collapse
+rules, the pin anchors on the observable — the FOLLOW ANCHOR: the position of
+the root's next in-flow sibling, or, with no such sibling, the root's own
+bottom edge (which already carries the collapsed-through bottom margin). The
+anchor's position in the pristine layout is captured at the first pin and is
+the target the held height is solved against. One correction is exact wherever
+the anchor is linear in the root's height (block and flex-column flow); a
+second pass absorbs rounding, and if a pass does not improve on the previous
+residual — a stretched flex item, a percentage height, a `max-height` cap —
+the best value so far is restored, so the hold is never worse than the plain
+measurement.
+
+The hold is DERIVED state, correct only for the set of children pinned at that
+moment, and that set keeps changing: a partial Reset returns some children to
+flow (re-enabling the collapse the hold was compensating for), undo/redo move
+between pinned states, and a later unlock pins the remainder. A one-shot
+measurement therefore goes stale, and the stale value reaches the export
+clone. So the hold is re-derived from live geometry after every transition
+that can change the pinned set: the pin itself, a group restore (inside the
+same transaction, so undo/redo round-trip the corrected value), undo/redo,
+and element attach/detach — paste/duplicate and delete, hooked once on the
+history entry point both funnel through, so deleting the pinned children of
+a root releases the hold instead of propping an emptied root open (in the
+export too, which reads the same marker). Once no pinned child remains the
+marker is dropped outright and the root returns to natural layout — the
+dynamic rule is keyed to the exact attribute value, so removing the attribute
+un-matches it.
+
+The TARGET outlives an empty pinned set. Undoing the delete or Reset that
+emptied it re-attaches pinned children into a collapsed root, and solving
+back to the retained target is the only way to restore the pre-delete
+geometry; adopting the collapsed layout would freeze the very shift being
+repaired. It is re-captured whenever a pin ESTABLISHES a hold on a root with
+nothing pinned — the layout measured then is the natural one — so a content
+edit between unlock cycles is not held against an outdated position.
+
+Rules in the dynamic stylesheet are additive and never pruned for the page
+session. That is deliberate rather than a leak: undo and redo restore earlier
+attribute values, which must still find their rule. The set is bounded by the
+distinct heights one root takes in a session, and a live refresh replaces the
+whole editor closure (and destroys the stylesheet with the old document), so
+nothing accumulates across generations.
+
+Two paths deliberately carry no reconcile. Overview slide delete/insert
+cannot reach a held root: the hold only exists on an element marked
+`data-wfp-edit-flat-root`, which only flat mode sets, and Overview is gated
+off in flat mode — a document with slides never resolves as flat in the first
+place. Inline text edit rewrites a pinned child's content, not the root's
+child set; a pinned child is absolutely positioned at an explicit box, so its
+content cannot change the root's flow.
+
+Anchor positions are read in LAYOUT space (`offsetTop`/`offsetHeight`), never
+through `getBoundingClientRect`. Layout offsets ignore transforms and
+scrolling, so the residual is already in the units of the CSS height being
+written and needs no scale conversion. This is the one place in the engine
+where the `transform: scale()` gotcha does NOT apply: a transform on the root
+does not move a following sibling, because it does not affect layout, so
+dividing a rect-based residual by the root's own scale overshoots by exactly
+1/scale. (Pointer deltas and the pinned-child re-anchor still divide by the
+canvas scale — they compare viewport-space values.)
+
+The residual limitation is the root's OWN box: with the collapsed margins gone
+it grows to absorb them, so a padding-less root's border box (and therefore
+its background) can extend up to the collapsed top margin higher and the
+collapsed bottom margin lower than before the unlock. Its children and
+everything following it stay pixel-stable, which is the invariant that
+matters; restoring the root's exact border box would require inline margin
+writes on the live root, which the no-inline-root-mutation contract forbids.
+
+The unlock itself is deadzone-gated for both drag and resize gestures: a
+handle or element mousedown records geometry only, and no transaction, style
+write, or sibling pin happens until the pointer moves past `DRAG_DEADZONE_PX`.
+A zero-movement press-and-release therefore mutates nothing and adds no
+history entry.
+
 Flow-unlock Reset uses a separate session-only provenance map,
 `state.flowUnlockGroups`. Each element maps to an ordered stack of group
 memberships; the latest active group owns that element for Reset. Before the

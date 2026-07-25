@@ -65,6 +65,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - Existing inline styles must be preserved and merged with editor-written styles.
 - Flow-positioned elements can be unlocked into absolute positioning when dragged.
 - Unlocking protects affected siblings and layout containers so nearby content does not shift unexpectedly.
+- Unlock protection includes direct children of the slide/page root: their siblings are pinned without writing inline styles on the root itself.
 - Unlock conversion and the drag/resize operation are undoable.
 - Resize handles, the inspector, and dimension bubble are hidden while multiple elements are selected.
 
