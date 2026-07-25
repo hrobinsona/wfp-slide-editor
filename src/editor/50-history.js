@@ -42,7 +42,44 @@
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Pending-transaction flush hooks.
+  //
+  // A control can legitimately hold state.txn open across a short settle
+  // window instead of closing it the instant its own trigger event fires
+  // (the opacity slider's keyboard-burst coalescing in 30-ui-inspector-
+  // controls.js is the first case: closing on every `change` the way a
+  // mouse drag does would fragment one held-key gesture into dozens of
+  // history entries). beginTxn()'s reentry guard below — "ignore re-entry;
+  // outermost owns the txn" — means any OTHER gesture that starts while
+  // that window is still open would otherwise either silently merge into
+  // the pending session (wrong granularity — e.g. a drag started moments
+  // after an opacity change would undo as one step instead of two) or have
+  // its own beginTxn() options silently discarded (data loss — e.g.
+  // startTextEdit's captureHtml:true never takes effect, so the typed
+  // content becomes permanently un-undoable). A control that holds a
+  // session open like this MUST register a flush hook here for exactly as
+  // long as the session stays open, so beginTxn() finalizes it as its own
+  // history entry before deciding whether a genuine reentry exists.
+  // ---------------------------------------------------------------------------
+  const pendingTxnFlushHooks = new Set();
+
+  function registerPendingTxnFlush(hook) {
+    pendingTxnFlushHooks.add(hook);
+  }
+
+  function unregisterPendingTxnFlush(hook) {
+    pendingTxnFlushHooks.delete(hook);
+  }
+
+  function flushPendingTxnSessions() {
+    if (!pendingTxnFlushHooks.size) return;
+    // Snapshot first — a hook's own cleanup unregisters itself mid-loop.
+    for (const hook of [...pendingTxnFlushHooks]) hook();
+  }
+
   function beginTxn(options = {}) {
+    flushPendingTxnSessions();
     if (state.txn) return; // ignore re-entry; outermost owns the txn
     state.txn = {
       snapshots: new Map(),
@@ -121,7 +158,13 @@
       restoreEditingEl = state.editingText.el;
       if (state.txn) endTxn(); // commits typing-so-far
     }
-    if (!state.txn) beginTxn(options);
+    // beginTxn() re-checks state.txn itself and flushes any pending
+    // settle-window session first (see the flush-hooks block above) — an
+    // outer `if (!state.txn)` guard here would skip that flush whenever a
+    // pending session (rather than a genuine in-progress txn) happens to
+    // be why state.txn is currently set, letting this call silently reuse
+    // someone else's transaction instead of opening its own.
+    beginTxn(options);
     return restoreEditingEl;
   }
 

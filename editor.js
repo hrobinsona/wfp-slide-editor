@@ -109,6 +109,7 @@
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set after an editor-owned slide activation/mutation/refresh; flips arrow-nav to live-DOM when the fixture's cached cursor/list can be stale
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
+    annotatedElementsCache: [], // perf fix — every currently-annotated element, cached by refreshAnnotationMarkers() for the idle selection-tracking tick. Lives on state (not a module let) because refreshExportUi()'s tail call to refreshAnnotationMarkers() runs during an earlier fragment's evaluation, same reasoning as agentResultsSummary above.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
     flowUnlockGroups: new WeakMap(), // Element → ordered unlock-group memberships. The latest active group owns Reset for that element; inactive entries remain only so undo/redo can reactivate their provenance.
@@ -2613,18 +2614,94 @@
     });
   }
 
-  // Opacity slider — same one-entry-per-drag contract as font-size.
+  // Opacity slider — same one-entry-per-drag contract as font-size. Mouse
+  // interaction opens the history session on mousedown, before any `input`
+  // fires, and closes it immediately on mouseup/change — unchanged.
+  // Keyboard interaction (focus + arrow keys) never fires mousedown, so
+  // `input` used to find no open session and bail out entirely: the
+  // native thumb moved but opacity never changed, and the next repopulate
+  // snapped the thumb back. `input` now opens a session lazily when none
+  // is open.
+  //
+  // Unlike a mouse drag, a native <input type=range> fires `change`
+  // immediately after EVERY keyboard-driven `input` — including every
+  // step of OS key auto-repeat while an arrow key is held (verified
+  // directly against Chromium: a held key produces one input+change pair
+  // per repeat tick, not one trailing change at release). Closing on
+  // `change` the way mouse does would turn one held-key gesture into
+  // dozens of history entries and evict unrelated older undo state
+  // (HISTORY_MAX, 00-preamble.js) well before the user lets go. A
+  // lazily-opened (keyboard) session therefore settles instead of closing
+  // immediately: `change` arms a short timer — the same "wait for the
+  // gesture to actually stop" shape as the adaptive-fade restore
+  // (FADE_RESTORE_MS, 85-adaptive-fade.js) — that closes the session only
+  // once no further input arrives, so a whole burst of presses, held or
+  // not, lands as one entry, same as a mouse drag. Losing focus flushes it
+  // immediately instead of waiting out the timer.
+  //
+  // Holding state.txn open for that settle window is only safe because it
+  // is registered with 50-history.js's pending-txn-flush mechanism for
+  // exactly as long as the timer is armed: any OTHER gesture that opens a
+  // transaction while the window is open (a drag, a text edit, another
+  // inspector commit) forces this session to finalize as its own history
+  // entry FIRST, so it can never silently absorb an unrelated change or
+  // swallow another beginTxn() call's own options (e.g. captureHtml).
+  const OPACITY_KEYBOARD_SETTLE_MS = 380;
   let opacitySliderTarget = null;
   let opacitySliderRestoreCtx = null;
-  opacitySlider.addEventListener('mousedown', () => {
-    const el = state.selected;
-    if (!el) return;
+  let opacitySliderOwnedTxn = null; // identity guard for the deferred keyboard close, below
+  let opacitySliderKeyboardSession = false;
+  let opacitySliderSettleTimer = null;
+  function beginOpacitySession(el, { keyboard = false } = {}) {
     opacitySliderTarget = el;
     opacitySliderRestoreCtx = startInspectorTxn();
     touchElement(el);
+    opacitySliderOwnedTxn = state.txn;
+    opacitySliderKeyboardSession = keyboard;
+  }
+  function closeOpacitySession() {
+    // Unregister first and unconditionally: this is also the pending-txn-
+    // flush hook itself (see below), so it must be safe to call whether it
+    // fires from our own timer, from an external flush, or from a direct
+    // mouse/blur close — and must never leave a stale registration behind.
+    unregisterPendingTxnFlush(closeOpacitySession);
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    if (!opacitySliderTarget) return;
+    opacitySliderTarget = null;
+    opacitySliderKeyboardSession = false;
+    const owned = opacitySliderOwnedTxn;
+    opacitySliderOwnedTxn = null;
+    const ctx = opacitySliderRestoreCtx;
+    opacitySliderRestoreCtx = null;
+    // Something else (most plausibly a selection change while a keyboard
+    // settle timer was pending) may already have closed/replaced the
+    // shared txn slot — only end the one this session actually opened.
+    if (state.txn === owned) endInspectorTxn(ctx);
+    liveEditEnd();
+  }
+  opacitySlider.addEventListener('mousedown', () => {
+    const el = state.selected;
+    if (!el) return;
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    beginOpacitySession(el);
   });
   opacitySlider.addEventListener('input', () => {
-    if (!opacitySliderTarget) return;
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    if (opacitySliderTarget && opacitySliderTarget !== state.selected) {
+      // An earlier session — most often an orphaned mouse drag whose
+      // mouseup never reached us (button released outside the window) —
+      // never closed before the selection moved on. Close it out for
+      // real (a harmless no-op if it captured no change) instead of
+      // silently continuing to apply values to the stale element.
+      closeOpacitySession();
+    }
+    if (!opacitySliderTarget) {
+      if (!state.selected) return;
+      beginOpacitySession(state.selected, { keyboard: true });
+    }
     const el = opacitySliderTarget;
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
     el.style.opacity = String(pct / 100);
@@ -2636,14 +2713,19 @@
   });
   const endOpacityDrag = () => {
     if (!opacitySliderTarget) return;
-    opacitySliderTarget = null;
-    const ctx = opacitySliderRestoreCtx;
-    opacitySliderRestoreCtx = null;
-    endInspectorTxn(ctx);
-    liveEditEnd();
+    if (opacitySliderKeyboardSession) {
+      clearTimeout(opacitySliderSettleTimer);
+      opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
+      // Pending until the timer fires or something else needs the txn
+      // slot first — closeOpacitySession() unregisters itself either way.
+      registerPendingTxnFlush(closeOpacitySession);
+      return;
+    }
+    closeOpacitySession();
   };
   opacitySlider.addEventListener('mouseup', endOpacityDrag);
   opacitySlider.addEventListener('change', endOpacityDrag);
+  opacitySlider.addEventListener('blur', closeOpacitySession);
   opacitySlider.addEventListener('keydown', (e) => e.stopPropagation());
 
   // ± buttons — one history entry per click.
@@ -3186,14 +3268,25 @@
     marker.style.top = `${Math.max(4, top)}px`;
   }
 
+  // All elements bearing a saved annotation, regardless of current
+  // visibility (has a note, but not necessarily connected / on the active
+  // slide / on screen). getAnnotatedElements(document) is the expensive
+  // part — a document-wide attribute query — and refreshAnnotationMarkers()
+  // below is the only place that re-runs it, caching the unfiltered result
+  // on state.annotatedElementsCache (see 10-state.js for why it lives on
+  // state rather than a module let) so the idle selection-tracking tick
+  // (further down) never queries the document itself; it just re-checks
+  // each already-known element's current visibility and rect.
   function refreshAnnotationMarkers() {
     if (!annotationLayer) return;
     if (!state.editMode || state.overviewMode) {
       annotationLayer.replaceChildren();
+      state.annotatedElementsCache = [];
       return;
     }
     const activeSlide = getActiveSlide();
-    const annotated = getAnnotatedElements(document).filter((el) => isAnnotationMarkerVisibleFor(el, activeSlide));
+    state.annotatedElementsCache = getAnnotatedElements(document);
+    const annotated = state.annotatedElementsCache.filter((el) => isAnnotationMarkerVisibleFor(el, activeSlide));
     const existing = new Map(
       [...annotationLayer.querySelectorAll('.wfpe-annotation-badge')]
         .map((marker) => [marker.dataset.annotationId || '', marker])
@@ -3251,6 +3344,11 @@
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
+    // refreshExportUi() -> refreshAnnotationMarkers() just refreshed
+    // annotatedElementsCache; recapture the idle-tracking baseline now so
+    // the new/changed annotation is tracked immediately rather than only
+    // after the next unrelated full refresh.
+    startSelectionTracking();
     showToast(el, nextText ? 'Agent note saved.' : 'Agent note deleted.');
     return true;
   }
@@ -3267,6 +3365,7 @@
     endInspectorTxn(ctx);
     populateAnnotation(el, { force: true });
     refreshExportUi();
+    startSelectionTracking(); // keep the idle-tracking baseline current — see saveAnnotation
     showToast(el, 'Agent note deleted.');
     return true;
   }
@@ -3752,6 +3851,10 @@
   }
 
   let selectionRafId = 0;
+  // Rects captured right after the most recent full refresh, used by the
+  // idle tick below to detect whether anything actually moved before
+  // paying for another full refresh. Null while nothing is tracked.
+  let selectionTrackingSnapshot = null;
 
   function shouldTrackSelection() {
     return (
@@ -3763,18 +3866,111 @@
   }
 
   function stopSelectionTracking() {
+    selectionTrackingSnapshot = null;
     if (!selectionRafId) return;
     cancelAnimationFrame(selectionRafId);
     selectionRafId = 0;
   }
 
+  // ---------------------------------------------------------------------------
+  // Idle-tick dirty check (perf).
+  //
+  // Every frame while an element sits selected, this loop used to re-run
+  // the FULL refreshSelection() path — getComputedStyle reads, inspector
+  // input writes, autoGrowAnnotationTextarea's two forced reflows,
+  // positionInspectorStack's offset reads, and a document-wide annotation
+  // marker query — even when nothing had moved. That's continuous layout
+  // work for as long as anything stays selected.
+  //
+  // refreshSelection() itself and every event-driven call site (click,
+  // drag/resize commit, undo/redo, slide change, inspector commits, the
+  // v2.12 gesture fade, etc.) are untouched — those still force a full
+  // refresh immediately, exactly as before. Only the idle rAF loop gets
+  // cheaper: each tick just re-checks the selected element(s) and every
+  // known-annotated element's visibility + rect against the values cached
+  // from the last full refresh (no document query — annotatedElementsCache
+  // above already has the element list). Nothing changed → reschedule and
+  // do no other work. Something changed (the selection moved, a
+  // no-selection-change host animation moved/revealed/hid an annotated
+  // element) → run the full refreshSelection() exactly as before, which
+  // recaptures the baseline for the next tick. This is deliberately
+  // geometry-only: a host script changing a non-geometric style (e.g.
+  // opacity, colour, font-size) directly, with no rect/visibility change
+  // and no editor event, will not refresh the inspector's readouts until
+  // something else triggers a full refresh.
+  // ---------------------------------------------------------------------------
+  function rectsRoughlyEqual(a, b) {
+    return (
+      Math.abs(a.left - b.left) < 0.1 &&
+      Math.abs(a.top - b.top) < 0.1 &&
+      Math.abs(a.width - b.width) < 0.1 &&
+      Math.abs(a.height - b.height) < 0.1
+    );
+  }
+
+  // Tracks EVERY known-annotated element (not just the currently-visible
+  // ones) with its own visibility verdict, so an element that is revealed
+  // (or hidden) by host code with no other geometry change still flips
+  // the check below — not just elements that were already on screen.
+  function captureSelectionTrackingSnapshot() {
+    const activeSlide = getActiveSlide();
+    return {
+      members: getSelectedElements().map((el) => ({ el, rect: el.getBoundingClientRect() })),
+      annotated: state.annotatedElementsCache.map((el) => {
+        const visible = el.isConnected && isAnnotationMarkerVisibleFor(el, activeSlide);
+        return { el, visible, rect: visible ? el.getBoundingClientRect() : null };
+      }),
+    };
+  }
+
+  function selectionTrackingSnapshotIsStale(snapshot, members) {
+    if (!snapshot) return true;
+    if (members.length !== snapshot.members.length) return true;
+    for (let i = 0; i < members.length; i++) {
+      const cached = snapshot.members[i];
+      if (members[i] !== cached.el || !rectsRoughlyEqual(members[i].getBoundingClientRect(), cached.rect)) {
+        return true;
+      }
+    }
+    const activeSlide = getActiveSlide();
+    for (const entry of snapshot.annotated) {
+      const visible = entry.el.isConnected && isAnnotationMarkerVisibleFor(entry.el, activeSlide);
+      if (visible !== entry.visible) return true;
+      if (visible && !rectsRoughlyEqual(entry.el.getBoundingClientRect(), entry.rect)) return true;
+    }
+    return false;
+  }
+
   function startSelectionTracking() {
-    if (selectionRafId || !shouldTrackSelection()) return;
-    selectionRafId = requestAnimationFrame(() => {
-      selectionRafId = 0;
-      if (!shouldTrackSelection()) return;
+    if (!shouldTrackSelection()) return;
+    // Always refresh the baseline, even if a frame is already scheduled.
+    // Event-driven refreshes (e.g. every tick of a drag) call this too;
+    // without an unconditional recapture here, the idle loop's next tick
+    // would keep comparing against a pre-gesture snapshot and force one
+    // redundant extra full refresh right after the gesture ends.
+    selectionTrackingSnapshot = captureSelectionTrackingSnapshot();
+    if (selectionRafId) return;
+    selectionRafId = requestAnimationFrame(selectionTrackingTick);
+  }
+
+  function selectionTrackingTick() {
+    selectionRafId = 0;
+    // Inlines shouldTrackSelection()'s checks so getSelectedElements() (a
+    // slide-scoped query plus a per-member containment check) runs once
+    // per tick instead of twice.
+    if (!state.editMode || state.overviewMode || state.editingText) return;
+    const members = getSelectedElements();
+    if (!members.length) return;
+    if (selectionTrackingSnapshotIsStale(selectionTrackingSnapshot, members)) {
+      // Something moved (or selection membership changed) since the last
+      // snapshot — full refresh, exactly like every other call site.
+      // refreshSelection() re-invokes startSelectionTracking() itself,
+      // which recaptures the baseline and reschedules the next tick.
       refreshSelection();
-    });
+      return;
+    }
+    // Nothing changed — skip the expensive path and just keep watching.
+    selectionRafId = requestAnimationFrame(selectionTrackingTick);
   }
 
   function clearDisconnectedSelection() {
@@ -4254,7 +4450,44 @@
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Pending-transaction flush hooks.
+  //
+  // A control can legitimately hold state.txn open across a short settle
+  // window instead of closing it the instant its own trigger event fires
+  // (the opacity slider's keyboard-burst coalescing in 30-ui-inspector-
+  // controls.js is the first case: closing on every `change` the way a
+  // mouse drag does would fragment one held-key gesture into dozens of
+  // history entries). beginTxn()'s reentry guard below — "ignore re-entry;
+  // outermost owns the txn" — means any OTHER gesture that starts while
+  // that window is still open would otherwise either silently merge into
+  // the pending session (wrong granularity — e.g. a drag started moments
+  // after an opacity change would undo as one step instead of two) or have
+  // its own beginTxn() options silently discarded (data loss — e.g.
+  // startTextEdit's captureHtml:true never takes effect, so the typed
+  // content becomes permanently un-undoable). A control that holds a
+  // session open like this MUST register a flush hook here for exactly as
+  // long as the session stays open, so beginTxn() finalizes it as its own
+  // history entry before deciding whether a genuine reentry exists.
+  // ---------------------------------------------------------------------------
+  const pendingTxnFlushHooks = new Set();
+
+  function registerPendingTxnFlush(hook) {
+    pendingTxnFlushHooks.add(hook);
+  }
+
+  function unregisterPendingTxnFlush(hook) {
+    pendingTxnFlushHooks.delete(hook);
+  }
+
+  function flushPendingTxnSessions() {
+    if (!pendingTxnFlushHooks.size) return;
+    // Snapshot first — a hook's own cleanup unregisters itself mid-loop.
+    for (const hook of [...pendingTxnFlushHooks]) hook();
+  }
+
   function beginTxn(options = {}) {
+    flushPendingTxnSessions();
     if (state.txn) return; // ignore re-entry; outermost owns the txn
     state.txn = {
       snapshots: new Map(),
@@ -4333,7 +4566,13 @@
       restoreEditingEl = state.editingText.el;
       if (state.txn) endTxn(); // commits typing-so-far
     }
-    if (!state.txn) beginTxn(options);
+    // beginTxn() re-checks state.txn itself and flushes any pending
+    // settle-window session first (see the flush-hooks block above) — an
+    // outer `if (!state.txn)` guard here would skip that flush whenever a
+    // pending session (rather than a genuine in-progress txn) happens to
+    // be why state.txn is currently set, letting this call silently reuse
+    // someone else's transaction instead of opening its own.
+    beginTxn(options);
     return restoreEditingEl;
   }
 

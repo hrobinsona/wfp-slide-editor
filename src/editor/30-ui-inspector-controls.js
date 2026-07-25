@@ -989,18 +989,94 @@
     });
   }
 
-  // Opacity slider — same one-entry-per-drag contract as font-size.
+  // Opacity slider — same one-entry-per-drag contract as font-size. Mouse
+  // interaction opens the history session on mousedown, before any `input`
+  // fires, and closes it immediately on mouseup/change — unchanged.
+  // Keyboard interaction (focus + arrow keys) never fires mousedown, so
+  // `input` used to find no open session and bail out entirely: the
+  // native thumb moved but opacity never changed, and the next repopulate
+  // snapped the thumb back. `input` now opens a session lazily when none
+  // is open.
+  //
+  // Unlike a mouse drag, a native <input type=range> fires `change`
+  // immediately after EVERY keyboard-driven `input` — including every
+  // step of OS key auto-repeat while an arrow key is held (verified
+  // directly against Chromium: a held key produces one input+change pair
+  // per repeat tick, not one trailing change at release). Closing on
+  // `change` the way mouse does would turn one held-key gesture into
+  // dozens of history entries and evict unrelated older undo state
+  // (HISTORY_MAX, 00-preamble.js) well before the user lets go. A
+  // lazily-opened (keyboard) session therefore settles instead of closing
+  // immediately: `change` arms a short timer — the same "wait for the
+  // gesture to actually stop" shape as the adaptive-fade restore
+  // (FADE_RESTORE_MS, 85-adaptive-fade.js) — that closes the session only
+  // once no further input arrives, so a whole burst of presses, held or
+  // not, lands as one entry, same as a mouse drag. Losing focus flushes it
+  // immediately instead of waiting out the timer.
+  //
+  // Holding state.txn open for that settle window is only safe because it
+  // is registered with 50-history.js's pending-txn-flush mechanism for
+  // exactly as long as the timer is armed: any OTHER gesture that opens a
+  // transaction while the window is open (a drag, a text edit, another
+  // inspector commit) forces this session to finalize as its own history
+  // entry FIRST, so it can never silently absorb an unrelated change or
+  // swallow another beginTxn() call's own options (e.g. captureHtml).
+  const OPACITY_KEYBOARD_SETTLE_MS = 380;
   let opacitySliderTarget = null;
   let opacitySliderRestoreCtx = null;
-  opacitySlider.addEventListener('mousedown', () => {
-    const el = state.selected;
-    if (!el) return;
+  let opacitySliderOwnedTxn = null; // identity guard for the deferred keyboard close, below
+  let opacitySliderKeyboardSession = false;
+  let opacitySliderSettleTimer = null;
+  function beginOpacitySession(el, { keyboard = false } = {}) {
     opacitySliderTarget = el;
     opacitySliderRestoreCtx = startInspectorTxn();
     touchElement(el);
+    opacitySliderOwnedTxn = state.txn;
+    opacitySliderKeyboardSession = keyboard;
+  }
+  function closeOpacitySession() {
+    // Unregister first and unconditionally: this is also the pending-txn-
+    // flush hook itself (see below), so it must be safe to call whether it
+    // fires from our own timer, from an external flush, or from a direct
+    // mouse/blur close — and must never leave a stale registration behind.
+    unregisterPendingTxnFlush(closeOpacitySession);
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    if (!opacitySliderTarget) return;
+    opacitySliderTarget = null;
+    opacitySliderKeyboardSession = false;
+    const owned = opacitySliderOwnedTxn;
+    opacitySliderOwnedTxn = null;
+    const ctx = opacitySliderRestoreCtx;
+    opacitySliderRestoreCtx = null;
+    // Something else (most plausibly a selection change while a keyboard
+    // settle timer was pending) may already have closed/replaced the
+    // shared txn slot — only end the one this session actually opened.
+    if (state.txn === owned) endInspectorTxn(ctx);
+    liveEditEnd();
+  }
+  opacitySlider.addEventListener('mousedown', () => {
+    const el = state.selected;
+    if (!el) return;
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    beginOpacitySession(el);
   });
   opacitySlider.addEventListener('input', () => {
-    if (!opacitySliderTarget) return;
+    clearTimeout(opacitySliderSettleTimer);
+    opacitySliderSettleTimer = null;
+    if (opacitySliderTarget && opacitySliderTarget !== state.selected) {
+      // An earlier session — most often an orphaned mouse drag whose
+      // mouseup never reached us (button released outside the window) —
+      // never closed before the selection moved on. Close it out for
+      // real (a harmless no-op if it captured no change) instead of
+      // silently continuing to apply values to the stale element.
+      closeOpacitySession();
+    }
+    if (!opacitySliderTarget) {
+      if (!state.selected) return;
+      beginOpacitySession(state.selected, { keyboard: true });
+    }
     const el = opacitySliderTarget;
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
     el.style.opacity = String(pct / 100);
@@ -1012,14 +1088,19 @@
   });
   const endOpacityDrag = () => {
     if (!opacitySliderTarget) return;
-    opacitySliderTarget = null;
-    const ctx = opacitySliderRestoreCtx;
-    opacitySliderRestoreCtx = null;
-    endInspectorTxn(ctx);
-    liveEditEnd();
+    if (opacitySliderKeyboardSession) {
+      clearTimeout(opacitySliderSettleTimer);
+      opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
+      // Pending until the timer fires or something else needs the txn
+      // slot first — closeOpacitySession() unregisters itself either way.
+      registerPendingTxnFlush(closeOpacitySession);
+      return;
+    }
+    closeOpacitySession();
   };
   opacitySlider.addEventListener('mouseup', endOpacityDrag);
   opacitySlider.addEventListener('change', endOpacityDrag);
+  opacitySlider.addEventListener('blur', closeOpacitySession);
   opacitySlider.addEventListener('keydown', (e) => e.stopPropagation());
 
   // ± buttons — one history entry per click.
