@@ -108,7 +108,10 @@ between clear positions.
 
 The inspector is bounded to the live viewport. When a long note, agent reply, or
 narrow viewport makes the control set taller than the available space, the
-inspector body scrolls while its header and all actions remain reachable.
+inspector body scrolls while its header and all actions remain reachable. Every
+painted part of a visible inspector, including body padding, row captions, and
+the scrollbar, owns pointer, touch, and wheel input; a hidden inspector remains
+fully click-through to the slide.
 
 ### Adaptive Inspector Fade (v2.12)
 

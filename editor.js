@@ -540,6 +540,14 @@
         visibility 0s,
         opacity 380ms cubic-bezier(0.32,0.72,0,1);
     }
+    /* The stack is click-through by default, but every painted part of a
+       visible inspector must own its input surface — including row captions,
+       body padding, and the scrollbar. Key this to the dock state so the
+       natural-size panel inside the closed grid fold cannot intercept the
+       slide while it animates shut. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-visible="true"] .wfpe-inspector {
+      pointer-events: auto;
+    }
     /* 5b focus fold: while the export menu is docked above, the inspector
        recedes — dimmed, body folded to its 36px header. Dismissing the
        menu restores it. Shares the minimised fold/chevron mechanics. */
@@ -555,11 +563,9 @@
        toolbar remains the fully opaque editor anchor. */
     #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="false"]:not([data-fade="true"]) {
       opacity: 0.18;
-      pointer-events: auto;
     }
     #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="true"]:not([data-fade="true"]) {
       opacity: 1;
-      pointer-events: auto;
     }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
@@ -567,12 +573,6 @@
     #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] .wfpe-inspector {
       visibility: hidden;
       transition: visibility 0s 380ms;
-    }
-    #${ROOT_ID} .wfpe-inspector button,
-    #${ROOT_ID} .wfpe-inspector input,
-    #${ROOT_ID} .wfpe-inspector textarea,
-    #${ROOT_ID} .wfpe-inspector label {
-      pointer-events: auto;
     }
     /* Header — 36px, symmetric with the bar when the body is folded */
     #${ROOT_ID} .wfpe-inspector-header {

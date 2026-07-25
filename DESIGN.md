@@ -147,6 +147,13 @@ drag/resize/text transactions so the v2.12 live overlap fade continues to work,
 then reconciled at gesture end. The stable-side-first decision is the
 anti-oscillation rule.
 
+The instrument stack remains click-through by default, but a
+`data-visible="true"` inspector dock explicitly restores hit-testing on the
+whole panel. Body padding, captions, and the scrollbar therefore own wheel and
+pointer/touch input just like form controls. A closed dock immediately inherits
+the stack's `pointer-events: none`, preventing its natural-size folded content
+from intercepting the slide during the visibility transition.
+
 Agent note height is content-driven rather than user-resized:
 `autoGrowAnnotationTextarea()` measures `scrollHeight`, grows from 52px to a
 112px content bound, then enables textarea scrolling. Viewport pressure is not

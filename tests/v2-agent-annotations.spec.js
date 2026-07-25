@@ -222,6 +222,92 @@ test.describe('v2.5 — agent handoff annotations', () => {
     }
   });
 
+  test('visible inspector body owns real touch and wheel input in clear-side mode', async ({ browser }) => {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 720 },
+      hasTouch: true,
+    });
+    const page = await context.newPage();
+    try {
+      await loadReady(page);
+      await saveNote(page, '.slide.active h1', LONG_NOTE);
+      await page.evaluate((reply) => {
+        const el = document.querySelector('.slide.active h1');
+        el.setAttribute('data-wfp-edit-annotation-status', 'needs-input');
+        el.setAttribute('data-wfp-edit-annotation-reply', reply);
+      }, LONG_REPLY);
+      await clickToSelect(page, '.slide.active .foreign-note');
+      await clickToSelect(page, '.slide.active h1');
+      await page.waitForTimeout(450);
+
+      const surface = await page.evaluate(() => {
+        const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const slide = document.querySelector('.slide.active');
+        const rect = body.getBoundingClientRect();
+        body.scrollTop = 0;
+        window.__wfpeSurfaceInput = { bodyPointerDowns: 0, slidePointerDowns: 0 };
+        body.addEventListener('pointerdown', () => {
+          window.__wfpeSurfaceInput.bodyPointerDowns += 1;
+        });
+        slide.addEventListener('pointerdown', () => {
+          window.__wfpeSurfaceInput.slidePointerDowns += 1;
+        });
+        // Six pixels inside the body sits in its 13px padding gutter rather
+        // than over a form descendant. It must still be an editor hit target
+        // and a usable scroll surface.
+        const x = rect.left + 6;
+        const y = rect.top + Math.min(80, rect.height / 2);
+        const hit = document.elementFromPoint(x, y);
+        return {
+          avoidance: inspector.dataset.avoidance,
+          x,
+          y,
+          hitInsideEditor: !!hit?.closest('#wfp-editor-root'),
+          bodyClientHeight: body.clientHeight,
+          bodyScrollHeight: body.scrollHeight,
+        };
+      });
+
+      expect(surface.avoidance).toBe('clear');
+      expect(surface.hitInsideEditor).toBe(true);
+      expect(surface.bodyScrollHeight).toBeGreaterThan(surface.bodyClientHeight);
+
+      // Playwright's touchscreen sends browser input rather than a synthetic
+      // DOM event. The body must receive it; it must not fall through to the
+      // selected slide beneath the transparent chrome.
+      await page.touchscreen.tap(surface.x, surface.y);
+      expect(await page.evaluate(() => window.__wfpeSurfaceInput)).toEqual({
+        bodyPointerDowns: 1,
+        slidePointerDowns: 0,
+      });
+
+      // A real wheel gesture over the same non-control gutter scrolls the
+      // inspector body. This covers the scrollbar/surface path that
+      // programmatic scrollIntoView cannot validate.
+      await page.mouse.move(surface.x, surface.y);
+      await page.mouse.wheel(0, 600);
+      await expect.poll(() => page.locator('#wfp-editor-root .wfpe-inspector-body')
+        .evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+      await page.mouse.wheel(0, 10_000);
+      const actionsVisible = await page.evaluate(() => {
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const actions = document.querySelector('#wfp-editor-root .wfpe-action-row');
+        const bodyRect = body.getBoundingClientRect();
+        const actionRect = actions.getBoundingClientRect();
+        return (
+          body.scrollTop > 0 &&
+          actionRect.top >= bodyRect.top - 1 &&
+          actionRect.bottom <= bodyRect.bottom + 1
+        );
+      });
+      expect(actionsVisible).toBe(true);
+    } finally {
+      await context.close();
+    }
+  });
+
   test('annotation row visibility follows single selection, multi-select, and Overview', async ({ page }) => {
     await loadReady(page);
 
