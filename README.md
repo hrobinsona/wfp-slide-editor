@@ -16,7 +16,7 @@ This separates content (the slide) from tooling (the editor). Slides remain port
 
 ## Setup (one-time)
 
-The editor is a single file (`editor.js`) hosted somewhere your browser can fetch on demand. A bookmarklet — a `javascript:` URL saved as a bookmark — injects that file into whichever slide page you have open.
+What you deploy is a single file (`editor.js`) hosted somewhere your browser can fetch on demand. A bookmarklet — a `javascript:` URL saved as a bookmark — injects that file into whichever slide page you have open. (`editor.js` is generated from `src/editor/`; see [Working on the editor](#working-on-the-editor) before you change it.)
 
 **Option A — public GitHub Pages (recommended).** Editor URL lives at `https://<your-user>.github.io/wfp-slide-editor/editor.js`. Works on any device, any slide, any time.
 
@@ -62,6 +62,23 @@ npm run build:bookmarklet -- --local
 
 When `editor.js` changes (you push a fix, you bump a version), the next bookmarklet click pulls the latest. The cache-buster in the bookmarklet's URL (`?<timestamp>`) bypasses any browser cache, so there's nothing to clear manually.
 
+## Working on the editor
+
+`editor.js` is **generated**. Do not edit it directly — your change will be overwritten by the next build, and the sync check will reject the commit.
+
+The source lives in `src/editor/` as 14 ordered fragments (`00-preamble.js` … `99-ready.js`). `scripts/build-editor.js` concatenates them, in the order listed in its `PARTS` array, into the deployed file. They all share one IIFE scope, so the split is purely about ownership: no modules, no loader, no extra browser request, and the deployed runtime is still one self-contained, dependency-free file.
+
+```bash
+# 1. Edit the fragment that owns the behaviour (see DESIGN.md → File Structure).
+# 2. Regenerate the deployed file.
+npm run build:editor
+
+# 3. Confirm they agree. build:bookmarklet runs this first and refuses a stale editor.js.
+node scripts/build-editor.js --check
+```
+
+Commit the fragments and the regenerated `editor.js` in the same commit.
+
 ## Quickstart for Claude Code
 
 If you're Claude Code reading this for the first time:
@@ -90,6 +107,9 @@ If you're Claude Code reading this for the first time:
 ├── feature-briefs/            # Delivered v2 feature briefs, kept as history
 ├── fixtures/                  # Real WFP presentations for testing
 │   └── README.md              # How fixtures are used
+├── scripts/                   # build-editor.js, build-bookmarklet.js
+├── src/editor/                # Editor source: 14 ordered fragments (edit these)
+│   └── README.md              # Fragment boundaries
 ├── tests/                     # Playwright coverage for v1, inspector, overview
-└── editor.js                  # Deployed editor; currently single-file
+└── editor.js                  # GENERATED deployed runtime — do not edit
 ```
