@@ -567,3 +567,49 @@ test.describe('v2.15 — flat-root height survives direct-child pinning', () => 
     await exportedPage.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round — resize anchors are applied at first-move, not mousedown, so
+// they must be read then too: a layout shift between the press and the first
+// move past the deadzone must not snap the element back to a stale anchor.
+// ---------------------------------------------------------------------------
+
+test.describe('v2.15 — resize anchors are fresh at deadzone activation', () => {
+  test('a layout shift between mousedown and first move does not snap the element back', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('e');
+
+    const target = page.locator('.slide.active [data-testid="resize-target"]');
+    await target.click();
+    const before = await target.evaluate((el) => ({
+      left: el.offsetLeft,
+      width: el.offsetWidth,
+    }));
+
+    const handle = page.locator(`${ROOT} .wfpe-handle-se`);
+    await expect(handle).not.toHaveCSS('display', 'none');
+    const box = await handle.boundingBox();
+    expect(box).not.toBeNull();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+
+    // Mid-gesture, before the pointer has left the deadzone, something else
+    // moves the element (simulating a late layout shift).
+    await target.evaluate((el) => {
+      el.style.left = `${el.offsetLeft + 40}px`;
+    });
+
+    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 20, { steps: 4 });
+    await page.mouse.up();
+
+    const after = await target.evaluate((el) => ({
+      left: el.offsetLeft,
+      width: el.offsetWidth,
+    }));
+    // A south-east resize never writes `left`, so the element must stay at
+    // its SHIFTED position — a stale mousedown-time anchor would snap it
+    // back to the original left.
+    expect(after.left).toBe(before.left + 40);
+    expect(after.width).toBeGreaterThanOrEqual(before.width + 25);
+  });
+});

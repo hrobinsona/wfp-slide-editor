@@ -6041,6 +6041,13 @@
         r.initHeight = rect.height;
       } else {
         // Lock in the current dimensions so deltas compose deterministically.
+        // Anchors are re-read here rather than trusted from mousedown: any
+        // layout shift between the press and the first move past the
+        // deadzone would otherwise snap the element to a stale position.
+        r.initLeft = r.el.offsetLeft;
+        r.initTop = r.el.offsetTop;
+        r.initWidth = r.el.offsetWidth;
+        r.initHeight = r.el.offsetHeight;
         r.el.style.left = `${r.initLeft}px`;
         r.el.style.top = `${r.initTop}px`;
         r.el.style.width = `${r.initWidth}px`;
