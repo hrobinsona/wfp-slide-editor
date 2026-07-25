@@ -168,8 +168,9 @@ border-less root the children's vertical margins collapse THROUGH it: the
 first child's top margin is the root's top margin, and the last child's bottom
 margin is its bottom margin. Pinning deletes both (an out-of-flow child has no
 margin to collapse) and an explicit height stops the bottom one collapsing
-even before the children move, so a border-box height left following content
-~48px high in the reported case. Instead of modelling the collapse rules, the
+even before the children move, so holding the border-box height left following
+content ~48px too high in the reported case. Instead of modelling the collapse
+rules, the
 pin anchors on the observable: it records the viewport position of the root's
 next in-flow sibling before pinning — or, with no such sibling, the root's own
 bottom edge, which already carries the collapsed-through bottom margin — and
