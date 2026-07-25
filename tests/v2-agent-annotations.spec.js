@@ -174,8 +174,23 @@ test.describe('v2.5 — agent handoff annotations', () => {
         el.setAttribute('data-wfp-edit-annotation-status', 'needs-input');
         el.setAttribute('data-wfp-edit-annotation-reply', reply);
       }, LONG_REPLY);
-      await clickToSelect(page, '.slide.active .foreign-note');
-      await clickToSelect(page, '.slide.active h1');
+      // Re-render the annotation row from the element's attributes, so the
+      // agent reply injected above is on screen when the panel is measured.
+      // Escape in the note field is the editor's own force-repopulate path
+      // (30-ui-inspector-controls.js) and needs nothing but the inspector,
+      // which is always reachable.
+      //
+      // This used to be a deselect/reselect round trip through the slide,
+      // and that is what made the test flaky: onClick rejects any click
+      // whose point falls inside the docked inspector's box
+      // (isPointInsidePassiveEditorSurface), and at 420x560 that box —
+      // x 158-404, y 56-541 of a 420x560 viewport — completely contains
+      // both the h1 and the paragraph. The round trip therefore only landed
+      // while the dock was still animating into place; once it settled, the
+      // reselect was swallowed, the row kept rendering the previous element
+      // with no reply, and the shortened body no longer overflowed.
+      await page.locator(textareaSel).focus();
+      await page.locator(textareaSel).press('Escape');
       await page.waitForTimeout(450);
 
       const metrics = await page.evaluate(() => {
@@ -200,7 +215,14 @@ test.describe('v2.5 — agent handoff annotations', () => {
 
       expect(metrics.inspectorTop).toBeGreaterThanOrEqual(0);
       expect(metrics.inspectorBottom).toBeLessThanOrEqual(viewport.height);
-      expect(metrics.bodyScrollHeight).toBeGreaterThan(metrics.bodyClientHeight);
+      // Bounded and genuinely scrolling. The margin is deliberate: this
+      // assertion is meaningful only when the note AND the agent reply are
+      // both rendered, which together overshoot the clamp by hundreds of
+      // pixels. A one-pixel pass would mean the panel was measured in some
+      // other state, which is precisely how this used to fail (equal
+      // heights, because the reselect above had been swallowed and the
+      // reply row was never rendered).
+      expect(metrics.bodyScrollHeight).toBeGreaterThan(metrics.bodyClientHeight + 100);
       expect(metrics.textareaHeight).toBe('112px');
       expect(metrics.textareaOverflow).toBe('auto');
       expect(metrics.textareaScrollHeight).toBeGreaterThan(metrics.textareaClientHeight);
