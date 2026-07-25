@@ -99,6 +99,92 @@ async function readOpacity(page, selector) {
   );
 }
 
+async function readOffsetLeft(page, selector) {
+  return page.evaluate((sel) => document.querySelector(sel).offsetLeft, selector);
+}
+
+async function readFontSize(page, selector) {
+  return page.evaluate(
+    (sel) => Math.round(parseFloat(getComputedStyle(document.querySelector(sel)).fontSize)),
+    selector,
+  );
+}
+
+// Drags the inspector's font field (~1px of font size per 3 pointer px)
+// using dispatched pointer events rather than page.mouse. The gesture is
+// real — it runs the whole scrub session in 85-adaptive-fade.js, including
+// its startInspectorTxn() — but it is addressed to the field element
+// instead of to screen coordinates, because any live edit re-lays out the
+// inspector stack mid-gesture (the value tag joins the stack and shifts the
+// rows by ~130px while the transition runs). Hit-testing against a moving
+// panel is what would make this flaky; the element reference does not move.
+async function scrubFontField(page, dx) {
+  await page.evaluate((delta) => {
+    const wrap = document.querySelector(
+      '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="font-size"] .wfpe-inspector-field',
+    );
+    const r = wrap.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const base = {
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      button: 0,
+      buttons: 1,
+      bubbles: true,
+      cancelable: true,
+      clientY: r.top + r.height / 2,
+    };
+    wrap.dispatchEvent(new PointerEvent('pointerdown', { ...base, clientX: x }));
+    for (const fraction of [0.4, 0.75, 1]) {
+      wrap.dispatchEvent(new PointerEvent('pointermove', { ...base, clientX: x + delta * fraction }));
+    }
+    wrap.dispatchEvent(new PointerEvent('pointerup', { ...base, buttons: 0, clientX: x + delta }));
+  }, dx);
+}
+
+// Fires a toolbar action WITHOUT moving focus. A real click on the Undo/Redo
+// button would blur the opacity slider first, and the slider's own blur
+// handler closes the settle window — flushing the pending session through a
+// different route and hiding whatever undo()/redo() do (or fail to do) on
+// their own. Dispatching the click leaves focus on the slider, so the
+// settle timer is still armed when undo/redo runs. The keyboard shortcut is
+// unavailable for the same reason: the document keydown handler defers to
+// any focused <input>, so Cmd+Z never reaches undo while the slider holds
+// focus.
+async function fireToolbarAction(page, action) {
+  await page.evaluate((name) => {
+    document
+      .querySelector(`#wfp-editor-root .wfpe-toolbar-btn[data-action="${name}"]`)
+      .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  }, action);
+}
+
+// One unrelated committed history entry: moves the element to x=333 through
+// the inspector, then returns focus to the document so nothing of this edit
+// is still open.
+async function commitUnrelatedXEdit(page, selector) {
+  const xInput = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="x"]');
+  await xInput.click({ clickCount: 3 });
+  await xInput.fill('333');
+  await xInput.press('Enter');
+  await xInput.evaluate((el) => el.blur());
+  expect(await readOffsetLeft(page, selector)).toBe(333);
+}
+
+// Opens a keyboard opacity session and leaves its settle window ARMED:
+// arrow presses with no blur afterwards, so state.txn is still held open
+// when the caller does whatever it is testing.
+async function openPendingOpacitySession(page, selector, presses = 3) {
+  const before = await readOpacity(page, selector);
+  const slider = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
+  await slider.focus();
+  for (let i = 0; i < presses; i += 1) await page.keyboard.press('ArrowLeft');
+  const after = await readOpacity(page, selector);
+  expect(after).toBeCloseTo(before - presses / 100, 2);
+  return { before, after };
+}
+
 test.describe('Selection tracking perf (idle dirty-check)', () => {
   test('idle tracking loop catches up to an element that moves without an editor event', async ({ page }) => {
     await loadReady(page);
@@ -391,5 +477,112 @@ test.describe('Opacity slider keyboard input', () => {
     // ...and a second undo is the one that reverts the opacity burst.
     await page.keyboard.press('ControlOrMeta+z');
     expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+  });
+
+  test('an inspector commit within the settle window lands as its own entry with no text edit open', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+
+    const fontBefore = await readFontSize(page, '.slide.active .resize-target');
+    const { before, after } = await openPendingOpacitySession(page, '.slide.active .resize-target', 2);
+
+    // Scrub the inspector's FONT field while the opacity settle window is
+    // still armed. This is the inspector-to-inspector case with NO text
+    // edit open: startInspectorTxn() never enters its `state.editingText`
+    // branch and goes straight to beginTxn(), whose flush is then the ONLY
+    // thing separating the two commits. Restoring an `if (!state.txn)`
+    // guard around that beginTxn() call reintroduces exactly the bug this
+    // pins — the scrub would find the slot already occupied by the opacity
+    // session, skip its own transaction, and fold both edits into one
+    // history entry.
+    //
+    // The scrub is the one product gesture that genuinely reaches this
+    // state: its pointerdown calls preventDefault() (85-adaptive-fade.js)
+    // so the field never steals focus, which is why the slider does not
+    // blur and the settle window survives. The assertion below confirms
+    // focus really did stay on the slider — i.e. the window was open, not
+    // already flushed by a blur.
+    await scrubFontField(page, 30);
+
+    const fontAfter = await readFontSize(page, '.slide.active .resize-target');
+    expect(fontAfter).toBe(fontBefore + 10);
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(after, 2);
+    expect(await page.evaluate(() => document.activeElement.dataset.wfpeProp)).toBe('opacitySlider');
+
+    // Two entries, in gesture order: the scrub undoes first, leaving the
+    // opacity burst standing...
+    await fireToolbarAction(page, 'undo');
+    expect(await readFontSize(page, '.slide.active .resize-target')).toBe(fontBefore);
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(after, 2);
+
+    // ...and the second undo is the one that reverts the opacity.
+    await fireToolbarAction(page, 'undo');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+  });
+});
+
+// A pending settle-window session is an uncommitted edit parked in the
+// shared txn slot. beginTxn() has always flushed it; undo()/redo() move the
+// same cursor and now flush it too. Both tests below invoke undo/redo
+// through the toolbar with the slider still focused, because every keyboard
+// route to undo is deliberately deferred to the focused control — and a
+// real button click would blur the slider, closing the window through the
+// blur handler instead of through the code under test.
+test.describe('Undo/redo flush pending settle-window sessions', () => {
+  test('undo finalizes a pending opacity burst before it moves the history cursor', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+    await commitUnrelatedXEdit(page, '.slide.active .resize-target');
+
+    const { before, after } = await openPendingOpacitySession(page, '.slide.active .resize-target');
+
+    // Undo while the settle timer is still armed. Without the flush, this
+    // undo restores the x-edit's `before` snapshot — a whole-attribute
+    // `style` write that silently erases the live opacity edit — and the
+    // session's own timer then commits from the moved cursor, truncating
+    // the redo stack. With it, the burst becomes its own entry first and
+    // this undo simply reverts that entry, leaving x=333 untouched.
+    await fireToolbarAction(page, 'undo');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+    expect(await readOffsetLeft(page, '.slide.active .resize-target')).toBe(333);
+
+    // The redo stack survived: the burst comes back as one step.
+    await fireToolbarAction(page, 'redo');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(after, 2);
+    expect(await readOffsetLeft(page, '.slide.active .resize-target')).toBe(333);
+
+    // And the x edit is still a separate step behind it.
+    await fireToolbarAction(page, 'undo');
+    await fireToolbarAction(page, 'undo');
+    expect(await readOffsetLeft(page, '.slide.active .resize-target')).not.toBe(333);
+  });
+
+  test('redo finalizes a pending opacity burst instead of re-applying a superseded entry', async ({ page }) => {
+    await loadReady(page);
+    await clickToSelect(page, '.slide.active .resize-target');
+    await commitUnrelatedXEdit(page, '.slide.active .resize-target');
+
+    // Undo the x edit so there is something on the redo stack, then start
+    // an opacity burst on top of that cursor position.
+    await page.keyboard.press('ControlOrMeta+z');
+    const xUndone = await readOffsetLeft(page, '.slide.active .resize-target');
+    expect(xUndone).not.toBe(333);
+
+    const { before, after } = await openPendingOpacitySession(page, '.slide.active .resize-target');
+
+    // The burst is a new change made from this cursor, so it invalidates
+    // the redo stack — exactly what pushHistoryEntry does for every other
+    // committed change. Flushing first makes redo see that: it becomes a
+    // no-op. Without the flush, redo re-applies the stale x entry, whose
+    // whole-attribute style write silently discards the live opacity edit.
+    await fireToolbarAction(page, 'redo');
+    expect(await readOffsetLeft(page, '.slide.active .resize-target')).toBe(xUndone);
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(after, 2);
+
+    // The burst is a normal entry now, so it undoes and redoes cleanly.
+    await fireToolbarAction(page, 'undo');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(before, 2);
+    await fireToolbarAction(page, 'redo');
+    expect(await readOpacity(page, '.slide.active .resize-target')).toBeCloseTo(after, 2);
   });
 });
