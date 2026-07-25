@@ -443,7 +443,11 @@ test.describe('v2.15 — body-as-flat-root pinning skips editor and non-rendered
 // has no editor CSS, and the flat-position-context export persistence is a
 // separate change (PR #14). This spec verifies HEIGHT persistence on its
 // own terms, independent of that.
-async function loadHeaderMainFooterPage(page) {
+//
+// `padded: false` removes the root's padding and moves the blocks' margins
+// to the vertical axis, so the children's margins COLLAPSE THROUGH the root
+// (see the padding-less describe block below).
+async function loadHeaderMainFooterPage(page, { padded = true } = {}) {
   await disableFsa(page);
   await page.setContent(`
     <!doctype html>
@@ -452,8 +456,8 @@ async function loadHeaderMainFooterPage(page) {
       * { box-sizing: border-box; }
       body { margin: 0; font-family: system-ui, sans-serif; }
       header { height: 80px; background: rgb(221, 232, 240); }
-      main { position: relative; padding: 20px; background: rgb(251, 252, 253); }
-      .doc-block { height: 120px; margin: 0 0 20px; background: rgb(228, 236, 248); }
+      main { position: relative; ${padded ? 'padding: 20px;' : ''} background: rgb(251, 252, 253); }
+      .doc-block { height: 120px; margin: ${padded ? '0 0 20px' : '24px 0'}; background: rgb(228, 236, 248); }
       footer { height: 60px; background: rgb(204, 216, 224); }
     </style></head>
     <body>
@@ -578,6 +582,83 @@ test.describe('v2.15 — flat-root height survives direct-child pinning', () => 
     }));
     expect(exported.mainInlineHeight).not.toBe('');
     expect(Math.abs(exported.footerTop - liveFooterTop)).toBeLessThanOrEqual(1);
+    await exportedPage.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round — a PADDING-LESS flat root. With no padding or border on the
+// root, the children's vertical margins collapse THROUGH it: the first
+// child's top margin is the root's top margin and the last child's bottom
+// margin is its bottom margin. Pinning the children absolute deletes both,
+// so holding the root's border-box height left content below it ~48px high
+// (24px of collapsed top margin + 24px of bottom margin that an explicit
+// height also stops collapsing). The held height must preserve the position
+// of what FOLLOWS the root, not the root's own border box.
+// ---------------------------------------------------------------------------
+
+test.describe('v2.15 — a padding-less flat root holds following content in place', () => {
+  test('a direct-child drag leaves the footer and the pinned sibling pixel-stable', async ({ page }) => {
+    await loadHeaderMainFooterPage(page, { padded: false });
+
+    const before = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      siblingTop: document.querySelector('[data-testid="doc-block-1"]').getBoundingClientRect().top,
+    }));
+
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 40, 20);
+
+    const after = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return {
+        footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+        siblingTop: document.querySelector('[data-testid="doc-block-1"]').getBoundingClientRect().top,
+        mainInlineStyle: main.getAttribute('style'),
+        heldHeight: parseFloat(main.getAttribute('data-wfp-edit-flat-root-height')),
+        borderBoxHeight: main.getBoundingClientRect().height,
+      };
+    });
+
+    // Content BELOW the root does not move — the whole point of the hold.
+    expect(Math.abs(after.footerTop - before.footerTop)).toBeLessThan(2);
+    // …nor does the pinned sibling INSIDE it (margin-collapse re-anchoring).
+    expect(Math.abs(after.siblingTop - before.siblingTop)).toBeLessThan(2);
+    // The held height exceeds the pre-pin border box precisely because it
+    // absorbs the margins that used to collapse through the root.
+    expect(after.heldHeight).toBeGreaterThan(264 + 40);
+    expect(after.borderBoxHeight).toBeCloseTo(after.heldHeight, 0);
+    // The live root is still inline-untouched.
+    expect(after.mainInlineStyle).toBeNull();
+
+    // Undo releases the hold and restores the collapsed-margin layout.
+    await page.keyboard.press('ControlOrMeta+z');
+    const undone = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      heightMarker: document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height'),
+      blockStyle: document.querySelector('[data-testid="doc-block-0"]').getAttribute('style'),
+    }));
+    expect(Math.abs(undone.footerTop - before.footerTop)).toBeLessThan(2);
+    expect(undone.heightMarker).toBeNull();
+    expect(undone.blockStyle).toBeNull();
+  });
+
+  test('the corrected height is what the export persists', async ({ page, context }) => {
+    await loadHeaderMainFooterPage(page, { padded: false });
+
+    const footerBefore = await getFooterTop(page);
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 40, 20);
+
+    const { outPath, html } = await saveExportedHtml(page);
+    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${outPath}`);
+    const exportedFooterTop = await exportedPage.evaluate(
+      () => document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top
+    );
+    expect(Math.abs(exportedFooterTop - footerBefore)).toBeLessThan(2);
     await exportedPage.close();
   });
 });

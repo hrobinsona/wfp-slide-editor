@@ -6409,8 +6409,65 @@
     return Math.max(0, Math.round(cssHeight * 100) / 100);
   }
 
+  // The invariant a held height must preserve is the position of whatever
+  // FOLLOWS the root, not the root's own border box. On a padding-less,
+  // border-less root, margins collapse THROUGH it: the first child's top
+  // margin is the root's top margin and the last child's bottom margin is
+  // its bottom margin. Pinning the children absolute deletes both (an
+  // out-of-flow child has no margin to collapse), and an explicit height
+  // stops the bottom margin collapsing even before the children move — so
+  // the plain border-box measurement leaves following content short by the
+  // two collapsed margins (~48px in the reported case). Rather than model
+  // the collapse rules, anchor on the observable and correct afterwards.
+  //
+  // The anchor is the root's next IN-FLOW sibling (editor chrome, script
+  // tags, display:none and out-of-flow siblings are skipped: they either
+  // must not be touched or do not move with the root's height). With no
+  // such sibling, nothing follows the root and the invariant becomes the
+  // root's own bottom edge — which is exactly its pre-pin margin-box
+  // footprint, since the collapsed-through bottom margin is already baked
+  // into where that edge sits.
+  function isFlowFollowerCandidate(el) {
+    if (!isPinnableContainerChild(el)) return false;
+    const cs = getComputedStyle(el);
+    if (cs.position === 'absolute' || cs.position === 'fixed') return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 || rect.height > 0;
+  }
+
+  function captureFlatRootFollowAnchor(rootEl) {
+    let sibling = rootEl.nextElementSibling;
+    while (sibling && !isFlowFollowerCandidate(sibling)) {
+      sibling = sibling.nextElementSibling;
+    }
+    const read = sibling
+      ? () => sibling.getBoundingClientRect().top
+      : () => rootEl.getBoundingClientRect().bottom;
+    return { read, target: read() };
+  }
+
+  // Both anchor readings are VIEWPORT pixels (getBoundingClientRect sees the
+  // deck's transform: scale); the held height is written as CSS px, so the
+  // residual is divided by the canvas scale before it is applied.
+  function reconcileFlatRootHeightHold(rootEl, anchor, heldCssHeight) {
+    const scale = getCanvasScale() || 1;
+    const residual = (anchor.target - anchor.read()) / scale;
+    if (Math.abs(residual) < 0.5) return heldCssHeight;
+
+    const corrected = Math.max(0, heldCssHeight + residual);
+    applyFlatRootHeightHold(rootEl, corrected);
+    const correctedResidual = (anchor.target - anchor.read()) / scale;
+    if (Math.abs(correctedResidual) <= Math.abs(residual)) return corrected;
+
+    // The follower's offset is not linear in the root's height (a stretched
+    // flex item, a percentage height, a max-height cap). Keep the plain
+    // measurement rather than a worse guess.
+    applyFlatRootHeightHold(rootEl, heldCssHeight);
+    return heldCssHeight;
+  }
+
   function applyFlatRootHeightHold(rootEl, cssHeight) {
-    const value = String(cssHeight);
+    const value = String(Math.max(0, Math.round(cssHeight * 100) / 100));
     if (!flatRootHeightStyleEl) {
       flatRootHeightStyleEl = document.createElement('style');
       root.appendChild(flatRootHeightStyleEl);
@@ -6437,16 +6494,34 @@
   function pinRootChildren(rootEl, children, group = null) {
     if (rootEl.dataset.wfpEditFlexFrozen === 'true') return;
 
+    const holdsHeight = rootEl.getAttribute('data-wfp-edit-flat-root') === 'true';
     const childRects = snapshotChildOffsets(children, rootEl);
     const rootRectBefore = rootEl.getBoundingClientRect();
+    // Read the follow anchor BEFORE the height hold: applying an explicit
+    // height already suppresses bottom-margin collapse, so a target read
+    // afterwards would bake in part of the very shift being corrected.
+    const followAnchor = holdsHeight ? captureFlatRootFollowAnchor(rootEl) : null;
     touchElement(rootEl);
-    // Hold the flat root's height BEFORE the children leave the flow so
-    // content below the root never reflows, even transiently. Slides are
+    // Hold the flat root's height BEFORE the children leave the flow, so its
+    // box never collapses. This first value is the plain border box; where
+    // margins were collapsing through the root it is short, and the reconcile
+    // after pinning corrects it. Both writes happen inside one synchronous
+    // gesture step, so no intermediate layout is ever painted. Slides are
     // excluded: they own explicit stylesheet dimensions and never collapse.
-    if (rootEl.getAttribute('data-wfp-edit-flat-root') === 'true') {
-      applyFlatRootHeightHold(rootEl, measureFlatRootCssHeight(rootEl));
+    let heldCssHeight = 0;
+    if (holdsHeight) {
+      heldCssHeight = measureFlatRootCssHeight(rootEl);
+      applyFlatRootHeightHold(rootEl, heldCssHeight);
     }
     pinSnapshottedChildren(childRects, group);
+
+    // With the children out of flow, the collapsed margins are gone and the
+    // follower's true offset is observable: correct the held height by the
+    // residual. Runs before the child re-anchor below so that compensation
+    // is computed against the final root geometry.
+    if (followAnchor) {
+      reconcileFlatRootHeightHold(rootEl, followAnchor, heldCssHeight);
+    }
 
     // A padding-less root (typically document.body) can itself move when its
     // children leave the flow: the first child's margin no longer collapses

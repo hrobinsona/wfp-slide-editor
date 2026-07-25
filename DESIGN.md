@@ -146,15 +146,40 @@ first child's margin stops collapsing through it as the children leave the
 flow, and the compensation keeps the pinned children visually fixed.
 
 Pinning every child absolute would collapse the flat root's intrinsic height
-and reflow body-level siblings (header/main/footer pages). The measured
-pre-pin height is therefore held without inline styles on the live root: the
-root is stamped with `data-wfp-edit-flat-root-height` and a dynamic rule keyed
-to that exact value is appended to editor-owned CSS, so undo/Reset restore by
-removing the attribute while redo re-matches the still-present rule. Exports
-carry neither editor CSS nor markers, so the export clone converts the marker
-into inline `height` on the root before the attribute sweep — the one place
-the exported root gains inline style, precisely because the live root never
-does.
+and reflow body-level siblings (header/main/footer pages). A height is
+therefore held without inline styles on the live root: the root is stamped
+with `data-wfp-edit-flat-root-height` and a dynamic rule keyed to that exact
+value is appended to editor-owned CSS, so undo/Reset restore by removing the
+attribute while redo re-matches the still-present rule. Exports carry neither
+editor CSS nor markers, so the export clone converts the marker into inline
+`height` on the root before the attribute sweep — the one place the exported
+root gains inline style, precisely because the live root never does.
+
+The held value is not simply the root's pre-pin border box. On a padding-less,
+border-less root the children's vertical margins collapse THROUGH it: the
+first child's top margin is the root's top margin, and the last child's bottom
+margin is its bottom margin. Pinning deletes both (an out-of-flow child has no
+margin to collapse) and an explicit height stops the bottom one collapsing
+even before the children move, so a border-box height left following content
+~48px high in the reported case. Instead of modelling the collapse rules, the
+pin anchors on the observable: it records the viewport position of the root's
+next in-flow sibling before pinning — or, with no such sibling, the root's own
+bottom edge, which already carries the collapsed-through bottom margin — and
+after pinning corrects the held height by the residual. One correction is
+exact wherever the follower's offset is linear in the root's height (block and
+flex-column flow); if a re-measure shows the correction made things worse
+(a stretched flex item, a percentage height, a `max-height` cap) the plain
+border-box measurement is kept, so the result is never worse than the
+uncorrected hold. Deltas are read in viewport pixels and divided by the canvas
+scale before being written as CSS px.
+
+The residual limitation is the root's OWN box: with the collapsed margins gone
+it grows to absorb them, so a padding-less root's border box (and therefore
+its background) can extend up to the collapsed top margin higher and the
+collapsed bottom margin lower than before the unlock. Its children and
+everything following it stay pixel-stable, which is the invariant that
+matters; restoring the root's exact border box would require inline margin
+writes on the live root, which the no-inline-root-mutation contract forbids.
 
 The unlock itself is deadzone-gated for both drag and resize gestures: a
 handle or element mousedown records geometry only, and no transaction, style
