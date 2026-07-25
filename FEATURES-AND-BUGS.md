@@ -35,20 +35,6 @@ already exist for every pinned element (recorded in the same transaction as
 the freeze), so the data is there; the policy isn't. See the scope comment
 above the reset handler in `src/editor/30-ui-inspector-controls.js`.
 
-### Editor-owned nav leaves foreign slide counters stale
-
-- **Status:** open
-- **Raised:** 2026-07-24, v2.13 live-round-trip build (spike finding, confirmed in the browser demo)
-
-The `deckMutated` arrow-nav takeover and the v2.13 post-refresh slide
-restore sync `.progress-dot` elements only. Foreign decks with bespoke
-counters (e.g. `fixtures/foreign-deck.html`'s `.slide-count` label) show a
-stale "1 / 4" after a live refresh restores slide 3, and after any
-takeover navigation. Contract decks are unaffected. Pre-existing for
-reorder/delete; v2.13 makes it more visible. Candidate: detect and re-run
-the deck's own counter update where a hook exists (`foreignFixtureShow`
-style globals), or document as a known foreign-deck limitation.
-
 ## Open — bugs
 
 ### Stale annotation-marker size assertions (16px vs 13px)
@@ -64,6 +50,20 @@ message, so the test is stale, not the code. Test-only fix; check the spec
 for other 16px badge references.
 
 ## Resolved
+
+### Editor-owned nav leaves foreign slide counters stale
+
+- **Status:** fixed 2026-07-25 (ISS-001; branch `codex/fix-foreign-counter`)
+- **Raised:** 2026-07-24, v2.13 live-round-trip build (spike finding, confirmed in the browser demo)
+
+Overview mutations/history, thumbnail navigation, fresh-DOM arrow navigation,
+and live-refresh restoration now share one slide-state synchronizer. It retains
+contract-deck `.progress-dot` behaviour and updates foreign current/total
+counters only when a host node exposes a recognized semantic counter hook plus
+a validated text or split-child shape. It does not call fixture globals,
+rewrite host scripts, or mutate unrelated `1 / N` content. Regression coverage
+uses `fixtures/foreign-deck.html` for insert → exit Overview → ArrowRight
+(`2 / 5`) and for live-refresh restoration/navigation (`3 / 4` → `4 / 4`).
 
 ### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 

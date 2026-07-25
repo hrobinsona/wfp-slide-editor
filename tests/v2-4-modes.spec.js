@@ -822,6 +822,34 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
 });
 
 test.describe('v2.4.5 — End-to-end checkpoint regressions', () => {
+  test('foreign counter follows overview insert and editor-owned arrow navigation', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+
+    await page.evaluate(() => {
+      const unrelatedStatus = document.createElement('div');
+      unrelatedStatus.dataset.testid = 'unrelated-host-status';
+      unrelatedStatus.textContent = '1 / 4';
+      document.body.appendChild(unrelatedStatus);
+    });
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4
+    );
+    await page.locator(
+      '#wfp-editor-root .wfpe-overview-add[data-wfp-edit-insert-index="4"]',
+    ).click();
+    await expect(page.locator('#foreign-presentation > .slide')).toHaveCount(5);
+
+    await page.keyboard.press('o');
+    await expect(page.locator('.slide-count')).toHaveText('1 / 5');
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#foreign-slide-2')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('2 / 5');
+    await expect(page.getByTestId('unrelated-host-status')).toHaveText('1 / 4');
+  });
+
   test('foreign deck arrow navigation follows live DOM order after overview reorder', async ({ page }) => {
     await loadDocumentWithEditor(page, 'foreign-deck.html');
 

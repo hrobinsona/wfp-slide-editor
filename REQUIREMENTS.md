@@ -152,6 +152,11 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - Deleting the last remaining slide is blocked with a toast.
 - If the active slide is deleted, the editor activates the next slide at that position, or the new last slide.
 - Slide reorder, slide delete, and slide insert are undoable and redoable.
+- Once the editor owns slide navigation after an Overview mutation or live
+  refresh, every activation keeps contract-deck progress dots and recognized
+  host current/total counters synchronized with the live slide order and count.
+  Host counters are updated only when they expose a semantic slide/page counter
+  hook and a supported counter shape; unrelated host UI is untouched.
 - Exported HTML opens in normal slide view, not Overview mode.
 
 ### Export
@@ -225,6 +230,9 @@ Inspector clicks must not accidentally select slide content or end inline text e
 - The refresh replaces the document wholesale, re-executes the deck's own scripts exactly once against the new markup, and re-mounts the editor.
 - Restored across a refresh: edit mode, active slide (index clamped to the new deck), inspector minimised state, toolbar collapsed state, and the bound file handle. Selection is cleared, and undo history restarts — a refresh is a new history generation.
 - After a refresh the editor owns plain-view arrow navigation (the same takeover used after slide reorder/delete), because the deck script's cached slide state reset to the first slide.
+- Restoring the active slide after refresh uses the same slide-state
+  synchronization as editor-owned arrow navigation, including progress dots and
+  recognized host current/total counters.
 - A refresh never interrupts an open interaction (transaction, text edit, drag, resize, Overview mode, or open export menu); the change applies on the next idle poll after the interaction ends.
 - The editor's own saves never trigger a refresh.
 - If reading the bound file fails for permissions, one toast announces "Live updates paused — file access needed. Save to re-link."; the next successful save re-links the watch and toasts "Live updates resumed.".

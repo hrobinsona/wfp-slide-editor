@@ -4220,6 +4220,16 @@
     if (entry.changes) {
       for (const c of entry.changes) applyElementSnapshot(c.element, c.before);
     }
+    if (
+      entry.slideOps &&
+      entry.slideOps.some((op) => (
+        op.type === 'reorder' ||
+        op.type === 'delete' ||
+        op.type === 'slideInsert'
+      ))
+    ) {
+      synchronizeSlideState();
+    }
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -4233,6 +4243,16 @@
     }
     if (entry.slideOps) {
       for (const op of entry.slideOps) redoSlideOp(op);
+    }
+    if (
+      entry.slideOps &&
+      entry.slideOps.some((op) => (
+        op.type === 'reorder' ||
+        op.type === 'delete' ||
+        op.type === 'slideInsert'
+      ))
+    ) {
+      synchronizeSlideState();
     }
     state.historyIndex++;
     refreshSelection();
@@ -4564,15 +4584,8 @@
   }
 
   function navigateToSlide(slide) {
-    // Clear .active from any other slide in the same deck, set on the
-    // clicked one. Idempotent — clicking the already-active slide just
-    // exits overview without churning the class.
-    const deck = slide.parentElement;
-    if (!deck) return;
-    for (const sib of deck.querySelectorAll(':scope > .slide.active')) {
-      if (sib !== slide) sib.classList.remove('active');
-    }
-    if (!slide.classList.contains('active')) slide.classList.add('active');
+    if (!slide.parentElement) return;
+    synchronizeSlideState(slide);
     setOverviewMode(false);
   }
 
@@ -4643,33 +4656,103 @@
     // editor owns plain-view arrow nav for paginated modes using fresh
     // DOM queries. Flat mode has no page-shaped navigation.
     state.deckMutated = getDocumentMode() !== 'flat';
+    synchronizeSlideState();
   }
 
-  // Navigate the live deck by ±1, syncing the fixture's progress-dot
-  // siblings if any exist (best-effort — not all fixtures have them).
-  // Used by the deckMutated arrow-nav takeover in onKeyDown.
+  // Synchronize editor-owned slide activation with common host navigation
+  // capabilities. Contract decks expose progress dots. Foreign decks may
+  // instead expose a semantic current/total counter. Counter updates are
+  // deliberately conservative: a recognized slide/page counter hook must
+  // also contain a supported counter shape, so arbitrary host UI that merely
+  // happens to include numbers is left untouched.
+  function synchronizeRecognizedHostCounters(activeIndex, total) {
+    const counterSelector = [
+      '[data-slide-count]',
+      '[data-slide-counter]',
+      '[data-page-count]',
+      '[data-page-counter]',
+      '.slide-count',
+      '.slide-counter',
+      '.page-count',
+      '.page-counter',
+      '#slide-count',
+      '#slide-counter',
+      '#page-count',
+      '#page-counter',
+    ].join(',');
+
+    for (const counter of document.querySelectorAll(counterSelector)) {
+      if (counter.closest(`#${ROOT_ID}`)) continue;
+
+      // Preserve the host's delimiter, surrounding whitespace, and optional
+      // "Slide" prefix. Text-only counters are safe to update without
+      // flattening authored child markup.
+      if (counter.childElementCount === 0) {
+        const match = counter.textContent.match(
+          /^(\s*(?:slide\s+)?)(\d+)(\s*(?:\/|of)\s*)(\d+)(\s*)$/i,
+        );
+        if (match) {
+          counter.textContent = `${match[1]}${activeIndex + 1}${match[3]}${total}${match[5]}`;
+          continue;
+        }
+      }
+
+      // Split counters keep their authored structure. Require both numeric
+      // capabilities before writing either half.
+      const current = counter.querySelector(
+        '[data-current-slide], [data-current-page], .current-slide, .current-page, .slide-current, .page-current',
+      );
+      const count = counter.querySelector(
+        '[data-total-slides], [data-total-pages], .total-slides, .total-pages, .slide-total, .page-total',
+      );
+      if (
+        current &&
+        count &&
+        /^\s*\d+\s*$/.test(current.textContent) &&
+        /^\s*\d+\s*$/.test(count.textContent)
+      ) {
+        current.textContent = String(activeIndex + 1);
+        count.textContent = String(total);
+      }
+    }
+  }
+
+  function synchronizeSlideState(activeSlide = null) {
+    const slides = getSlides();
+    if (slides.length === 0 || getDocumentMode() === 'flat') return null;
+
+    let activeIndex = activeSlide ? slides.indexOf(activeSlide) : -1;
+    if (activeIndex < 0) {
+      activeIndex = slides.findIndex((slide) => slide.classList.contains('active'));
+    }
+    if (activeIndex < 0) activeIndex = 0;
+
+    slides.forEach((slide, index) => {
+      slide.classList.toggle('active', index === activeIndex);
+    });
+    document.querySelectorAll('.progress-dot').forEach((dot, index) => {
+      dot.classList.toggle('active', index === activeIndex);
+    });
+    synchronizeRecognizedHostCounters(activeIndex, slides.length);
+    return slides[activeIndex];
+  }
+
+  // Navigate the live deck by ±1. Used by the deckMutated arrow-nav
+  // takeover in onKeyDown.
   function navigateRelativeInDeck(delta) {
     const slides = getSlides();
     if (slides.length === 0) return;
-    const dots = document.querySelectorAll('.progress-dot');
     let cur = slides.findIndex((s) => s.classList.contains('active'));
     if (cur < 0) {
       // Recovery: no in-DOM slide is .active (e.g., the fixture's
       // stale handler set .active on an orphan before we took over).
       // Re-anchor to the first slide so the user sees something.
-      slides[0].classList.add('active');
-      if (dots[0]) {
-        dots.forEach((d) => d.classList.remove('active'));
-        dots[0].classList.add('active');
-      }
+      synchronizeSlideState(slides[0]);
       return;
     }
     const next = cur + delta;
     if (next < 0 || next >= slides.length) return;
-    slides[cur].classList.remove('active');
-    slides[next].classList.add('active');
-    if (dots[cur]) dots[cur].classList.remove('active');
-    if (dots[next]) dots[next].classList.add('active');
+    synchronizeSlideState(slides[next]);
   }
 
   function dropTargetThumb(target) {
@@ -6944,9 +7027,7 @@
       const slides = getSlides();
       const idx = Math.min(payload.slideIndex || 0, slides.length - 1);
       if (idx >= 0 && slides[idx]) {
-        const dots = document.querySelectorAll('.progress-dot');
-        slides.forEach((s, i) => s.classList.toggle('active', i === idx));
-        dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+        synchronizeSlideState(slides[idx]);
       }
       // The re-parsed deck script cached slide 0 as current; hand plain-view
       // arrow nav to the editor's fresh-DOM implementation, the same
