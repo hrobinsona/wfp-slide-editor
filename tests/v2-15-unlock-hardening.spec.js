@@ -844,7 +844,10 @@ test.describe('v2.15 — static non-flat slide root falls back to the container 
 // upwards by a full block height.
 // ---------------------------------------------------------------------------
 
-async function loadPartialResetPage(page) {
+// `padded: false` lets the blocks' margins collapse through the root (the
+// height-hold cases below); `rootTransform` scales the root itself, which
+// must not affect any layout-space measurement the hold makes.
+async function loadPartialResetPage(page, { padded = true, rootTransform = '' } = {}) {
   await disableFsa(page);
   await page.setContent(`
     <!doctype html>
@@ -853,8 +856,8 @@ async function loadPartialResetPage(page) {
       * { box-sizing: border-box; }
       body { margin: 0; font-family: system-ui, sans-serif; }
       header { height: 40px; background: rgb(221, 232, 240); }
-      main { position: relative; padding: 16px; background: rgb(251, 252, 253); }
-      .doc-block { height: 90px; margin: 0 0 16px; background: rgb(228, 236, 248); }
+      main { position: relative; ${padded ? 'padding: 16px;' : ''} ${rootTransform} background: rgb(251, 252, 253); }
+      .doc-block { height: 90px; margin: ${padded ? '0 0 16px' : '24px 0'}; background: rgb(228, 236, 248); }
       footer { height: 40px; background: rgb(204, 216, 224); }
     </style></head>
     <body>
@@ -937,5 +940,196 @@ test.describe('v2.15 — a stale root latch does not disable sibling pinning', (
       block3: 'true',
       block2Style: retainedStyleBefore,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review round 4 — the height hold is DERIVED state, valid only for the set
+// of children pinned right now. Two ways a one-shot measurement went wrong:
+//
+//   1. A partial Reset returns some children to flow, which re-enables the
+//      margin collapse-through the hold was compensating for. The stale hold
+//      pushed following content down by the collapsed margin — and the wrong
+//      value reached the exported file.
+//   2. Reading the anchor through getBoundingClientRect and dividing by the
+//      canvas scale overshoots by 1/scale when the flat root ITSELF carries
+//      transform: scale() — a transform does not move a following sibling,
+//      because it does not affect layout. Anchors are layout-space
+//      (offsetTop) reads instead, so no scale conversion is involved at all.
+// ---------------------------------------------------------------------------
+
+// Drag block 0 (pins every child), deliberately move block 2 so a Reset must
+// retain it, then Reset block 0 — leaving one pinned child and three back in
+// flow. Returns the footer's viewport top from before any editing.
+async function partiallyResetPaddinglessRoot(page) {
+  await loadPartialResetPage(page, { padded: false });
+  const footerBefore = await getFooterTop(page);
+
+  await page.locator('[data-testid="doc-block-0"]').click();
+  await dragBySelector(page, '[data-testid="doc-block-0"]', 30, 15);
+  const heldWhileFullyPinned = await page.evaluate(
+    () => document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height')
+  );
+
+  await page.locator('[data-testid="doc-block-2"]').click();
+  await dragBySelector(page, '[data-testid="doc-block-2"]', 20, 10);
+
+  await page.locator('[data-testid="doc-block-0"]').click();
+  await page.locator(RESET_BTN).click();
+
+  return { footerBefore, heldWhileFullyPinned };
+}
+
+test.describe('v2.15 — the flat-root hold is re-derived when the pinned set changes', () => {
+  test('a partial Reset re-derives the hold, and undo/redo round-trip it', async ({ page }) => {
+    const { footerBefore, heldWhileFullyPinned } = await partiallyResetPaddinglessRoot(page);
+
+    const afterReset = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      return {
+        footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+        held: main.getAttribute('data-wfp-edit-flat-root-height'),
+        offsetHeight: main.offsetHeight,
+        inlineStyle: main.getAttribute('style'),
+        pinnedChildren: [...main.children].filter(
+          (c) => c.getAttribute('data-wfp-edit-frozen') === 'true'
+        ).length,
+      };
+    });
+
+    // The partial Reset really did leave one pinned child among three that
+    // went back into flow…
+    expect(afterReset.pinnedChildren).toBe(1);
+    // …following content did not move…
+    expect(Math.abs(afterReset.footerTop - footerBefore)).toBeLessThan(2);
+    // …because the hold was re-derived rather than left at its pin-time
+    // value (which is now too tall by the re-enabled collapsed margin)…
+    expect(afterReset.held).not.toBe(heldWhileFullyPinned);
+    expect(afterReset.offsetHeight).toBeCloseTo(parseFloat(afterReset.held), 0);
+    // …and the live root is still inline-untouched.
+    expect(afterReset.inlineStyle).toBeNull();
+
+    // Undo returns to the fully-pinned state (hold back at its old value),
+    // redo returns to the corrected one. Following content is stable at
+    // every step — the re-derivation rides inside the Reset's own entry.
+    await page.keyboard.press('ControlOrMeta+z');
+    const undone = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      held: document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height'),
+      pinnedChildren: [...document.querySelector('#doc-main').children].filter(
+        (c) => c.getAttribute('data-wfp-edit-frozen') === 'true'
+      ).length,
+    }));
+    expect(undone.pinnedChildren).toBe(4);
+    expect(undone.held).toBe(heldWhileFullyPinned);
+    expect(Math.abs(undone.footerTop - footerBefore)).toBeLessThan(2);
+
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    const redone = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      held: document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height'),
+    }));
+    expect(redone.held).toBe(afterReset.held);
+    expect(Math.abs(redone.footerTop - footerBefore)).toBeLessThan(2);
+  });
+
+  test('the export after a partial Reset carries the re-derived hold, not the stale one', async ({ page, context }) => {
+    const { footerBefore, heldWhileFullyPinned } = await partiallyResetPaddinglessRoot(page);
+    const held = await page.evaluate(
+      () => document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height')
+    );
+
+    const { outPath, html } = await saveExportedHtml(page);
+    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(`file://${outPath}`);
+    const exported = await exportedPage.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      mainInlineHeight: document.querySelector('#doc-main').style.height,
+    }));
+    expect(exported.mainInlineHeight).toBe(`${held}px`);
+    expect(exported.mainInlineHeight).not.toBe(`${heldWhileFullyPinned}px`);
+    expect(Math.abs(exported.footerTop - footerBefore)).toBeLessThan(2);
+    await exportedPage.close();
+  });
+
+  test('a flat root that carries its own transform: scale() holds the right height', async ({ page }) => {
+    await loadPartialResetPage(page, {
+      padded: false,
+      rootTransform: 'transform: scale(0.5); transform-origin: top left;',
+    });
+
+    const before = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      footerOffsetTop: document.querySelector('[data-testid="page-footer"]').offsetTop,
+    }));
+
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 30, 15);
+
+    const after = await page.evaluate(() => {
+      const main = document.querySelector('#doc-main');
+      const footer = document.querySelector('[data-testid="page-footer"]');
+      return {
+        footerTop: footer.getBoundingClientRect().top,
+        footerOffsetTop: footer.offsetTop,
+        held: parseFloat(main.getAttribute('data-wfp-edit-flat-root-height')),
+        offsetHeight: main.offsetHeight,
+      };
+    });
+
+    // The scale is a transform: it changes nothing about where the footer
+    // sits in layout, so the hold must be the same value it would be at
+    // scale 1 — a residual divided by the root's own scale overshoots.
+    expect(Math.abs(after.footerOffsetTop - before.footerOffsetTop)).toBeLessThan(2);
+    expect(Math.abs(after.footerTop - before.footerTop)).toBeLessThan(2);
+    expect(after.offsetHeight).toBeCloseTo(after.held, 0);
+  });
+});
+
+// A full Reset releases the hold target along with the marker. Undoing that
+// Reset brings every pin back from a history snapshot — with no target to
+// re-derive against — so the reconcile that runs after undo/redo has to
+// re-adopt one. Without it the NEXT partial Reset has nothing to solve
+// towards and silently reproduces the stale-hold shift.
+test.describe('v2.15 — the hold survives an undo of a full Reset', () => {
+  test('a partial Reset after undoing a full Reset still holds following content', async ({ page }) => {
+    await loadPartialResetPage(page, { padded: false });
+    const footerBefore = await getFooterTop(page);
+
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-0"]', 30, 15);
+    await page.locator(RESET_BTN).click();
+    expect(await page.evaluate(
+      () => document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height')
+    )).toBeNull();
+
+    await page.keyboard.press('ControlOrMeta+z');
+    const restored = await page.evaluate(() => ({
+      held: document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height'),
+      pinned: [...document.querySelector('#doc-main').children].filter(
+        (c) => c.getAttribute('data-wfp-edit-frozen') === 'true'
+      ).length,
+    }));
+    expect(restored.pinned).toBe(4);
+    expect(restored.held).not.toBeNull();
+
+    // Deliberate edit on a sibling, then a partial Reset of the original.
+    await page.locator('[data-testid="doc-block-2"]').click();
+    await dragBySelector(page, '[data-testid="doc-block-2"]', 20, 10);
+    await page.locator('[data-testid="doc-block-0"]').click();
+    await page.locator(RESET_BTN).click();
+
+    const after = await page.evaluate(() => ({
+      footerTop: document.querySelector('[data-testid="page-footer"]').getBoundingClientRect().top,
+      held: document.querySelector('#doc-main').getAttribute('data-wfp-edit-flat-root-height'),
+      pinned: [...document.querySelector('#doc-main').children].filter(
+        (c) => c.getAttribute('data-wfp-edit-frozen') === 'true'
+      ).length,
+    }));
+    expect(after.pinned).toBe(1);
+    expect(after.held).not.toBe(restored.held);
+    expect(Math.abs(after.footerTop - footerBefore)).toBeLessThan(2);
   });
 });

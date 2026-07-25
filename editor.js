@@ -119,6 +119,7 @@
     annotatedElementsCache: [], // perf fix — every currently-annotated element, cached by refreshAnnotationMarkers() for the idle selection-tracking tick. Lives on state (not a module let) because refreshExportUi()'s tail call to refreshAnnotationMarkers() runs during an earlier fragment's evaluation, same reasoning as agentResultsSummary above.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
+    flatRootHoldTargets: new WeakMap(), // v2.15 — flat root → the layout offset (offsetTop-space) that content following the root must keep while ANY of its children is pinned. Captured from the pristine layout at the first pin and re-solved whenever the pinned set changes (partial Reset, undo/redo, later unlocks); dropped once no pinned child remains, which also drops the height marker.
     flowUnlockGroups: new WeakMap(), // Element → ordered unlock-group memberships. The latest active group owns Reset for that element; inactive entries remain only so undo/redo can reactivate their provenance.
     flowUnlockGroupRegistry: new Set(), // Iterable companion used to prune inactive groups once no retained history transition can reactivate them. Pruning clears strong record→Element references, including detached members.
   };
@@ -4740,6 +4741,10 @@
     ) {
       synchronizeSlideState();
     }
+    // v2.15 — the flat-root height hold is derived from which children are
+    // pinned, and this entry may have changed that set. Re-deriving is a
+    // no-op whenever the snapshot pair was already consistent.
+    reconcileFlatRootHolds();
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -4770,6 +4775,7 @@
       synchronizeSlideState();
     }
     state.historyIndex++;
+    reconcileFlatRootHolds(); // see undo()
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -6419,16 +6425,23 @@
   // out-of-flow child has no margin to collapse), and an explicit height
   // stops the bottom margin collapsing even before the children move — so
   // the plain border-box measurement leaves following content short by the
-  // two collapsed margins (~48px in the reported case). Rather than model
-  // the collapse rules, anchor on the observable and correct afterwards.
+  // two collapsed margins (~48px in the reported case).
   //
-  // The anchor is the root's next IN-FLOW sibling (editor chrome, script
-  // tags, display:none and out-of-flow siblings are skipped: they either
-  // must not be touched or do not move with the root's height). With no
-  // such sibling, nothing follows the root and the invariant becomes the
+  // The follow anchor is the root's next IN-FLOW sibling (editor chrome,
+  // script tags, display:none and out-of-flow siblings are skipped: they
+  // either must not be touched or do not move with the root's height). With
+  // no such sibling, nothing follows the root and the invariant becomes the
   // root's own bottom edge — which is exactly its pre-pin margin-box
   // footprint, since the collapsed-through bottom margin is already baked
   // into where that edge sits.
+  //
+  // Anchors are read in LAYOUT space (offsetTop/offsetHeight), never through
+  // getBoundingClientRect: layout offsets are unaffected by transforms and
+  // by scrolling, so the residual is already in the same units as the CSS
+  // height being written. A rect-based residual would need to be divided by
+  // the scale of the root's ANCESTORS but not by the root's own — dividing
+  // by the root's own scale (as an earlier revision did via getCanvasScale)
+  // overshoots by exactly 1/scale when the flat root itself is transformed.
   function isFlowFollowerCandidate(el) {
     if (!isPinnableContainerChild(el)) return false;
     const cs = getComputedStyle(el);
@@ -6437,35 +6450,94 @@
     return rect.width > 0 || rect.height > 0;
   }
 
-  function captureFlatRootFollowAnchor(rootEl) {
+  function readFlatRootFollowOffset(rootEl) {
     let sibling = rootEl.nextElementSibling;
     while (sibling && !isFlowFollowerCandidate(sibling)) {
       sibling = sibling.nextElementSibling;
     }
-    const read = sibling
-      ? () => sibling.getBoundingClientRect().top
-      : () => rootEl.getBoundingClientRect().bottom;
-    return { read, target: read() };
+    // A follower and the root are siblings, so they share an offsetParent
+    // and their offsets are directly comparable across a re-measure.
+    if (sibling) return sibling.offsetTop;
+    return rootEl.offsetTop + rootEl.offsetHeight;
   }
 
-  // Both anchor readings are VIEWPORT pixels (getBoundingClientRect sees the
-  // deck's transform: scale); the held height is written as CSS px, so the
-  // residual is divided by the canvas scale before it is applied.
-  function reconcileFlatRootHeightHold(rootEl, anchor, heldCssHeight) {
-    const scale = getCanvasScale() || 1;
-    const residual = (anchor.target - anchor.read()) / scale;
-    if (Math.abs(residual) < 0.5) return heldCssHeight;
+  function getPinnedRootChildren(rootEl) {
+    return getPinnableRootChildren(rootEl).filter(
+      (child) => child.dataset.wfpEditFrozen === 'true'
+    );
+  }
 
-    const corrected = Math.max(0, heldCssHeight + residual);
-    applyFlatRootHeightHold(rootEl, corrected);
-    const correctedResidual = (anchor.target - anchor.read()) / scale;
-    if (Math.abs(correctedResidual) <= Math.abs(residual)) return corrected;
+  // Solve for the height that puts the follow anchor back on its target.
+  // One correction is exact wherever the anchor is linear in the root's
+  // height (block and flex-column flow); a second pass absorbs rounding.
+  // If a pass does not improve on the previous residual — a stretched flex
+  // item, a percentage height, a max-height cap — the best value so far is
+  // restored, so the hold is never worse than the plain measurement.
+  function solveFlatRootHeightHold(rootEl, target) {
+    let best = parseFloat(rootEl.getAttribute(FLAT_ROOT_HEIGHT_ATTR));
+    if (!Number.isFinite(best)) {
+      applyFlatRootHeightHold(rootEl, measureFlatRootCssHeight(rootEl));
+      best = parseFloat(rootEl.getAttribute(FLAT_ROOT_HEIGHT_ATTR));
+    }
+    let bestResidual = target - readFlatRootFollowOffset(rootEl);
 
-    // The follower's offset is not linear in the root's height (a stretched
-    // flex item, a percentage height, a max-height cap). Keep the plain
-    // measurement rather than a worse guess.
-    applyFlatRootHeightHold(rootEl, heldCssHeight);
-    return heldCssHeight;
+    for (let pass = 0; pass < 2 && Math.abs(bestResidual) >= 1; pass++) {
+      applyFlatRootHeightHold(rootEl, Math.max(0, best + bestResidual));
+      const candidate = parseFloat(rootEl.getAttribute(FLAT_ROOT_HEIGHT_ATTR));
+      const residual = target - readFlatRootFollowOffset(rootEl);
+      if (Math.abs(residual) >= Math.abs(bestResidual)) {
+        applyFlatRootHeightHold(rootEl, best);
+        return;
+      }
+      best = candidate;
+      bestResidual = residual;
+    }
+  }
+
+  // v2.15 review round 4 — the hold is DERIVED state: it is only correct for
+  // the set of children pinned RIGHT NOW, and that set keeps changing after
+  // the pin that established it (a partial Reset returns some children to
+  // flow, undo/redo move between pinned states, a later unlock pins the
+  // remainder). A one-shot measurement therefore goes stale — and a stale
+  // value reaches the export clone. Instead of special-casing each caller,
+  // this re-derives the hold from live geometry and is called after every
+  // transition that can change the pinned set.
+  //
+  // With no pinned child left the marker is dropped outright so the root
+  // returns to natural layout; the dynamic CSS rule is keyed on the exact
+  // attribute value, so removing the attribute un-matches it.
+  function reconcileFlatRootHold(rootEl) {
+    if (!rootEl || !rootEl.isConnected) return;
+    if (rootEl.getAttribute('data-wfp-edit-flat-root') !== 'true') return;
+
+    if (!getPinnedRootChildren(rootEl).length) {
+      if (rootEl.hasAttribute(FLAT_ROOT_HEIGHT_ATTR)) {
+        touchElement(rootEl);
+        rootEl.removeAttribute(FLAT_ROOT_HEIGHT_ATTR);
+      }
+      state.flatRootHoldTargets.delete(rootEl);
+      return;
+    }
+
+    if (!state.flatRootHoldTargets.has(rootEl)) {
+      // Pins that arrived without an establishing measurement (redo of a
+      // pin whose target was dropped by the undo). History has just made
+      // this layout correct, so adopt it as the target.
+      state.flatRootHoldTargets.set(rootEl, readFlatRootFollowOffset(rootEl));
+      return;
+    }
+
+    touchElement(rootEl);
+    solveFlatRootHeightHold(rootEl, state.flatRootHoldTargets.get(rootEl));
+  }
+
+  // History and group restores can change the pinned set of any root, and
+  // there is at most one flat root per document, so re-deriving them all is
+  // cheap and needs no separate bookkeeping to stay in sync.
+  function reconcileFlatRootHolds() {
+    document
+      .querySelectorAll('[data-wfp-edit-flat-root="true"]')
+      .forEach(reconcileFlatRootHold);
   }
 
   function applyFlatRootHeightHold(rootEl, cssHeight) {
@@ -6497,40 +6569,25 @@
   function pinRootChildren(rootEl, children, group = null) {
     // No latch early-return: unlockToAbsolute passes only the children that
     // still need pinning, so a latch left behind by a partial Reset must not
-    // suppress protection for the siblings that went back into flow. An
-    // already-present height marker DOES mean the hold is still in force,
-    // and re-measuring it against a half-pinned layout would be wrong.
-    const holdsHeight =
-      rootEl.getAttribute('data-wfp-edit-flat-root') === 'true' &&
-      !rootEl.hasAttribute(FLAT_ROOT_HEIGHT_ATTR);
+    // suppress protection for the siblings that went back into flow.
+    const isFlatRoot = rootEl.getAttribute('data-wfp-edit-flat-root') === 'true';
 
     const childRects = snapshotChildOffsets(children, rootEl);
     const rootRectBefore = rootEl.getBoundingClientRect();
-    // Read the follow anchor BEFORE the height hold: applying an explicit
-    // height already suppresses bottom-margin collapse, so a target read
-    // afterwards would bake in part of the very shift being corrected.
-    const followAnchor = holdsHeight ? captureFlatRootFollowAnchor(rootEl) : null;
-    touchElement(rootEl);
-    // Hold the flat root's height BEFORE the children leave the flow, so its
-    // box never collapses. This first value is the plain border box; where
-    // margins were collapsing through the root it is short, and the reconcile
-    // after pinning corrects it. Both writes happen inside one synchronous
-    // gesture step, so no intermediate layout is ever painted. Slides are
-    // excluded: they own explicit stylesheet dimensions and never collapse.
-    let heldCssHeight = 0;
-    if (holdsHeight) {
-      heldCssHeight = measureFlatRootCssHeight(rootEl);
-      applyFlatRootHeightHold(rootEl, heldCssHeight);
+    // The target is the position following content must keep for the rest of
+    // the session: capture it from the pristine layout, BEFORE this pin (or
+    // any earlier one) takes children out of flow. Slides are excluded: they
+    // own explicit stylesheet dimensions and never collapse.
+    if (isFlatRoot && !state.flatRootHoldTargets.has(rootEl)) {
+      state.flatRootHoldTargets.set(rootEl, readFlatRootFollowOffset(rootEl));
     }
+    touchElement(rootEl);
     pinSnapshottedChildren(childRects, group);
 
-    // With the children out of flow, the collapsed margins are gone and the
-    // follower's true offset is observable: correct the held height by the
-    // residual. Runs before the child re-anchor below so that compensation
-    // is computed against the final root geometry.
-    if (followAnchor) {
-      reconcileFlatRootHeightHold(rootEl, followAnchor, heldCssHeight);
-    }
+    // Derive the hold from the pinned set this pin just produced. Every
+    // write happens inside one synchronous gesture step, so no intermediate
+    // layout is ever painted.
+    if (isFlatRoot) reconcileFlatRootHold(rootEl);
 
     // A padding-less root (typically document.body) can itself move when its
     // children leave the flow: the first child's margin no longer collapses
@@ -6630,7 +6687,18 @@
     // Retire completed provenance so subsequent ordinary edits use the
     // pristine originalStyles contract. The transition is part of the same
     // history entry, so undo reactivates the group and redo retires it again.
+    // Measured BEFORE the hold is re-derived: a hold correction that another
+    // group's surviving pins still require is not this group's residue.
     const fullyRestored = [...group.records.values()].every(flowUnlockRecordIsAtRest);
+
+    // A partial restore returns some children to flow, which re-enables the
+    // margin collapse the hold was compensating for. Re-derive it here, in
+    // the same transaction, so the live document, undo, and the export clone
+    // all see the corrected value.
+    for (const record of group.records.values()) {
+      if (record.isContainer) reconcileFlatRootHold(record.el);
+    }
+
     if (fullyRestored) setFlowUnlockGroupActive(group, false);
   }
 

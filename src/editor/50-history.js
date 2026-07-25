@@ -325,6 +325,10 @@
     ) {
       synchronizeSlideState();
     }
+    // v2.15 — the flat-root height hold is derived from which children are
+    // pinned, and this entry may have changed that set. Re-deriving is a
+    // no-op whenever the snapshot pair was already consistent.
+    reconcileFlatRootHolds();
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
@@ -355,6 +359,7 @@
       synchronizeSlideState();
     }
     state.historyIndex++;
+    reconcileFlatRootHolds(); // see undo()
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
