@@ -170,17 +170,40 @@ margin is its bottom margin. Pinning deletes both (an out-of-flow child has no
 margin to collapse) and an explicit height stops the bottom one collapsing
 even before the children move, so holding the border-box height left following
 content ~48px too high in the reported case. Instead of modelling the collapse
-rules, the
-pin anchors on the observable: it records the viewport position of the root's
-next in-flow sibling before pinning — or, with no such sibling, the root's own
-bottom edge, which already carries the collapsed-through bottom margin — and
-after pinning corrects the held height by the residual. One correction is
-exact wherever the follower's offset is linear in the root's height (block and
-flex-column flow); if a re-measure shows the correction made things worse
-(a stretched flex item, a percentage height, a `max-height` cap) the plain
-border-box measurement is kept, so the result is never worse than the
-uncorrected hold. Deltas are read in viewport pixels and divided by the canvas
-scale before being written as CSS px.
+rules, the pin anchors on the observable — the FOLLOW ANCHOR: the position of
+the root's next in-flow sibling, or, with no such sibling, the root's own
+bottom edge (which already carries the collapsed-through bottom margin). The
+anchor's position in the pristine layout is captured at the first pin and is
+the target the held height is solved against. One correction is exact wherever
+the anchor is linear in the root's height (block and flex-column flow); a
+second pass absorbs rounding, and if a pass does not improve on the previous
+residual — a stretched flex item, a percentage height, a `max-height` cap —
+the best value so far is restored, so the hold is never worse than the plain
+measurement.
+
+The hold is DERIVED state, correct only for the set of children pinned at that
+moment, and that set keeps changing: a partial Reset returns some children to
+flow (re-enabling the collapse the hold was compensating for), undo/redo move
+between pinned states, and a later unlock pins the remainder. A one-shot
+measurement therefore goes stale, and the stale value reaches the export
+clone. So the hold is re-derived from live geometry after every transition
+that can change the pinned set: the pin itself, a group restore (inside the
+same transaction, so undo/redo round-trip the corrected value), and undo/redo.
+Once no pinned child remains, the marker is dropped outright and the root
+returns to natural layout — the dynamic rule is keyed to the exact attribute
+value, so removing the attribute un-matches it. The target is released with
+it; a redo that restores pins without a live target adopts the layout that
+history has just made correct.
+
+Anchor positions are read in LAYOUT space (`offsetTop`/`offsetHeight`), never
+through `getBoundingClientRect`. Layout offsets ignore transforms and
+scrolling, so the residual is already in the units of the CSS height being
+written and needs no scale conversion. This is the one place in the engine
+where the `transform: scale()` gotcha does NOT apply: a transform on the root
+does not move a following sibling, because it does not affect layout, so
+dividing a rect-based residual by the root's own scale overshoots by exactly
+1/scale. (Pointer deltas and the pinned-child re-anchor still divide by the
+canvas scale — they compare viewport-space values.)
 
 The residual limitation is the root's OWN box: with the collapsed margins gone
 it grows to absorb them, so a padding-less root's border box (and therefore
