@@ -58,12 +58,15 @@ for other 16px badge references.
 
 Overview mutations/history, thumbnail navigation, fresh-DOM arrow navigation,
 and live-refresh restoration now share one slide-state synchronizer. It retains
-contract-deck `.progress-dot` behaviour and updates foreign current/total
-counters only when a host node exposes a recognized semantic counter hook plus
-a validated text or split-child shape. It does not call fixture globals,
-rewrite host scripts, or mutate unrelated `1 / N` content. Regression coverage
-uses `fixtures/foreign-deck.html` for insert → exit Overview → ArrowRight
-(`2 / 5`) and for live-refresh restoration/navigation (`3 / 4` → `4 / 4`).
+contract-deck `.progress-dot` active-state behaviour without changing dot count,
+and updates foreign current/total counters only when a host node exposes a
+recognized semantic counter hook plus a validated text or split-child shape. It
+does not call fixture globals, rewrite host scripts, or mutate unrelated
+`1 / N` content. Regression coverage uses `fixtures/foreign-deck.html` for
+insert → exit Overview → ArrowRight (`2 / 5`) and for live-refresh
+restoration/navigation (`3 / 4` → `4 / 4`). It also covers nonzero Overview
+thumbnail navigation handing the next arrow to fresh-DOM navigation, plus
+clone-side export normalization of a static recognized counter.
 
 ### Handoff ledger reported overflow:true for elements dragged out of an unlock-frozen parent
 

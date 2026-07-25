@@ -324,6 +324,10 @@
 
   function navigateToSlide(slide) {
     if (!slide.parentElement) return;
+    // The editor activated this slide without advancing the host deck's
+    // private cursor. Own subsequent arrows immediately; otherwise a foreign
+    // handler can navigate from its stale pre-Overview index.
+    state.deckMutated = getDocumentMode() !== 'flat';
     synchronizeSlideState(slide);
     setOverviewMode(false);
   }
@@ -404,7 +408,7 @@
   // deliberately conservative: a recognized slide/page counter hook must
   // also contain a supported counter shape, so arbitrary host UI that merely
   // happens to include numbers is left untouched.
-  function synchronizeRecognizedHostCounters(activeIndex, total) {
+  function synchronizeRecognizedHostCounters(root, activeIndex, total) {
     const counterSelector = [
       '[data-slide-count]',
       '[data-slide-counter]',
@@ -420,7 +424,7 @@
       '#page-counter',
     ].join(',');
 
-    for (const counter of document.querySelectorAll(counterSelector)) {
+    for (const counter of root.querySelectorAll(counterSelector)) {
       if (counter.closest(`#${ROOT_ID}`)) continue;
 
       // Preserve the host's delimiter, surrounding whitespace, and optional
@@ -472,7 +476,7 @@
     document.querySelectorAll('.progress-dot').forEach((dot, index) => {
       dot.classList.toggle('active', index === activeIndex);
     });
-    synchronizeRecognizedHostCounters(activeIndex, slides.length);
+    synchronizeRecognizedHostCounters(document, activeIndex, slides.length);
     return slides[activeIndex];
   }
 
@@ -886,12 +890,10 @@
       return;
     }
 
-    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the deck has
-    // been mutated via overview reorder/delete, the fixture's own
-    // keydown handler — which caches slides + cur at load time — is
-    // stale: forward nav lands on the wrong slide (reorder) or sets
-    // .active on an orphan node leaving the user staring at black
-    // (delete). Editor's nav uses fresh DOM queries.
+    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the editor has
+    // activated a slide, mutated the deck, or restored a live refresh, the
+    // fixture's own keydown handler — which commonly caches slides + cur at
+    // load time — may be stale. Editor navigation uses fresh DOM queries.
     if (
       state.deckMutated &&
       !state.editMode &&

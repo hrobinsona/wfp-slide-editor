@@ -158,7 +158,12 @@ navigation. Overview thumbnail navigation, reorder/delete/insert (including
 undo/redo), fresh-DOM arrow navigation, and live-refresh restoration all route
 through it. The helper resolves the active index from the current live slide
 list, keeps exactly one slide active, and updates contract-deck
-`.progress-dot` state.
+`.progress-dot` active classes without creating or removing dots.
+
+Overview thumbnail navigation also sets the fresh-DOM takeover flag. The
+editor changes the active slide directly and cannot advance a foreign deck's
+private closure cursor, so allowing the host's next arrow after a nonzero
+thumbnail click would navigate from stale state.
 
 Foreign counters are capability/pattern based rather than tied to a fixture
 global or host script. A host node must expose a semantic slide/page
@@ -181,6 +186,11 @@ The editor currently uses live-DOM serialization:
 5. Remove transient editor state such as `contenteditable` and overview/edit flags.
 6. Serialize with a `<!DOCTYPE html>` prefix.
 7. Download the result.
+
+Startup normalization in the clone activates the first slide, aligns existing
+progress-dot active classes, and runs the same recognized-counter formatter
+against the clone at index 0 and the exported slide total. The live document is
+not changed.
 
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
 
@@ -234,7 +244,7 @@ A reload loses the editor (injected scripts do not survive navigation), costs a 
 
 ### Generations
 
-Each boot increments `window.__wfpEditorGeneration`. A refresh is a generation boundary: fresh state, fresh listeners, fresh undo history — deliberate, since the document itself changed underneath the history's DOM references. Continuity travels in a single window-scoped restore payload (file handle, mtime baseline, edit mode, active slide index, inspector/toolbar fold state) that the new instance adopts at ready. Adoption restores the active index through the shared slide-state synchronizer (including progress dots and recognized host counters) and sets `state.deckMutated`, reusing the existing fresh-DOM arrow-nav takeover: the re-parsed deck script cached slide 0 as current, which is precisely the staleness that mechanism was built for.
+Each boot increments `window.__wfpEditorGeneration`. A refresh is a generation boundary: fresh state, fresh listeners, fresh undo history — deliberate, since the document itself changed underneath the history's DOM references. Continuity travels in a single window-scoped restore payload (file handle, mtime baseline, edit mode, active slide index, inspector/toolbar fold state) that the new instance adopts at ready. Adoption restores the active index through the shared slide-state synchronizer (including existing progress-dot active state and recognized host counters) and sets `state.deckMutated`, reusing the existing fresh-DOM arrow-nav takeover: the re-parsed deck script cached slide 0 as current, which is precisely the staleness that mechanism was built for.
 
 ### Watch discipline
 

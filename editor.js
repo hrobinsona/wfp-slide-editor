@@ -105,7 +105,7 @@
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
-    deckMutated: false, // v2.1.0 hotfix — set true on first overview reorder/delete; flips arrow-nav to live-DOM (the fixture's cached slide list goes stale)
+    deckMutated: false, // v2.1.0 hotfix — set after an editor-owned slide activation/mutation/refresh; flips arrow-nav to live-DOM when the fixture's cached cursor/list can be stale
     agentResultsSummary: null, // v2.13 — {done, skipped, needsInput} parsed from the agent results block at import; consumed by the ready toast. Lives on state (not a module let) because reimport runs during an earlier fragment's evaluation.
     editedElements: new Set(), // v2.14 — every element endTxn() committed a change for. Session scope, never pruned: originalStyles is a WeakMap and cannot be enumerated, so this Set is the iterable companion the edit ledger walks at handoff-build time (build-time filters handle disconnected/undone elements).
     pinnedStyles: new WeakMap(), // v2.14 — Element → inline `style` exactly as unlock/freeze pinning wrote it. The dragged element gets the same frozen marker as its pinned siblings, so attribute presence alone cannot tell pinning from intent; a ledger entry is `mechanical` only while its element's style still equals this recorded value.
@@ -4585,6 +4585,10 @@
 
   function navigateToSlide(slide) {
     if (!slide.parentElement) return;
+    // The editor activated this slide without advancing the host deck's
+    // private cursor. Own subsequent arrows immediately; otherwise a foreign
+    // handler can navigate from its stale pre-Overview index.
+    state.deckMutated = getDocumentMode() !== 'flat';
     synchronizeSlideState(slide);
     setOverviewMode(false);
   }
@@ -4665,7 +4669,7 @@
   // deliberately conservative: a recognized slide/page counter hook must
   // also contain a supported counter shape, so arbitrary host UI that merely
   // happens to include numbers is left untouched.
-  function synchronizeRecognizedHostCounters(activeIndex, total) {
+  function synchronizeRecognizedHostCounters(root, activeIndex, total) {
     const counterSelector = [
       '[data-slide-count]',
       '[data-slide-counter]',
@@ -4681,7 +4685,7 @@
       '#page-counter',
     ].join(',');
 
-    for (const counter of document.querySelectorAll(counterSelector)) {
+    for (const counter of root.querySelectorAll(counterSelector)) {
       if (counter.closest(`#${ROOT_ID}`)) continue;
 
       // Preserve the host's delimiter, surrounding whitespace, and optional
@@ -4733,7 +4737,7 @@
     document.querySelectorAll('.progress-dot').forEach((dot, index) => {
       dot.classList.toggle('active', index === activeIndex);
     });
-    synchronizeRecognizedHostCounters(activeIndex, slides.length);
+    synchronizeRecognizedHostCounters(document, activeIndex, slides.length);
     return slides[activeIndex];
   }
 
@@ -5147,12 +5151,10 @@
       return;
     }
 
-    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the deck has
-    // been mutated via overview reorder/delete, the fixture's own
-    // keydown handler — which caches slides + cur at load time — is
-    // stale: forward nav lands on the wrong slide (reorder) or sets
-    // .active on an orphan node leaving the user staring at black
-    // (delete). Editor's nav uses fresh DOM queries.
+    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the editor has
+    // activated a slide, mutated the deck, or restored a live refresh, the
+    // fixture's own keydown handler — which commonly caches slides + cur at
+    // load time — may be stale. Editor navigation uses fresh DOM queries.
     if (
       state.deckMutated &&
       !state.editMode &&
@@ -6487,9 +6489,11 @@
   }
 
   function normalizeExportStartupState(root) {
+    let startupSlideCount = 0;
     getExportDeckRoots(root).forEach((deck) => {
       const slides = [...deck.querySelectorAll(':scope > .slide')];
       if (!slides.length) return;
+      if (!startupSlideCount) startupSlideCount = slides.length;
       slides.forEach((slide, index) => {
         slide.classList.toggle('active', index === 0);
       });
@@ -6502,6 +6506,10 @@
         dot.classList.toggle('active', index === 0);
       });
     });
+
+    if (startupSlideCount) {
+      synchronizeRecognizedHostCounters(root, 0, startupSlideCount);
+    }
   }
 
   function buildExportClone() {

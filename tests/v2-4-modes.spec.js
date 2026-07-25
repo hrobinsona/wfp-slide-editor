@@ -822,6 +822,24 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
 });
 
 test.describe('v2.4.5 — End-to-end checkpoint regressions', () => {
+  test('foreign overview thumbnail activation hands later arrows to fresh-DOM navigation', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+
+    await page.keyboard.press('o');
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4
+    );
+    await page.locator(
+      '#wfp-editor-root .wfpe-overview-thumb[data-wfp-edit-slide-index="2"]',
+    ).click();
+    await expect(page.locator('#foreign-slide-3')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('3 / 4');
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#foreign-slide-4')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('4 / 4');
+  });
+
   test('foreign counter follows overview insert and editor-owned arrow navigation', async ({ page }) => {
     await loadDocumentWithEditor(page, 'foreign-deck.html');
 
