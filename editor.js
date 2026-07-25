@@ -519,6 +519,7 @@
     #${ROOT_ID} .wfpe-inspector {
       display: flex;
       flex-direction: column;
+      max-height: calc(100vh - 72px);
       border-radius: 6px 6px 12px 12px;
       background:
         linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)),
@@ -552,12 +553,13 @@
     /* Extremely wide selections can intersect both side docks. In that
        case only the inspector becomes a readable outline at rest; the
        toolbar remains the fully opaque editor anchor. */
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]) {
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="false"]:not([data-fade="true"]) {
       opacity: 0.18;
+      pointer-events: auto;
     }
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):hover,
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):focus-within {
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="true"]:not([data-fade="true"]) {
       opacity: 1;
+      pointer-events: auto;
     }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
@@ -649,6 +651,19 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      box-sizing: border-box;
+      max-height: calc(100vh - 109px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.28) transparent;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(255,255,255,0.28);
     }
     /* Rows: 66px label column + control */
     #${ROOT_ID} .wfpe-inspector-row {
@@ -1864,6 +1879,7 @@
   inspector.dataset.visible = 'false';
   inspector.dataset.state = 'expanded';
   inspector.dataset.avoidance = 'clear';
+  inspector.dataset.revealed = 'false';
 
   const inspectorHeader = document.createElement('div');
   inspectorHeader.className = 'wfpe-inspector-header';
@@ -2322,6 +2338,81 @@
   }
 
   document.body.appendChild(root);
+
+  // The both-sides fallback is intentionally faint at rest. Mouse hover and
+  // keyboard focus reveal the complete panel before an action can occur.
+  // Touch/pen have no reliable pre-contact hover, so their first contact is
+  // consumed as an explicit reveal; the second can activate the control.
+  let fallbackMouseInside = false;
+  let suppressFallbackClick = false;
+  let fallbackClickResetTimer = null;
+  function isInspectorFallback() {
+    return inspector.dataset.avoidance === 'overlap';
+  }
+  function setInspectorFallbackRevealed(value) {
+    inspector.dataset.revealed = value ? 'true' : 'false';
+  }
+  inspector.addEventListener('pointerenter', (e) => {
+    if (e.pointerType !== 'mouse' || !isInspectorFallback()) return;
+    fallbackMouseInside = true;
+    suppressFallbackClick = false;
+    setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('pointerleave', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    fallbackMouseInside = false;
+    if (!inspector.contains(document.activeElement)) {
+      setInspectorFallbackRevealed(false);
+    }
+  });
+  inspector.addEventListener('focusin', () => {
+    if (isInspectorFallback()) setInspectorFallbackRevealed(true);
+  });
+  inspector.addEventListener('focusout', () => {
+    queueMicrotask(() => {
+      if (
+        isInspectorFallback() &&
+        !fallbackMouseInside &&
+        !inspector.contains(document.activeElement)
+      ) {
+        setInspectorFallbackRevealed(false);
+      }
+    });
+  });
+  inspector.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.dataset.revealed === 'true') return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressFallbackClick = true;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = setTimeout(() => {
+      suppressFallbackClick = false;
+      fallbackClickResetTimer = null;
+    }, 400);
+    setInspectorFallbackRevealed(true);
+  }, true);
+  inspector.addEventListener('click', (e) => {
+    if (
+      !isInspectorFallback() ||
+      (!suppressFallbackClick && inspector.dataset.revealed === 'true')
+    ) {
+      return;
+    }
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    e.preventDefault();
+    e.stopPropagation();
+    setInspectorFallbackRevealed(true);
+  }, true);
+  document.addEventListener('pointerdown', (e) => {
+    if (!isInspectorFallback() || inspector.contains(e.target)) return;
+    fallbackMouseInside = false;
+    suppressFallbackClick = false;
+    clearTimeout(fallbackClickResetTimer);
+    fallbackClickResetTimer = null;
+    setInspectorFallbackRevealed(false);
+  }, true);
 
   // Toolbar button click handlers. These run in bubble phase after the
   // capture-phase onClick short-circuits on editor-root targets, so they
@@ -3037,10 +3128,10 @@
 
   function autoGrowAnnotationTextarea() {
     const minHeight = 52;
-    // Leave the compact inspector usable in the existing narrow viewport;
-    // at normal laptop heights a realistic multi-line instruction can grow
-    // to five or six proofreadable lines before it scrolls.
-    const maxHeight = Math.max(minHeight, Math.min(112, window.innerHeight - 420));
+    // The textarea has a content cap; viewport pressure is handled by the
+    // inspector body's live `100vh` scroll bound rather than a guessed
+    // subtraction that cannot account for agent-reply blocks.
+    const maxHeight = 112;
     annotationTextarea.style.height = 'auto';
     // scrollHeight excludes the border while height is border-box; include
     // the 1px top/bottom borders so the last line is never clipped by 2px.
@@ -3200,6 +3291,7 @@
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
     renderAnnotationReply(el);
+    positionInspectorStack();
   }
 
   // Read-only "Agent …" line under the note textarea (v2.13): shows the
@@ -4063,6 +4155,7 @@
     const visible = inspectorDock.dataset.visible === 'true';
     if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
       inspector.dataset.avoidance = 'clear';
+      inspector.dataset.revealed = 'false';
       return;
     }
     // A live manipulation intentionally holds the dock still so v2.12's
@@ -4080,7 +4173,10 @@
       ? 0
       : inspectorFoldInner.scrollHeight;
     const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
-    const height = toolbarHeight + exportHeight + inspectorHeight + 2;
+    const height = Math.min(
+      toolbarHeight + exportHeight + inspectorHeight + 2,
+      window.innerHeight - margin * 2
+    );
     const expandedSelection = {
       left: selectionRect.left - gutter,
       top: selectionRect.top - gutter,
@@ -4101,7 +4197,11 @@
     const currentBlocked = rectsOverlap(expandedSelection, candidates[current]);
     const otherBlocked = rectsOverlap(expandedSelection, candidates[other]);
     if (currentBlocked && !otherBlocked) stack.dataset.side = other;
-    inspector.dataset.avoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    const nextAvoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    if (inspector.dataset.avoidance !== nextAvoidance || nextAvoidance === 'clear') {
+      inspector.dataset.revealed = 'false';
+    }
+    inspector.dataset.avoidance = nextAvoidance;
   }
   // ===========================================================================
   // History (undo/redo)

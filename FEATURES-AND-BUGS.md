@@ -67,7 +67,8 @@ its shipped `#f0685b` centre colour rather than the retired 16px recipe.
 The editor instrument now chooses a stable left/right dock at rest, retaining
 its current side while clear and moving only when the opposite side avoids the
 selection. A viewport-spanning selection uses a translucent inspector-only
-fallback; the toolbar stays opaque and the existing during-gesture adaptive
+fallback with explicit mouse-hover/keyboard-focus reveal and guarded first-touch
+activation; the toolbar stays opaque and the existing during-gesture adaptive
 fade/value tag remains intact.
 
 ### Agent-note drafts were cramped for realistic instructions
@@ -75,10 +76,12 @@ fade/value tag remains intact.
 - **Status:** fixed 2026-07-25 (ISS-004; branch `codex/fix-editor-usability`)
 - **Raised:** 2026-07-24, sanitized foreign-deck usability QA
 
-The note textarea now grows from its compact baseline to a viewport-aware bound
-before scrolling. A roughly 136-character instruction remains directly
-proofreadable at 1280×720 while saved/draft, Escape, reply, save, and delete
-behaviour continue through the existing annotation paths.
+The note textarea now grows from its compact baseline to a five/six-line bound
+before scrolling. The inspector body itself is bounded by live viewport units
+and scrolls when notes, replies, or narrow windows exceed the available height.
+A roughly 136-character instruction remains directly proofreadable at 1280×720
+while saved/draft, Escape, reply, save, and delete behaviour continue through
+the existing annotation paths.
 
 ### Overview reorder/delete depended on hover discovery
 

@@ -138,16 +138,24 @@ the final stack footprint on the current and opposite sides. It retains the
 current side whenever clear, switches only when the current side overlaps and
 the opposite side is clear, and marks the inspector `data-avoidance="overlap"`
 when both are blocked. That last-resort state affects only inspector opacity and
-restores on intentional hover/focus; the toolbar remains opaque. Placement is
-held during active drag/resize/text transactions so the v2.12 live overlap fade
-continues to work, then reconciled at gesture end. The stable-side-first decision
-is the anti-oscillation rule.
+uses an explicit `data-revealed` activation state; the toolbar remains opaque.
+Mouse hover and keyboard `focusin` reveal the complete panel before activation.
+Touch/pen cannot preview hover, so capture-phase pointer/click guards consume the
+first contact as reveal and allow the second to activate. Leaving with neither
+mouse nor focus inside hides it again. Placement is held during active
+drag/resize/text transactions so the v2.12 live overlap fade continues to work,
+then reconciled at gesture end. The stable-side-first decision is the
+anti-oscillation rule.
 
 Agent note height is content-driven rather than user-resized:
 `autoGrowAnnotationTextarea()` measures `scrollHeight`, grows from 52px to a
-viewport-aware 112px bound, then enables vertical scrolling. It runs on draft
-input and populated saved state, and asks the placement rule to re-check the
-larger inspector.
+112px content bound, then enables textarea scrolling. Viewport pressure is not
+estimated in JavaScript: `.wfpe-inspector` and `.wfpe-inspector-body` use live
+`100vh` bounds, with the body as the scroll surface. This naturally accounts for
+saved-note population, agent reply blocks, and narrow windows while keeping the
+header fixed and footer/note actions reachable by scrolling. Auto-growth runs on
+draft input and populated saved state, and asks the placement rule to re-check
+the larger inspector.
 
 The v2.12 adaptive fade (design 7, `feature-briefs/v2.12-adaptive-inspector.md`, module `src/editor/85-adaptive-fade.js`) makes the docked panel get out of the way by itself: any live manipulation — drag-move, resize, font scrub/steppers, opacity slider, weight/align commits, inline text edit — sets `data-fade="true"` on `.wfpe-inspector` (opacity 0.16, pointer-events kept) and pins the coral `.wfpe-scrub-tag` value chip to the selection, restoring ~380ms after the gesture settles. The fade is overlap-gated: it only applies when the selection's bounding box intersects the inspector's live rect, re-tested on every move of a drag/resize and on every `input` of a text edit. The value tag shows regardless of overlap and display-suppresses the v2.2 dim bubble while visible (the bubble's `textContent` keeps tracking). The FONT field is scrubbable — drag left/right for ~1px per 3px, one history entry per gesture; a clean click still focuses the input for typed commits. The toolbar never fades.
 

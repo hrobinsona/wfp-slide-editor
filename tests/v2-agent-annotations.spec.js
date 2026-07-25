@@ -11,6 +11,8 @@ const FIXTURE_PATH = path.join(PROJECT_ROOT, 'fixtures', 'foreign-deck.html');
 const NOTE = 'ANNOTATION TEST UNIQUE: review this rewritten subsection for clarity.';
 const NOTE_EDITED = 'ANNOTATION TEST UNIQUE: make this sharper and call out the missing point.';
 const PROOFREAD_NOTE = 'Tighten this paragraph, preserve the measured result, explain the comparison in plain language, and end with one concrete implication for readers.';
+const LONG_NOTE = `${PROOFREAD_NOTE} `.repeat(7).trim();
+const LONG_REPLY = 'Agent needs clarification about the intended comparison and the supporting evidence. '.repeat(14).trim();
 
 const rowSel = '#wfp-editor-root .wfpe-inspector-row[data-wfpe-row="annotation"]';
 const textareaSel = '#wfp-editor-root .wfpe-annotation-input';
@@ -151,6 +153,73 @@ test.describe('v2.5 — agent handoff annotations', () => {
     expect(metrics.overflowY).toBe('hidden');
     expect(metrics.inspectorBottom).toBeLessThanOrEqual(720);
     await expect(page.locator(statusSel)).toHaveText('Unsaved');
+
+    await page.locator(textareaSel).press('Escape');
+    await expect(page.locator(textareaSel)).toHaveValue('');
+    const resetHeight = await page.locator(textareaSel)
+      .evaluate((el) => getComputedStyle(el).height);
+    expect(resetHeight).toBe('52px');
+  });
+
+  test('saved notes, replies, and actions remain reachable in bounded inspectors', async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 420, height: 560 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await loadReady(page);
+      await saveNote(page, '.slide.active h1', LONG_NOTE);
+      await page.evaluate((reply) => {
+        const el = document.querySelector('.slide.active h1');
+        el.setAttribute('data-wfp-edit-annotation-status', 'needs-input');
+        el.setAttribute('data-wfp-edit-annotation-reply', reply);
+      }, LONG_REPLY);
+      await clickToSelect(page, '.slide.active .foreign-note');
+      await clickToSelect(page, '.slide.active h1');
+      await page.waitForTimeout(450);
+
+      const metrics = await page.evaluate(() => {
+        const inspector = document.querySelector('#wfp-editor-root .wfpe-inspector');
+        const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body');
+        const textarea = document.querySelector('#wfp-editor-root .wfpe-annotation-input');
+        const reply = document.querySelector('#wfp-editor-root .wfpe-annotation-reply');
+        const rect = inspector.getBoundingClientRect();
+        return {
+          inspectorTop: rect.top,
+          inspectorBottom: rect.bottom,
+          bodyClientHeight: body.clientHeight,
+          bodyScrollHeight: body.scrollHeight,
+          textareaHeight: getComputedStyle(textarea).height,
+          textareaOverflow: getComputedStyle(textarea).overflowY,
+          textareaClientHeight: textarea.clientHeight,
+          textareaScrollHeight: textarea.scrollHeight,
+          value: textarea.value,
+          replyVisible: getComputedStyle(reply).display !== 'none',
+        };
+      });
+
+      expect(metrics.inspectorTop).toBeGreaterThanOrEqual(0);
+      expect(metrics.inspectorBottom).toBeLessThanOrEqual(viewport.height);
+      expect(metrics.bodyScrollHeight).toBeGreaterThan(metrics.bodyClientHeight);
+      expect(metrics.textareaHeight).toBe('112px');
+      expect(metrics.textareaOverflow).toBe('auto');
+      expect(metrics.textareaScrollHeight).toBeGreaterThan(metrics.textareaClientHeight);
+      expect(metrics.value).toBe(LONG_NOTE);
+      expect(metrics.replyVisible).toBe(true);
+
+      for (const selector of [
+        '#wfp-editor-root .wfpe-annotation-actions',
+        '#wfp-editor-root .wfpe-action-row',
+      ]) {
+        await page.locator(selector).evaluate((el) => el.scrollIntoView({ block: 'end' }));
+        const visible = await page.evaluate((sel) => {
+          const body = document.querySelector('#wfp-editor-root .wfpe-inspector-body').getBoundingClientRect();
+          const action = document.querySelector(sel).getBoundingClientRect();
+          return action.top >= body.top - 1 && action.bottom <= body.bottom + 1;
+        }, selector);
+        expect(visible).toBe(true);
+      }
+    }
   });
 
   test('annotation row visibility follows single selection, multi-select, and Overview', async ({ page }) => {

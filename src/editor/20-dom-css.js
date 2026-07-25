@@ -404,6 +404,7 @@
     #${ROOT_ID} .wfpe-inspector {
       display: flex;
       flex-direction: column;
+      max-height: calc(100vh - 72px);
       border-radius: 6px 6px 12px 12px;
       background:
         linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)),
@@ -437,12 +438,13 @@
     /* Extremely wide selections can intersect both side docks. In that
        case only the inspector becomes a readable outline at rest; the
        toolbar remains the fully opaque editor anchor. */
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]) {
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="false"]:not([data-fade="true"]) {
       opacity: 0.18;
+      pointer-events: auto;
     }
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):hover,
-    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"]:not([data-fade="true"]):focus-within {
+    #${ROOT_ID} .wfpe-inspector[data-avoidance="overlap"][data-revealed="true"]:not([data-fade="true"]) {
       opacity: 1;
+      pointer-events: auto;
     }
     /* While the dock is folded shut the panel still has natural height
        inside the clipped 0fr row — hide it for focus/AT/tooling once the
@@ -534,6 +536,19 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+      box-sizing: border-box;
+      max-height: calc(100vh - 109px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.28) transparent;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .wfpe-inspector-body::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(255,255,255,0.28);
     }
     /* Rows: 66px label column + control */
     #${ROOT_ID} .wfpe-inspector-row {

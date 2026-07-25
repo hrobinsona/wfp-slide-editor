@@ -306,10 +306,10 @@
 
   function autoGrowAnnotationTextarea() {
     const minHeight = 52;
-    // Leave the compact inspector usable in the existing narrow viewport;
-    // at normal laptop heights a realistic multi-line instruction can grow
-    // to five or six proofreadable lines before it scrolls.
-    const maxHeight = Math.max(minHeight, Math.min(112, window.innerHeight - 420));
+    // The textarea has a content cap; viewport pressure is handled by the
+    // inspector body's live `100vh` scroll bound rather than a guessed
+    // subtraction that cannot account for agent-reply blocks.
+    const maxHeight = 112;
     annotationTextarea.style.height = 'auto';
     // scrollHeight excludes the border while height is border-box; include
     // the 1px top/bottom borders so the last line is never clipped by 2px.
@@ -469,6 +469,7 @@
     annotationDeleteBtn.disabled = !hasAnnotation(el);
     updateAnnotationDraftStatus(el);
     renderAnnotationReply(el);
+    positionInspectorStack();
   }
 
   // Read-only "Agent …" line under the note textarea (v2.13): shows the
@@ -1332,6 +1333,7 @@
     const visible = inspectorDock.dataset.visible === 'true';
     if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
       inspector.dataset.avoidance = 'clear';
+      inspector.dataset.revealed = 'false';
       return;
     }
     // A live manipulation intentionally holds the dock still so v2.12's
@@ -1349,7 +1351,10 @@
       ? 0
       : inspectorFoldInner.scrollHeight;
     const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
-    const height = toolbarHeight + exportHeight + inspectorHeight + 2;
+    const height = Math.min(
+      toolbarHeight + exportHeight + inspectorHeight + 2,
+      window.innerHeight - margin * 2
+    );
     const expandedSelection = {
       left: selectionRect.left - gutter,
       top: selectionRect.top - gutter,
@@ -1370,5 +1375,9 @@
     const currentBlocked = rectsOverlap(expandedSelection, candidates[current]);
     const otherBlocked = rectsOverlap(expandedSelection, candidates[other]);
     if (currentBlocked && !otherBlocked) stack.dataset.side = other;
-    inspector.dataset.avoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    const nextAvoidance = currentBlocked && otherBlocked ? 'overlap' : 'clear';
+    if (inspector.dataset.avoidance !== nextAvoidance || nextAvoidance === 'clear') {
+      inspector.dataset.revealed = 'false';
+    }
+    inspector.dataset.avoidance = nextAvoidance;
   }

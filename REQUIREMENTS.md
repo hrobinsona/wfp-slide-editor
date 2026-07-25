@@ -98,10 +98,17 @@ At rest, the editor instrument stays on its current viewport side while that
 side is clear, and moves to the opposite side when the selected element would
 otherwise sit beneath it. If both side positions overlap an unusually wide
 selection, only the inspector uses a visibly translucent fallback that restores
-on deliberate hover/focus; the toolbar remains fully opaque. Placement is
+on deliberate mouse hover or keyboard focus; the toolbar remains fully opaque.
+Touch/pen contacts without hover use the first contact to reveal the panel and
+require a second contact to activate a control, preventing accidental actions
+through nearly invisible chrome. Placement is
 re-evaluated after selection/layout changes, viewport changes, Overview
 transitions, note auto-growth, and inspector minimise/expand without oscillating
 between clear positions.
+
+The inspector is bounded to the live viewport. When a long note, agent reply, or
+narrow viewport makes the control set taller than the available space, the
+inspector body scrolls while its header and all actions remain reachable.
 
 ### Adaptive Inspector Fade (v2.12)
 
