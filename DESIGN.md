@@ -210,6 +210,8 @@ The v2.12 adaptive fade (design 7, `feature-briefs/v2.12-adaptive-inspector.md`,
 
 While an element sits selected, the R2 idle `requestAnimationFrame` loop dirty-checks the selection's and every known-annotated element's visibility and bounding rect each tick and only runs the full ring/inspector/marker refresh when one of those actually changed, so a stationary selection costs no continuous layout work; the check is deliberately geometry-only, so a host script changing a non-geometric style (opacity, colour, font-size) with no rect/visibility change and no editor event will not refresh the inspector's readouts until something else triggers a full refresh.
 
+The opacity slider's keyboard-burst coalescing (30-ui-inspector-controls.js) holds `state.txn` open across a short settle window rather than closing it on every `change`, and registers a pending-txn-flush hook (50-history.js) for as long as that window is open so any other gesture that calls `beginTxn()` in the meantime finalizes the pending session as its own history entry first, instead of silently merging into it or losing its own transaction options. One side effect: `isInteractionOpen()` (96-live-refresh.js) already defers the v2.13 agent-watch document swap while `state.txn` is open, so a live refresh can be delayed by up to the settle window if it lands mid-burst — bounded (the watch retries on its next ~1.2s tick, an order of magnitude longer than the settle window) and the correct failure mode, since swapping the document mid-edit would be worse.
+
 ## Overview Mode
 
 Overview mode is a temporary editor surface for slide-level changes.

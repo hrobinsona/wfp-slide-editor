@@ -1013,6 +1013,14 @@
   // once no further input arrives, so a whole burst of presses, held or
   // not, lands as one entry, same as a mouse drag. Losing focus flushes it
   // immediately instead of waiting out the timer.
+  //
+  // Holding state.txn open for that settle window is only safe because it
+  // is registered with 50-history.js's pending-txn-flush mechanism for
+  // exactly as long as the timer is armed: any OTHER gesture that opens a
+  // transaction while the window is open (a drag, a text edit, another
+  // inspector commit) forces this session to finalize as its own history
+  // entry FIRST, so it can never silently absorb an unrelated change or
+  // swallow another beginTxn() call's own options (e.g. captureHtml).
   const OPACITY_KEYBOARD_SETTLE_MS = 380;
   let opacitySliderTarget = null;
   let opacitySliderRestoreCtx = null;
@@ -1027,6 +1035,11 @@
     opacitySliderKeyboardSession = keyboard;
   }
   function closeOpacitySession() {
+    // Unregister first and unconditionally: this is also the pending-txn-
+    // flush hook itself (see below), so it must be safe to call whether it
+    // fires from our own timer, from an external flush, or from a direct
+    // mouse/blur close — and must never leave a stale registration behind.
+    unregisterPendingTxnFlush(closeOpacitySession);
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
     if (!opacitySliderTarget) return;
@@ -1078,6 +1091,9 @@
     if (opacitySliderKeyboardSession) {
       clearTimeout(opacitySliderSettleTimer);
       opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
+      // Pending until the timer fires or something else needs the txn
+      // slot first — closeOpacitySession() unregisters itself either way.
+      registerPendingTxnFlush(closeOpacitySession);
       return;
     }
     closeOpacitySession();
