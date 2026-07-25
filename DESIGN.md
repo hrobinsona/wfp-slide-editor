@@ -269,6 +269,24 @@ progress-dot active classes, and runs the same recognized-counter formatter
 against the clone at index 0 and the exported slide total. The live document is
 not changed.
 
+Anything the editor expresses through its own stylesheet has to be re-expressed
+inline on the clone, because the export keeps neither the editor CSS nor the
+`data-wfp-edit-*` markers that key it. Flat mode is the one such case: the
+clone builder merges `position: relative` into the inline style of a root
+marked `data-wfp-edit-flat-position-context` before the attribute sweep runs,
+so elements the unlock pinned directly against that root keep their containing
+block instead of re-anchoring to the viewport — the live root stays pristine.
+
+Asset absolutization is a property of the export's destination, not of the
+pipeline, so `buildExportHtml`/`buildHandoffExportHtml` take an
+`absolutizeAssets` option (default `true`). Downloads leave the deck's folder
+and need absolute URLs to keep resolving; save-in-place normally rewrites the
+source file in its own folder and passes `false`, keeping relative references
+relative so the deck survives being moved, renamed, or shared. The picker can
+still bind a file in some other folder, which relative references would not
+survive — but baking one machine's absolute paths into the user's own source
+file is the worse default.
+
 This approach is pragmatic and has test coverage. A more surgical source-patch export remains a possible future architecture if whitespace/comment preservation becomes important.
 
 Normal export remains the production-clean artifact and strips all `data-wfp-edit-*` attributes, including live annotation markers. Agent handoff export runs the same cleanup path, then deliberately adds a narrow handoff layer:

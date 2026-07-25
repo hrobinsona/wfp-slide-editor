@@ -125,7 +125,11 @@
   async function saveInPlace() {
     if (state.editingText) endTextEdit();
     const noteCount = getAnnotatedElements(document).length;
-    const html = noteCount > 0 ? buildHandoffExportHtml() : buildExportHtml();
+    // The write lands on the source file, in the source folder: relative asset
+    // URLs must stay relative or the deck breaks as soon as its folder moves.
+    // Downloads keep absolutizing — see buildExportClone.
+    const options = { absolutizeAssets: false };
+    const html = noteCount > 0 ? buildHandoffExportHtml(options) : buildExportHtml(options);
     // Live agent round-trip (v2.13): pause the watcher so our own write is
     // never mistaken for an external agent update; baseline is rebased
     // after a successful write, and the watcher resumes in finally.
@@ -272,6 +276,25 @@
     });
   }
 
+  // Flat mode gives a statically-positioned flat root its positioning context
+  // through an editor-stylesheet rule keyed on
+  // data-wfp-edit-flat-position-context — deliberately, so the live document
+  // keeps a pristine root with no inline style. The export drops both the
+  // editor CSS and (via the data-wfp-edit-* sweep) the marker, so anything the
+  // unlock pinned against that root would re-anchor to the viewport. Persist
+  // the context as an inline declaration on the CLONE only, the same way
+  // pinContainerChildren persists position:relative on pinned containers.
+  // Must run before stripEditorArtifactsFromDocument removes the marker.
+  function persistFlatPositionContext(root) {
+    root
+      .querySelectorAll('[data-wfp-edit-flat-position-context="true"]')
+      .forEach((el) => {
+        // setProperty merges into any existing inline style rather than
+        // replacing it.
+        el.style.setProperty('position', 'relative');
+      });
+  }
+
   function hasDynamicProgressDotBuilder(root) {
     return [...root.querySelectorAll('script')].some((script) => {
       const text = script.textContent || '';
@@ -331,7 +354,12 @@
     }
   }
 
-  function buildExportClone() {
+  // absolutizeAssets is a property of the DESTINATION, not of the pipeline:
+  // a downloaded copy leaves the deck's folder and needs absolute asset URLs
+  // to keep resolving, while save-in-place rewrites the source file in its own
+  // folder, where absolutizing would freeze the deck to one machine path.
+  // Default true so every download call site keeps its behaviour.
+  function buildExportClone({ absolutizeAssets = true } = {}) {
     const clone = document.documentElement.cloneNode(true);
 
     const editorRoot = clone.querySelector(`#${ROOT_ID}`);
@@ -346,7 +374,8 @@
     clone.querySelectorAll('[data-wfp-edit-script]').forEach((s) => s.remove());
     clone.querySelectorAll('script[src*="editor.js"]').forEach((s) => s.remove());
 
-    absolutizeExportAssetUrls(clone);
+    persistFlatPositionContext(clone);
+    if (absolutizeAssets) absolutizeExportAssetUrls(clone);
     removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
 
@@ -591,22 +620,22 @@
     targetParent.appendChild(script);
   }
 
-  function buildExportHtml() {
-    const clone = buildExportClone();
+  function buildExportHtml(options) {
+    const clone = buildExportClone(options);
     removeHandoffArtifacts(clone);
     stripEditorArtifactsFromDocument(clone);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
 
-  function buildHandoffExportHtml() {
+  function buildHandoffExportHtml(options) {
     // v2.14 — the edit ledger stamps ids on the LIVE elements only for the
     // duration of the clone (stamp → cloneNode → unstamp, all synchronous)
     // so the live document never retains data-wfp-agent-edit-id.
     const ledger = collectEditLedger();
     let clone;
     try {
-      clone = buildExportClone();
+      clone = buildExportClone(options);
     } finally {
       for (const el of ledger.stamped) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
     }

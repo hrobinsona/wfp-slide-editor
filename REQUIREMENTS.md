@@ -219,6 +219,7 @@ fully click-through to the slide.
   - A successful save toasts the actual written filename, e.g. "Saved deck.html" or "Saved deck.html — 3 agent notes".
 - In browsers without the File System Access API (Safari, Firefox), row 1 downloads instead of writing to disk: zero notes downloads `<original-name>-edited.html`; one or more notes downloads `<original-name>-agent-handoff.html` — the same destinations as the prior release. Row 1's sublabel is suffixed " — Downloads" in this mode so the destination is never a surprise.
 - Row 2 ("Clean copy") always downloads `<original-name>-edited.html` from the clean pipeline, in every browser, regardless of annotation count or File System Access availability. Its sublabel reads "Edits only — notes stripped" when annotations exist, or "Download a copy" when there are none.
+- Downloaded copies rewrite relative asset URLs (`src`, `href`, `srcset`, inline and stylesheet `url(...)`) to absolute ones so the copy still resolves outside the deck's folder; save-in-place leaves them exactly as authored, because it rewrites the source file where relative references must keep working after the folder is moved, renamed, or shared.
 - Export must preserve:
   - DOCTYPE, head, scripts, styles, and unchanged slide content.
   - Element style and text edits.
