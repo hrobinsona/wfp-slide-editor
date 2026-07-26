@@ -342,8 +342,10 @@ test.describe('v2.5 — agent handoff annotations', () => {
     await expect(page.locator(rowSel)).toBeVisible();
     await expect(page.locator(textareaSel)).toHaveValue('');
 
+    // v2.18 — deliberate contract change: the inspector dock now shows
+    // (with a reduced surface) for a multi-selection instead of hiding.
     await clickToSelect(page, '.slide.active .foreign-note', { metaKey: true });
-    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'false');
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'true');
 
     await page.keyboard.press('o');
     await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'false');

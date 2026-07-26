@@ -525,6 +525,14 @@
     #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] {
       grid-template-rows: 0fr;
     }
+    /* v2.18 — multi-selection reduced surface. Position/Size never carry
+       an inline display style (unlike weight/align/annotation, which the
+       populate JS toggles per-selection), so a plain attribute selector is
+       enough here with no inline-style fight to worry about. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="position"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="size"] {
+      display: none;
+    }
     #${ROOT_ID} .wfpe-inspector-dock-inner {
       min-height: 0;
       overflow: hidden;
@@ -1077,9 +1085,16 @@
       border-radius: 6px;
       transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-action-btn:hover { background: rgba(255,255,255,0.14); }
-    #${ROOT_ID} .wfpe-action-btn.wfpe-delete-btn:hover {
+    #${ROOT_ID} .wfpe-action-btn:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-action-btn.wfpe-delete-btn:hover:not(:disabled) {
       background-color: rgba(220, 38, 38, 0.28);
+    }
+    /* v2.18 — Duplicate/Delete stay visible but inert for a multi-
+       selection: their functions already no-op there, so this stops the
+       UI from lying about it. */
+    #${ROOT_ID} .wfpe-action-btn:disabled {
+      color: rgba(255,255,255,0.35);
+      cursor: default;
     }
     #${ROOT_ID} .wfpe-action-btn .wfpe-icon {
       width: 12px;
@@ -1901,6 +1916,10 @@
   const inspectorDock = document.createElement('div');
   inspectorDock.className = 'wfpe-inspector-dock';
   inspectorDock.dataset.visible = 'false';
+  // v2.18 — set by refreshInspector() from getSelectedElements().length > 1.
+  // Gates the reduced multi-selection control surface in CSS (geometry
+  // rows) and in the populate/gating JS below (typography, action row).
+  inspectorDock.dataset.multi = 'false';
   const inspectorDockInner = document.createElement('div');
   inspectorDockInner.className = 'wfpe-inspector-dock-inner';
   inspectorDock.appendChild(inspectorDockInner);
@@ -2093,8 +2112,15 @@
   const typographyDividerTop = makeInspectorDivider();
   const typographyDividerBottom = makeInspectorDivider();
 
-  inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
-  inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
+  // v2.18 — data-wfpe-row identifies these for the [data-multi="true"] CSS
+  // gate (20-dom-css.js): per-element X/Y/W/H is ambiguous for a set, so
+  // they're hidden outright rather than showing shared-or-Mixed values.
+  const positionRow = makeInspectorRow('Position', [fieldX, fieldY]);
+  positionRow.dataset.wfpeRow = 'position';
+  inspectorBody.appendChild(positionRow);
+  const sizeRow = makeInspectorRow('Size', [fieldW, fieldH]);
+  sizeRow.dataset.wfpeRow = 'size';
+  inspectorBody.appendChild(sizeRow);
   inspectorBody.appendChild(typographyDividerTop);
   inspectorBody.appendChild(fontSizeRow);
   inspectorBody.appendChild(weightRow.row);
@@ -2590,11 +2616,19 @@
         input.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        // Revert by repopulating from the live element, then blur. The
+        // Revert by repopulating from the live element(s), then blur. The
         // revertingInput flag suppresses the blur's commit so the no-op
         // path stays explicit rather than implicit-via-equality.
+        //
+        // v2.18 code review (W3) — was an unconditional
+        // populateInspector(state.selected), which repaints the SINGLE-
+        // selection surface (Duplicate/Delete enabled, geometry rows
+        // shown) over a live multi-selection until the next tracking
+        // tick quietly repairs it. Route through the same multi/single
+        // split every other repopulate call site uses.
         revertingInput = input;
-        populateInspector(state.selected);
+        if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+        else populateInspector(state.selected);
         input.blur();
       }
     });
@@ -2685,15 +2719,22 @@
   // entry FIRST, so it can never silently absorb an unrelated change or
   // swallow another beginTxn() call's own options (e.g. captureHtml).
   const OPACITY_KEYBOARD_SETTLE_MS = 380;
-  let opacitySliderTarget = null;
+  // v2.18 code review (C1) — was a single `opacitySliderTarget` element, so
+  // a slider DRAG under a multi-selection wrote only state.selected: the
+  // dock would then repopulate "Mixed" for the other member(s) right after
+  // a gesture that visually claimed to edit the whole set. Generalised to
+  // the member array captured at session-open; the typed-value path
+  // (commitOpacityMulti, 40-helpers-selection-inspector.js) was already
+  // correct — this brings the slider's live-drag path to the same scope.
+  let opacitySliderMembers = null;
   let opacitySliderRestoreCtx = null;
   let opacitySliderOwnedTxn = null; // identity guard for the deferred keyboard close, below
   let opacitySliderKeyboardSession = false;
   let opacitySliderSettleTimer = null;
-  function beginOpacitySession(el, { keyboard = false } = {}) {
-    opacitySliderTarget = el;
+  function beginOpacitySession(members, { keyboard = false } = {}) {
+    opacitySliderMembers = members;
     opacitySliderRestoreCtx = startInspectorTxn();
-    touchElement(el);
+    for (const el of members) touchElement(el);
     opacitySliderOwnedTxn = state.txn;
     opacitySliderKeyboardSession = keyboard;
   }
@@ -2705,8 +2746,8 @@
     unregisterPendingTxnFlush(closeOpacitySession);
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (!opacitySliderTarget) return;
-    opacitySliderTarget = null;
+    if (!opacitySliderMembers) return;
+    opacitySliderMembers = null;
     opacitySliderKeyboardSession = false;
     const owned = opacitySliderOwnedTxn;
     opacitySliderOwnedTxn = null;
@@ -2719,38 +2760,41 @@
     liveEditEnd();
   }
   opacitySlider.addEventListener('mousedown', () => {
-    const el = state.selected;
-    if (!el) return;
+    const members = getSelectedElements();
+    if (!members.length) return;
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    beginOpacitySession(el);
+    beginOpacitySession(members);
   });
   opacitySlider.addEventListener('input', () => {
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (opacitySliderTarget && opacitySliderTarget !== state.selected) {
+    const currentMembers = getSelectedElements();
+    if (opacitySliderMembers && !selectionArraysEqual(opacitySliderMembers, currentMembers)) {
       // An earlier session — most often an orphaned mouse drag whose
-      // mouseup never reached us (button released outside the window) —
-      // never closed before the selection moved on. Close it out for
-      // real (a harmless no-op if it captured no change) instead of
-      // silently continuing to apply values to the stale element.
+      // mouseup never reached us (button released outside the window), or
+      // a selection change mid-drag — never closed before membership
+      // moved on. Close it out for real (a harmless no-op if it captured
+      // no change) instead of silently continuing to apply values to a
+      // stale member set.
       closeOpacitySession();
     }
-    if (!opacitySliderTarget) {
-      if (!state.selected) return;
-      beginOpacitySession(state.selected, { keyboard: true });
+    if (!opacitySliderMembers) {
+      if (!currentMembers.length) return;
+      beginOpacitySession(currentMembers, { keyboard: true });
     }
-    const el = opacitySliderTarget;
+    const members = opacitySliderMembers;
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
-    el.style.opacity = String(pct / 100);
-    populateOpacity(el);
+    for (const el of members) el.style.opacity = String(pct / 100);
+    if (members.length > 1) populateOpacityMulti(members);
+    else populateOpacity(members[0]);
     // v2.12 — bounded control keeps its slider; each tick refreshes the
     // tag/fade, and the restore is anchored to true drag-end below so a
     // mid-drag pause can't flicker the chrome back in.
     liveEditUpdate(`${Math.round(pct)} %`);
   });
   const endOpacityDrag = () => {
-    if (!opacitySliderTarget) return;
+    if (!opacitySliderMembers) return;
     if (opacitySliderKeyboardSession) {
       clearTimeout(opacitySliderSettleTimer);
       opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
@@ -2794,11 +2838,26 @@
     // handler — letting the browser open the picker on a real user click
     // is more reliable than calling .click() programmatically.
     colorInput.addEventListener('input', () => {
+      const norm = parseHexInput(colorInput.value);
+      if (!norm) return;
+      // v2.18 — colour swatches apply to every selected member, no
+      // isTextBearing gate (unlike font size): setting `color` on a
+      // non-text element is inert, not wrong, so it isn't worth skipping.
+      if (hasMultiSelection()) {
+        const members = getSelectedElements();
+        if (!pickerSession[target].open) {
+          pickerSession[target].open = true;
+          pickerSession[target].inlineSpan = null;
+          pickerSession[target].restoreCtx = startInspectorTxn();
+          for (const el of members) touchElement(el);
+        }
+        for (const el of members) applyColorToElement(el, target, norm);
+        populateColoursMulti(members);
+        return;
+      }
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
-      const norm = parseHexInput(colorInput.value);
-      if (!norm) return;
       const textRange = target === 'text' && state.editingText && state.editingText.el === el
         ? getTextColourRange(el)
         : null;
@@ -2839,8 +2898,11 @@
         hexInput.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
+        // v2.18 code review (W3) — same multi/single split as the numeric
+        // fields' Escape handler above.
         revertingInput = hexInput;
-        populateColours(state.selected);
+        if (hasMultiSelection()) populateColoursMulti(getSelectedElements());
+        else populateColours(state.selected);
         hexInput.blur();
       }
     });
@@ -2858,10 +2920,22 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', (e) => {
         e.preventDefault();
+        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+        if (hasMultiSelection()) {
+          const members = getSelectedElements().filter((el) => !!el.style[cssProp]);
+          if (!members.length) return;
+          const ctx = startInspectorTxn();
+          for (const el of members) {
+            touchElement(el);
+            el.style[cssProp] = '';
+          }
+          endInspectorTxn(ctx);
+          populateColoursMulti(getSelectedElements());
+          return;
+        }
         const el = state.selected;
         if (!el) return;
         // Only meaningful if there's an inline colour to clear.
-        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
         if (!el.style[cssProp]) return;
         const ctx = startInspectorTxn();
         touchElement(el);
@@ -2918,20 +2992,28 @@
   // edits are retained; any container they still depend on stays pinned.
   // No original/group record means the editor never touched the element, so
   // an idle click cannot mutate it or push a no-op entry.
+  // v2.18 — getSelectedElements() covers both single and multi selection
+  // (it returns [state.selected] for a single selection), so one loop
+  // inside one txn serves both: every touched member restores together
+  // and undoes together. The no-op guard stays per-member (skip anything
+  // the editor never touched) via the `restorable` filter below.
   resetBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    const el = state.selected;
-    if (!el) return;
-    const unlockGroup = getActiveFlowUnlockGroup(el);
-    if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
+    const targets = getSelectedElements();
+    if (!targets.length) return;
+    const restorable = targets.filter((el) => getActiveFlowUnlockGroup(el) || state.originalStyles.has(el));
+    if (!restorable.length) return; // none of the targets were ever edited
     const ctx = startInspectorTxn();
-    if (unlockGroup) {
-      restoreFlowUnlockGroup(unlockGroup, el);
-    } else {
-      const original = state.originalStyles.get(el);
-      touchElement(el);
-      if (original === null) el.removeAttribute('style');
-      else el.setAttribute('style', original);
+    for (const el of restorable) {
+      const unlockGroup = getActiveFlowUnlockGroup(el);
+      if (unlockGroup) {
+        restoreFlowUnlockGroup(unlockGroup, el);
+      } else {
+        const original = state.originalStyles.get(el);
+        touchElement(el);
+        if (original === null) el.removeAttribute('style');
+        else el.setAttribute('style', original);
+      }
     }
     endInspectorTxn(ctx);
     refreshSelection();
@@ -3364,14 +3446,12 @@
   // in current-stack order so a multi-select bump keeps the targets' relative
   // order (required + 1, required + 2, …) instead of tying them.
   //
-  // Multi-target input is currently unreachable through the UI — the
-  // inspector dock (and this action row with it) only renders while
-  // exactly one element is selected, so a real pointer click can never
-  // land on this button during a multi-selection. The multi-target path
-  // is kept correct anyway as deliberate forward-compat for whenever
-  // multi-select gets its own surface; tests exercise it by dispatching
-  // the click event directly rather than driving a real (unreachable)
-  // pointer click.
+  // Multi-target input is reachable through the UI as of v2.18 — the
+  // inspector dock now renders (with a reduced control surface) for any
+  // selection of one or more elements, not just exactly one, so a real
+  // pointer click on the Front button can land during a multi-selection.
+  // Tests drive a real click accordingly (tests/v2-17-bring-to-front.spec.js,
+  // tests/v2-18-multi-select-inspector.spec.js).
   function computeFrontPlan(elements) {
     const slide = getActiveSlide();
     if (!slide) return null;
@@ -4112,7 +4192,10 @@
       hideHandles();
       hideDimBubble();
       positionMultiSelection(members);
-      populateInspector(null);
+      populateInspectorMulti(members);
+      if (!state.drag && !state.resize && !state.txn && !state.editingText) {
+        positionInspectorStack();
+      }
       refreshAnnotationMarkers();
       startSelectionTracking();
     } else if (members.length === 1) {
@@ -4411,10 +4494,30 @@
     typographyDividerBottom.style.display = d;
   }
 
+  // v2.18 — shared multi-select vs single-select chrome: header label and
+  // the Duplicate/Delete disabled state are functions of selection
+  // membership alone, so both populate entry points (single-element
+  // populateInspector below, and populateInspectorMulti further down) set
+  // them explicitly on every call rather than relying on stale state left
+  // by whichever path ran last.
+  function updateActionRowGating(multi) {
+    duplicateBtn.disabled = multi;
+    duplicateBtn.title = multi
+      ? 'Duplicate is not available for a multi-selection'
+      : 'Duplicate selected element';
+    deleteBtn.disabled = multi;
+    deleteBtn.title = multi
+      ? 'Delete is not available for a multi-selection'
+      : 'Delete selected element';
+  }
+
   function populateInspector(el) {
+    inspectorTitle.textContent = 'Inspector';
+    updateActionRowGating(false);
     if (!el) {
       for (const k of ['x', 'y', 'w', 'h', 'fontSize', 'opacity']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+        inspectorInputs[k].placeholder = '';
       }
       setTypographyRowsVisible(false);
       textColourRow.row.style.display = 'none';
@@ -4484,7 +4587,35 @@
     return true;
   }
 
+  // v2.18 — typed hex commit for a multi-selection: applies to every
+  // member unconditionally (no isTextBearing gate, matching the picker's
+  // live `input` handler in 30-ui-inspector-controls.js). One txn, per-
+  // member no-op guard.
+  function commitColourHexMulti(target, raw) {
+    const norm = parseHexInput(raw);
+    const members = getSelectedElements();
+    if (!norm) {
+      // Garbage input — restore from the live elements.
+      populateColoursMulti(members);
+      return;
+    }
+    const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+    const changed = members.filter((el) => rgbStringToHex(getComputedStyle(el)[cssProp]) !== norm);
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style[cssProp] = norm;
+    }
+    endInspectorTxn(ctx);
+    populateColoursMulti(members);
+  }
+
   function commitColourHex(target, raw, targetEl) {
+    if (hasMultiSelection()) {
+      commitColourHexMulti(target, raw);
+      return;
+    }
     const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
     if (!el) return;
     if (target === 'text' && !isTextBearing(el)) return;
@@ -4513,6 +4644,11 @@
   }
 
   function populateColours(el) {
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection; a single selection always shows
+    // a concrete value below (bgColourRow's placeholder is already
+    // unconditionally reassigned further down, to '' or 'image / gradient').
+    textColourRow.hexInput.placeholder = '';
     if (!el) {
       for (const r of [textColourRow, bgColourRow]) {
         if (document.activeElement !== r.hexInput) r.hexInput.value = '';
@@ -4561,11 +4697,98 @@
     }
   }
 
+  // v2.18 — shared/mixed reducer for multi-select populate. `mixed: true`
+  // means the values disagree — populate call sites blank the field and
+  // show the `Mixed` placeholder rather than guessing at a shared value.
+  function computeSharedValue(values) {
+    if (!values.length) return { shared: null, mixed: false };
+    const first = values[0];
+    const mixed = !values.every((v) => v === first);
+    return { shared: mixed ? null : first, mixed };
+  }
+
+  // Background colour of one member, reduced to a value computeSharedValue
+  // can compare: a hex string, or the sentinels 'transparent' / 'image'
+  // (a gradient/image background has no single hex to show or agree on).
+  function readBgColourToken(el) {
+    const bgRgb = getComputedStyle(el).backgroundColor;
+    const bgImage = getComputedStyle(el).backgroundImage;
+    if (bgImage && bgImage !== 'none') return 'image';
+    if (bgRgb === 'rgba(0, 0, 0, 0)' || bgRgb === 'transparent') return 'transparent';
+    return rgbStringToHex(bgRgb) || '#ffffff';
+  }
+
+  // Populates the text/background colour rows for a multi-selection.
+  // Unlike single-selection populateColours(), text colour is read from
+  // EVERY member regardless of isTextBearing — the brief enables the text
+  // colour row unconditionally for multi (writes are likewise unfiltered;
+  // see commitColourHexMulti).
+  function populateColoursMulti(members) {
+    const textHexes = members.map((el) => rgbStringToHex(getComputedStyle(el).color) || '#000000');
+    const { shared: sharedText, mixed: textMixed } = computeSharedValue(textHexes);
+    if (document.activeElement !== textColourRow.hexInput) {
+      textColourRow.hexInput.value = sharedText || '';
+    }
+    textColourRow.hexInput.placeholder = textMixed ? 'Mixed' : '';
+    textColourRow.colorInput.value = sharedText || '#000000';
+    if (sharedText) {
+      textColourRow.swatch.style.backgroundColor = sharedText;
+      delete textColourRow.swatch.dataset.transparent;
+    } else {
+      textColourRow.swatch.style.backgroundColor = '';
+      textColourRow.swatch.dataset.transparent = 'true';
+    }
+
+    const bgTokens = members.map(readBgColourToken);
+    const { shared: sharedBg, mixed: bgMixed } = computeSharedValue(bgTokens);
+    const sharedBgHex = (sharedBg && sharedBg !== 'transparent' && sharedBg !== 'image') ? sharedBg : null;
+    if (document.activeElement !== bgColourRow.hexInput) {
+      bgColourRow.hexInput.value = sharedBgHex || '';
+    }
+    bgColourRow.hexInput.placeholder = bgMixed ? 'Mixed' : (sharedBg === 'image' ? 'image / gradient' : '');
+    bgColourRow.colorInput.value = sharedBgHex || '#ffffff';
+    if (bgMixed) {
+      bgColourRow.swatch.style.backgroundColor = '';
+      delete bgColourRow.swatch.dataset.image;
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'image') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.image = 'true';
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'transparent') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.transparent = 'true';
+      delete bgColourRow.swatch.dataset.image;
+    } else {
+      bgColourRow.swatch.style.backgroundColor = sharedBgHex;
+      delete bgColourRow.swatch.dataset.transparent;
+      delete bgColourRow.swatch.dataset.image;
+    }
+  }
+
   function populateFontSize(el, { forceInput = false } = {}) {
     const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
     if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.fontSize.placeholder = '';
+  }
+
+  // v2.18 — font size only participates in multi-select from text-bearing
+  // members (writes skip non-text members too; see commitFontSizeMulti).
+  // With no text-bearing member in the set the field just goes blank —
+  // there's nothing to show shared-or-Mixed for.
+  function populateFontSizeMulti(members) {
+    const sizes = members
+      .filter(isTextBearing)
+      .map((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX);
+    const { shared, mixed } = computeSharedValue(sizes);
+    if (document.activeElement !== inspectorInputs.fontSize) {
+      inspectorInputs.fontSize.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.fontSize.placeholder = mixed ? 'Mixed' : '';
   }
 
   // Typography seg-state (ink-glass 3b). Computed font-weight normalises
@@ -4601,7 +4824,96 @@
     if (document.activeElement !== inspectorInputs.opacity) {
       inspectorInputs.opacity.value = String(pct);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.opacity.placeholder = '';
     opacitySlider.value = String(Math.max(0, Math.min(100, pct)));
+  }
+
+  // v2.18 — opacity applies to every member unconditionally (no text-
+  // bearing gate). Per the brief, the slider thumb tracks the PRIMARY
+  // (state.selected) value when the set disagrees, rather than an
+  // arbitrary member or a computed average.
+  function populateOpacityMulti(members) {
+    const pcts = members.map((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      return Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+    });
+    const { shared, mixed } = computeSharedValue(pcts);
+    if (document.activeElement !== inspectorInputs.opacity) {
+      inspectorInputs.opacity.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.opacity.placeholder = mixed ? 'Mixed' : '';
+    const primaryRaw = state.selected ? parseFloat(getComputedStyle(state.selected).opacity) : NaN;
+    const primaryPct = Math.round((Number.isFinite(primaryRaw) ? primaryRaw : 1) * 100);
+    opacitySlider.value = String(Math.max(0, Math.min(100, shared != null ? shared : primaryPct)));
+  }
+
+  // v2.18 — multi-selection inspector content. Geometry rows are hidden
+  // purely by the [data-multi="true"] CSS gate (20-dom-css.js) since they
+  // never carry inline display styles to begin with; weight/align and the
+  // typography dividers DO get inline-toggled by populateInspector() for a
+  // single text selection, so this path must explicitly reset them on
+  // every call — CSS alone can't win against a stale inline style left
+  // over from switching out of a single selection.
+  function populateInspectorMulti(members) {
+    inspectorTitle.textContent = `${members.length} elements`;
+    updateActionRowGating(true);
+    for (const k of ['x', 'y', 'w', 'h']) {
+      if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+    }
+    fontSizeRow.style.display = '';
+    weightRow.row.style.display = 'none';
+    alignRow.row.style.display = 'none';
+    typographyDividerTop.style.display = 'none';
+    typographyDividerBottom.style.display = 'none';
+    textColourRow.row.style.display = '';
+    populateFontSizeMulti(members);
+    populateColoursMulti(members);
+    populateOpacityMulti(members);
+    populateAnnotation(null);
+  }
+
+  // v2.18 — typed (absolute) font-size commit for a multi-selection: every
+  // text-bearing member ends at the SAME value (unlike the ± steppers,
+  // which step each member relatively). Non-text members are skipped
+  // silently. One txn covers every member that actually changes; the
+  // no-op guard is per-member so an already-matching member doesn't churn
+  // its style or drag in a spurious history entry.
+  function commitFontSizeMulti(next) {
+    const clamped = Math.max(FONT_SIZE_MIN_PX, next);
+    const members = getSelectedElements().filter(isTextBearing);
+    const changed = members.filter((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) !== Math.round(clamped));
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.fontSize = `${clamped}px`;
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
+  }
+
+  // v2.18 — typed (absolute) opacity commit for a multi-selection: every
+  // member ends at the same value (no isTextBearing gate — see
+  // populateOpacityMulti). Same one-txn / per-member-no-op shape as
+  // commitFontSizeMulti above.
+  function commitOpacityMulti(next) {
+    const pct = Math.max(0, Math.min(100, next));
+    const members = getSelectedElements();
+    const changed = members.filter((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      const currentPct = Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+      return Math.round(pct) !== currentPct;
+    });
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.opacity = String(pct / 100);
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
   }
 
   function commitInspectorInput(prop, raw, targetEl) {
@@ -4611,11 +4923,16 @@
     if (!el) return;
     const next = parseFloat(raw);
     if (!Number.isFinite(next)) {
-      // Garbage input — restore the readout from the live element.
-      populateInspector(el);
+      // Garbage input — restore the readout from the live element(s).
+      if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+      else populateInspector(el);
       return;
     }
     if (prop === 'fontSize') {
+      if (hasMultiSelection()) {
+        commitFontSizeMulti(next);
+        return;
+      }
       if (!isTextBearing(el)) return;
       const current = parseFloat(getComputedStyle(el).fontSize);
       const clamped = Math.max(FONT_SIZE_MIN_PX, next);
@@ -4628,6 +4945,10 @@
       return;
     }
     if (prop === 'opacity') {
+      if (hasMultiSelection()) {
+        commitOpacityMulti(next);
+        return;
+      }
       const pct = Math.max(0, Math.min(100, next));
       // `|| 1` would treat a legitimate 0 as falsy and default to 100,
       // breaking the no-op guard after a clamp-to-zero. Use isFinite.
@@ -4641,6 +4962,9 @@
       refreshSelection();
       return;
     }
+    // x/y/w/h stay single-element only — their rows are hidden in multi
+    // mode, but the guard is defensive in case a commit ever reaches here
+    // (e.g. a stale focus-time target) with a multi-selection now active.
     // Compare against the live offset; abort no-op commits so blur
     // cycling doesn't pollute history.
     const offsetMap = { x: 'offsetLeft', y: 'offsetTop', w: 'offsetWidth', h: 'offsetHeight' };
@@ -4676,13 +5000,18 @@
   // is a v2.x ROADMAP item).
   // ===========================================================================
   function refreshInspector() {
-    const visible = getSelectedElements().length === 1 && !!state.selected;
+    // v2.18 — deliberate behaviour change: the dock is visible for ANY
+    // non-empty selection, not just exactly one. `data-multi` drives the
+    // reduced-surface CSS gate (20-dom-css.js) for a set of 2+.
+    const members = getSelectedElements();
+    const visible = members.length >= 1;
     // Ink-glass 3b/5b: selection drives the dock fold, then the shared
     // seam refresh reconciles the toolbar corner morph, the menu's
     // bottom radius, and inspector suppression in one place — the three
     // must never disagree, or a seam breaks (squared bar over no panel,
     // or panel under a capsule).
     inspectorDock.dataset.visible = visible ? 'true' : 'false';
+    inspectorDock.dataset.multi = members.length > 1 ? 'true' : 'false';
     refreshStackSeams();
     // Legacy mirror — no CSS keys off this any more, but it's a stable
     // hook existing tests/tooling query.
@@ -4710,7 +5039,11 @@
   // hysteresis prevents placement oscillation as layout settles.
   function positionInspectorStack() {
     const visible = inspectorDock.dataset.visible === 'true';
-    if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
+    // v2.18 — was `length !== 1`; the dock now also opens for a
+    // multi-selection, and getLiveSelectionRect() (85-adaptive-fade.js)
+    // already aggregates every selected member's rect into one bounding
+    // box, so the avoidance math below needs no other change.
+    if (!visible || state.overviewMode || !getSelectedElements().length) {
       inspector.dataset.avoidance = 'clear';
       inspector.dataset.revealed = 'false';
       return;
@@ -5976,18 +6309,29 @@
   // but bracketed with a fresh txn so each click is exactly one history
   // entry. Uses the inspector-txn isolation helpers so a click during
   // a text-edit produces its own entry separate from the typing.
+  //
+  // v2.18 — multi-selection steps every text-bearing member by the SAME
+  // delta from its OWN current computed size (nudgeFontSize reads current
+  // per element), preserving relative hierarchy between differently-sized
+  // members instead of collapsing them to one absolute value. Non-text
+  // members are skipped silently, same as the typed-value commit path.
   function nudgeFontSizeWithHistory(deltaPx) {
-    const el = state.selected;
-    if (!el || !isTextBearing(el)) return;
+    const members = getSelectedElements().filter(isTextBearing);
+    if (!members.length) return;
     const ctx = startInspectorTxn();
-    touchElement(el);
-    nudgeFontSize(el, deltaPx);
+    for (const el of members) {
+      touchElement(el);
+      nudgeFontSize(el, deltaPx);
+    }
     endInspectorTxn(ctx);
-    populateFontSize(el, { forceInput: true });
+    if (hasMultiSelection()) populateFontSizeMulti(getSelectedElements());
+    else populateFontSize(members[0], { forceInput: true });
     // v2.12 — each ± step blips the value tag (and the fade when the
     // selection sits under the panel); the settle timer keeps a burst of
-    // clicks from flickering the chrome.
-    const px = Math.round(parseFloat(getComputedStyle(el).fontSize));
+    // clicks from flickering the chrome. Blips the primary member when
+    // it's one of the ones that moved, else the last member touched.
+    const blipEl = (state.selected && isTextBearing(state.selected)) ? state.selected : members[members.length - 1];
+    const px = Math.round(parseFloat(getComputedStyle(blipEl).fontSize));
     liveEditBlip(`${px} px`);
     refreshSelection();
   }

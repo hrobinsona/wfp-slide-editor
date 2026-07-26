@@ -176,11 +176,10 @@ test.describe('v2.17 — Front (bring to front)', () => {
       overlapPoint,
     )).toBe(true);
 
-    // The inspector (and its action row) collapses to zero height for a
-    // multi-selection, so a real pointer click would fail Playwright's
-    // actionability checks against the pointer-events:none dock — dispatch
-    // the click event directly instead.
-    await page.locator(FRONT_BTN).dispatchEvent('click');
+    // v2.18 — the inspector dock now renders (with a reduced control
+    // surface, Front included) for a multi-selection too, so the button is
+    // a real, reachable pointer target here.
+    await page.locator(FRONT_BTN).click();
 
     const cardZ = await effectiveZ(page, '.slide.active .foreign-card');
     const targetZ = await effectiveZ(page, '.slide.active .resize-target');
@@ -286,11 +285,11 @@ test.describe('v2.17 — Front (bring to front)', () => {
     }));
 
     const before = await readStyles();
-    await page.locator(FRONT_BTN).dispatchEvent('click');
+    await page.locator(FRONT_BTN).click();
     const afterFirst = await readStyles();
     expect(afterFirst).not.toEqual(before);
 
-    await page.locator(FRONT_BTN).dispatchEvent('click');
+    await page.locator(FRONT_BTN).click();
     const afterSecond = await readStyles();
     // No growth: identical inline styles after the second click.
     expect(afterSecond).toEqual(afterFirst);

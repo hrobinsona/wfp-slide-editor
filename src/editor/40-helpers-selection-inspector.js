@@ -399,14 +399,12 @@
   // in current-stack order so a multi-select bump keeps the targets' relative
   // order (required + 1, required + 2, …) instead of tying them.
   //
-  // Multi-target input is currently unreachable through the UI — the
-  // inspector dock (and this action row with it) only renders while
-  // exactly one element is selected, so a real pointer click can never
-  // land on this button during a multi-selection. The multi-target path
-  // is kept correct anyway as deliberate forward-compat for whenever
-  // multi-select gets its own surface; tests exercise it by dispatching
-  // the click event directly rather than driving a real (unreachable)
-  // pointer click.
+  // Multi-target input is reachable through the UI as of v2.18 — the
+  // inspector dock now renders (with a reduced control surface) for any
+  // selection of one or more elements, not just exactly one, so a real
+  // pointer click on the Front button can land during a multi-selection.
+  // Tests drive a real click accordingly (tests/v2-17-bring-to-front.spec.js,
+  // tests/v2-18-multi-select-inspector.spec.js).
   function computeFrontPlan(elements) {
     const slide = getActiveSlide();
     if (!slide) return null;
@@ -1147,7 +1145,10 @@
       hideHandles();
       hideDimBubble();
       positionMultiSelection(members);
-      populateInspector(null);
+      populateInspectorMulti(members);
+      if (!state.drag && !state.resize && !state.txn && !state.editingText) {
+        positionInspectorStack();
+      }
       refreshAnnotationMarkers();
       startSelectionTracking();
     } else if (members.length === 1) {
@@ -1446,10 +1447,30 @@
     typographyDividerBottom.style.display = d;
   }
 
+  // v2.18 — shared multi-select vs single-select chrome: header label and
+  // the Duplicate/Delete disabled state are functions of selection
+  // membership alone, so both populate entry points (single-element
+  // populateInspector below, and populateInspectorMulti further down) set
+  // them explicitly on every call rather than relying on stale state left
+  // by whichever path ran last.
+  function updateActionRowGating(multi) {
+    duplicateBtn.disabled = multi;
+    duplicateBtn.title = multi
+      ? 'Duplicate is not available for a multi-selection'
+      : 'Duplicate selected element';
+    deleteBtn.disabled = multi;
+    deleteBtn.title = multi
+      ? 'Delete is not available for a multi-selection'
+      : 'Delete selected element';
+  }
+
   function populateInspector(el) {
+    inspectorTitle.textContent = 'Inspector';
+    updateActionRowGating(false);
     if (!el) {
       for (const k of ['x', 'y', 'w', 'h', 'fontSize', 'opacity']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+        inspectorInputs[k].placeholder = '';
       }
       setTypographyRowsVisible(false);
       textColourRow.row.style.display = 'none';
@@ -1519,7 +1540,35 @@
     return true;
   }
 
+  // v2.18 — typed hex commit for a multi-selection: applies to every
+  // member unconditionally (no isTextBearing gate, matching the picker's
+  // live `input` handler in 30-ui-inspector-controls.js). One txn, per-
+  // member no-op guard.
+  function commitColourHexMulti(target, raw) {
+    const norm = parseHexInput(raw);
+    const members = getSelectedElements();
+    if (!norm) {
+      // Garbage input — restore from the live elements.
+      populateColoursMulti(members);
+      return;
+    }
+    const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+    const changed = members.filter((el) => rgbStringToHex(getComputedStyle(el)[cssProp]) !== norm);
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style[cssProp] = norm;
+    }
+    endInspectorTxn(ctx);
+    populateColoursMulti(members);
+  }
+
   function commitColourHex(target, raw, targetEl) {
+    if (hasMultiSelection()) {
+      commitColourHexMulti(target, raw);
+      return;
+    }
     const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
     if (!el) return;
     if (target === 'text' && !isTextBearing(el)) return;
@@ -1548,6 +1597,11 @@
   }
 
   function populateColours(el) {
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection; a single selection always shows
+    // a concrete value below (bgColourRow's placeholder is already
+    // unconditionally reassigned further down, to '' or 'image / gradient').
+    textColourRow.hexInput.placeholder = '';
     if (!el) {
       for (const r of [textColourRow, bgColourRow]) {
         if (document.activeElement !== r.hexInput) r.hexInput.value = '';
@@ -1596,11 +1650,98 @@
     }
   }
 
+  // v2.18 — shared/mixed reducer for multi-select populate. `mixed: true`
+  // means the values disagree — populate call sites blank the field and
+  // show the `Mixed` placeholder rather than guessing at a shared value.
+  function computeSharedValue(values) {
+    if (!values.length) return { shared: null, mixed: false };
+    const first = values[0];
+    const mixed = !values.every((v) => v === first);
+    return { shared: mixed ? null : first, mixed };
+  }
+
+  // Background colour of one member, reduced to a value computeSharedValue
+  // can compare: a hex string, or the sentinels 'transparent' / 'image'
+  // (a gradient/image background has no single hex to show or agree on).
+  function readBgColourToken(el) {
+    const bgRgb = getComputedStyle(el).backgroundColor;
+    const bgImage = getComputedStyle(el).backgroundImage;
+    if (bgImage && bgImage !== 'none') return 'image';
+    if (bgRgb === 'rgba(0, 0, 0, 0)' || bgRgb === 'transparent') return 'transparent';
+    return rgbStringToHex(bgRgb) || '#ffffff';
+  }
+
+  // Populates the text/background colour rows for a multi-selection.
+  // Unlike single-selection populateColours(), text colour is read from
+  // EVERY member regardless of isTextBearing — the brief enables the text
+  // colour row unconditionally for multi (writes are likewise unfiltered;
+  // see commitColourHexMulti).
+  function populateColoursMulti(members) {
+    const textHexes = members.map((el) => rgbStringToHex(getComputedStyle(el).color) || '#000000');
+    const { shared: sharedText, mixed: textMixed } = computeSharedValue(textHexes);
+    if (document.activeElement !== textColourRow.hexInput) {
+      textColourRow.hexInput.value = sharedText || '';
+    }
+    textColourRow.hexInput.placeholder = textMixed ? 'Mixed' : '';
+    textColourRow.colorInput.value = sharedText || '#000000';
+    if (sharedText) {
+      textColourRow.swatch.style.backgroundColor = sharedText;
+      delete textColourRow.swatch.dataset.transparent;
+    } else {
+      textColourRow.swatch.style.backgroundColor = '';
+      textColourRow.swatch.dataset.transparent = 'true';
+    }
+
+    const bgTokens = members.map(readBgColourToken);
+    const { shared: sharedBg, mixed: bgMixed } = computeSharedValue(bgTokens);
+    const sharedBgHex = (sharedBg && sharedBg !== 'transparent' && sharedBg !== 'image') ? sharedBg : null;
+    if (document.activeElement !== bgColourRow.hexInput) {
+      bgColourRow.hexInput.value = sharedBgHex || '';
+    }
+    bgColourRow.hexInput.placeholder = bgMixed ? 'Mixed' : (sharedBg === 'image' ? 'image / gradient' : '');
+    bgColourRow.colorInput.value = sharedBgHex || '#ffffff';
+    if (bgMixed) {
+      bgColourRow.swatch.style.backgroundColor = '';
+      delete bgColourRow.swatch.dataset.image;
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'image') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.image = 'true';
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'transparent') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.transparent = 'true';
+      delete bgColourRow.swatch.dataset.image;
+    } else {
+      bgColourRow.swatch.style.backgroundColor = sharedBgHex;
+      delete bgColourRow.swatch.dataset.transparent;
+      delete bgColourRow.swatch.dataset.image;
+    }
+  }
+
   function populateFontSize(el, { forceInput = false } = {}) {
     const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
     if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.fontSize.placeholder = '';
+  }
+
+  // v2.18 — font size only participates in multi-select from text-bearing
+  // members (writes skip non-text members too; see commitFontSizeMulti).
+  // With no text-bearing member in the set the field just goes blank —
+  // there's nothing to show shared-or-Mixed for.
+  function populateFontSizeMulti(members) {
+    const sizes = members
+      .filter(isTextBearing)
+      .map((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX);
+    const { shared, mixed } = computeSharedValue(sizes);
+    if (document.activeElement !== inspectorInputs.fontSize) {
+      inspectorInputs.fontSize.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.fontSize.placeholder = mixed ? 'Mixed' : '';
   }
 
   // Typography seg-state (ink-glass 3b). Computed font-weight normalises
@@ -1636,7 +1777,96 @@
     if (document.activeElement !== inspectorInputs.opacity) {
       inspectorInputs.opacity.value = String(pct);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.opacity.placeholder = '';
     opacitySlider.value = String(Math.max(0, Math.min(100, pct)));
+  }
+
+  // v2.18 — opacity applies to every member unconditionally (no text-
+  // bearing gate). Per the brief, the slider thumb tracks the PRIMARY
+  // (state.selected) value when the set disagrees, rather than an
+  // arbitrary member or a computed average.
+  function populateOpacityMulti(members) {
+    const pcts = members.map((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      return Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+    });
+    const { shared, mixed } = computeSharedValue(pcts);
+    if (document.activeElement !== inspectorInputs.opacity) {
+      inspectorInputs.opacity.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.opacity.placeholder = mixed ? 'Mixed' : '';
+    const primaryRaw = state.selected ? parseFloat(getComputedStyle(state.selected).opacity) : NaN;
+    const primaryPct = Math.round((Number.isFinite(primaryRaw) ? primaryRaw : 1) * 100);
+    opacitySlider.value = String(Math.max(0, Math.min(100, shared != null ? shared : primaryPct)));
+  }
+
+  // v2.18 — multi-selection inspector content. Geometry rows are hidden
+  // purely by the [data-multi="true"] CSS gate (20-dom-css.js) since they
+  // never carry inline display styles to begin with; weight/align and the
+  // typography dividers DO get inline-toggled by populateInspector() for a
+  // single text selection, so this path must explicitly reset them on
+  // every call — CSS alone can't win against a stale inline style left
+  // over from switching out of a single selection.
+  function populateInspectorMulti(members) {
+    inspectorTitle.textContent = `${members.length} elements`;
+    updateActionRowGating(true);
+    for (const k of ['x', 'y', 'w', 'h']) {
+      if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+    }
+    fontSizeRow.style.display = '';
+    weightRow.row.style.display = 'none';
+    alignRow.row.style.display = 'none';
+    typographyDividerTop.style.display = 'none';
+    typographyDividerBottom.style.display = 'none';
+    textColourRow.row.style.display = '';
+    populateFontSizeMulti(members);
+    populateColoursMulti(members);
+    populateOpacityMulti(members);
+    populateAnnotation(null);
+  }
+
+  // v2.18 — typed (absolute) font-size commit for a multi-selection: every
+  // text-bearing member ends at the SAME value (unlike the ± steppers,
+  // which step each member relatively). Non-text members are skipped
+  // silently. One txn covers every member that actually changes; the
+  // no-op guard is per-member so an already-matching member doesn't churn
+  // its style or drag in a spurious history entry.
+  function commitFontSizeMulti(next) {
+    const clamped = Math.max(FONT_SIZE_MIN_PX, next);
+    const members = getSelectedElements().filter(isTextBearing);
+    const changed = members.filter((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) !== Math.round(clamped));
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.fontSize = `${clamped}px`;
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
+  }
+
+  // v2.18 — typed (absolute) opacity commit for a multi-selection: every
+  // member ends at the same value (no isTextBearing gate — see
+  // populateOpacityMulti). Same one-txn / per-member-no-op shape as
+  // commitFontSizeMulti above.
+  function commitOpacityMulti(next) {
+    const pct = Math.max(0, Math.min(100, next));
+    const members = getSelectedElements();
+    const changed = members.filter((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      const currentPct = Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+      return Math.round(pct) !== currentPct;
+    });
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.opacity = String(pct / 100);
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
   }
 
   function commitInspectorInput(prop, raw, targetEl) {
@@ -1646,11 +1876,16 @@
     if (!el) return;
     const next = parseFloat(raw);
     if (!Number.isFinite(next)) {
-      // Garbage input — restore the readout from the live element.
-      populateInspector(el);
+      // Garbage input — restore the readout from the live element(s).
+      if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+      else populateInspector(el);
       return;
     }
     if (prop === 'fontSize') {
+      if (hasMultiSelection()) {
+        commitFontSizeMulti(next);
+        return;
+      }
       if (!isTextBearing(el)) return;
       const current = parseFloat(getComputedStyle(el).fontSize);
       const clamped = Math.max(FONT_SIZE_MIN_PX, next);
@@ -1663,6 +1898,10 @@
       return;
     }
     if (prop === 'opacity') {
+      if (hasMultiSelection()) {
+        commitOpacityMulti(next);
+        return;
+      }
       const pct = Math.max(0, Math.min(100, next));
       // `|| 1` would treat a legitimate 0 as falsy and default to 100,
       // breaking the no-op guard after a clamp-to-zero. Use isFinite.
@@ -1676,6 +1915,9 @@
       refreshSelection();
       return;
     }
+    // x/y/w/h stay single-element only — their rows are hidden in multi
+    // mode, but the guard is defensive in case a commit ever reaches here
+    // (e.g. a stale focus-time target) with a multi-selection now active.
     // Compare against the live offset; abort no-op commits so blur
     // cycling doesn't pollute history.
     const offsetMap = { x: 'offsetLeft', y: 'offsetTop', w: 'offsetWidth', h: 'offsetHeight' };
@@ -1711,13 +1953,18 @@
   // is a v2.x ROADMAP item).
   // ===========================================================================
   function refreshInspector() {
-    const visible = getSelectedElements().length === 1 && !!state.selected;
+    // v2.18 — deliberate behaviour change: the dock is visible for ANY
+    // non-empty selection, not just exactly one. `data-multi` drives the
+    // reduced-surface CSS gate (20-dom-css.js) for a set of 2+.
+    const members = getSelectedElements();
+    const visible = members.length >= 1;
     // Ink-glass 3b/5b: selection drives the dock fold, then the shared
     // seam refresh reconciles the toolbar corner morph, the menu's
     // bottom radius, and inspector suppression in one place — the three
     // must never disagree, or a seam breaks (squared bar over no panel,
     // or panel under a capsule).
     inspectorDock.dataset.visible = visible ? 'true' : 'false';
+    inspectorDock.dataset.multi = members.length > 1 ? 'true' : 'false';
     refreshStackSeams();
     // Legacy mirror — no CSS keys off this any more, but it's a stable
     // hook existing tests/tooling query.
@@ -1745,7 +1992,11 @@
   // hysteresis prevents placement oscillation as layout settles.
   function positionInspectorStack() {
     const visible = inspectorDock.dataset.visible === 'true';
-    if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
+    // v2.18 — was `length !== 1`; the dock now also opens for a
+    // multi-selection, and getLiveSelectionRect() (85-adaptive-fade.js)
+    // already aggregates every selected member's rect into one bounding
+    // box, so the avoidance math below needs no other change.
+    if (!visible || state.overviewMode || !getSelectedElements().length) {
       inspector.dataset.avoidance = 'clear';
       inspector.dataset.revealed = 'false';
       return;

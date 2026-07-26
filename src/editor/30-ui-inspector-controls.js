@@ -260,6 +260,10 @@
   const inspectorDock = document.createElement('div');
   inspectorDock.className = 'wfpe-inspector-dock';
   inspectorDock.dataset.visible = 'false';
+  // v2.18 — set by refreshInspector() from getSelectedElements().length > 1.
+  // Gates the reduced multi-selection control surface in CSS (geometry
+  // rows) and in the populate/gating JS below (typography, action row).
+  inspectorDock.dataset.multi = 'false';
   const inspectorDockInner = document.createElement('div');
   inspectorDockInner.className = 'wfpe-inspector-dock-inner';
   inspectorDock.appendChild(inspectorDockInner);
@@ -452,8 +456,15 @@
   const typographyDividerTop = makeInspectorDivider();
   const typographyDividerBottom = makeInspectorDivider();
 
-  inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
-  inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
+  // v2.18 — data-wfpe-row identifies these for the [data-multi="true"] CSS
+  // gate (20-dom-css.js): per-element X/Y/W/H is ambiguous for a set, so
+  // they're hidden outright rather than showing shared-or-Mixed values.
+  const positionRow = makeInspectorRow('Position', [fieldX, fieldY]);
+  positionRow.dataset.wfpeRow = 'position';
+  inspectorBody.appendChild(positionRow);
+  const sizeRow = makeInspectorRow('Size', [fieldW, fieldH]);
+  sizeRow.dataset.wfpeRow = 'size';
+  inspectorBody.appendChild(sizeRow);
   inspectorBody.appendChild(typographyDividerTop);
   inspectorBody.appendChild(fontSizeRow);
   inspectorBody.appendChild(weightRow.row);
@@ -949,11 +960,19 @@
         input.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        // Revert by repopulating from the live element, then blur. The
+        // Revert by repopulating from the live element(s), then blur. The
         // revertingInput flag suppresses the blur's commit so the no-op
         // path stays explicit rather than implicit-via-equality.
+        //
+        // v2.18 code review (W3) — was an unconditional
+        // populateInspector(state.selected), which repaints the SINGLE-
+        // selection surface (Duplicate/Delete enabled, geometry rows
+        // shown) over a live multi-selection until the next tracking
+        // tick quietly repairs it. Route through the same multi/single
+        // split every other repopulate call site uses.
         revertingInput = input;
-        populateInspector(state.selected);
+        if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+        else populateInspector(state.selected);
         input.blur();
       }
     });
@@ -1044,15 +1063,22 @@
   // entry FIRST, so it can never silently absorb an unrelated change or
   // swallow another beginTxn() call's own options (e.g. captureHtml).
   const OPACITY_KEYBOARD_SETTLE_MS = 380;
-  let opacitySliderTarget = null;
+  // v2.18 code review (C1) — was a single `opacitySliderTarget` element, so
+  // a slider DRAG under a multi-selection wrote only state.selected: the
+  // dock would then repopulate "Mixed" for the other member(s) right after
+  // a gesture that visually claimed to edit the whole set. Generalised to
+  // the member array captured at session-open; the typed-value path
+  // (commitOpacityMulti, 40-helpers-selection-inspector.js) was already
+  // correct — this brings the slider's live-drag path to the same scope.
+  let opacitySliderMembers = null;
   let opacitySliderRestoreCtx = null;
   let opacitySliderOwnedTxn = null; // identity guard for the deferred keyboard close, below
   let opacitySliderKeyboardSession = false;
   let opacitySliderSettleTimer = null;
-  function beginOpacitySession(el, { keyboard = false } = {}) {
-    opacitySliderTarget = el;
+  function beginOpacitySession(members, { keyboard = false } = {}) {
+    opacitySliderMembers = members;
     opacitySliderRestoreCtx = startInspectorTxn();
-    touchElement(el);
+    for (const el of members) touchElement(el);
     opacitySliderOwnedTxn = state.txn;
     opacitySliderKeyboardSession = keyboard;
   }
@@ -1064,8 +1090,8 @@
     unregisterPendingTxnFlush(closeOpacitySession);
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (!opacitySliderTarget) return;
-    opacitySliderTarget = null;
+    if (!opacitySliderMembers) return;
+    opacitySliderMembers = null;
     opacitySliderKeyboardSession = false;
     const owned = opacitySliderOwnedTxn;
     opacitySliderOwnedTxn = null;
@@ -1078,38 +1104,41 @@
     liveEditEnd();
   }
   opacitySlider.addEventListener('mousedown', () => {
-    const el = state.selected;
-    if (!el) return;
+    const members = getSelectedElements();
+    if (!members.length) return;
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    beginOpacitySession(el);
+    beginOpacitySession(members);
   });
   opacitySlider.addEventListener('input', () => {
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (opacitySliderTarget && opacitySliderTarget !== state.selected) {
+    const currentMembers = getSelectedElements();
+    if (opacitySliderMembers && !selectionArraysEqual(opacitySliderMembers, currentMembers)) {
       // An earlier session — most often an orphaned mouse drag whose
-      // mouseup never reached us (button released outside the window) —
-      // never closed before the selection moved on. Close it out for
-      // real (a harmless no-op if it captured no change) instead of
-      // silently continuing to apply values to the stale element.
+      // mouseup never reached us (button released outside the window), or
+      // a selection change mid-drag — never closed before membership
+      // moved on. Close it out for real (a harmless no-op if it captured
+      // no change) instead of silently continuing to apply values to a
+      // stale member set.
       closeOpacitySession();
     }
-    if (!opacitySliderTarget) {
-      if (!state.selected) return;
-      beginOpacitySession(state.selected, { keyboard: true });
+    if (!opacitySliderMembers) {
+      if (!currentMembers.length) return;
+      beginOpacitySession(currentMembers, { keyboard: true });
     }
-    const el = opacitySliderTarget;
+    const members = opacitySliderMembers;
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
-    el.style.opacity = String(pct / 100);
-    populateOpacity(el);
+    for (const el of members) el.style.opacity = String(pct / 100);
+    if (members.length > 1) populateOpacityMulti(members);
+    else populateOpacity(members[0]);
     // v2.12 — bounded control keeps its slider; each tick refreshes the
     // tag/fade, and the restore is anchored to true drag-end below so a
     // mid-drag pause can't flicker the chrome back in.
     liveEditUpdate(`${Math.round(pct)} %`);
   });
   const endOpacityDrag = () => {
-    if (!opacitySliderTarget) return;
+    if (!opacitySliderMembers) return;
     if (opacitySliderKeyboardSession) {
       clearTimeout(opacitySliderSettleTimer);
       opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
@@ -1153,11 +1182,26 @@
     // handler — letting the browser open the picker on a real user click
     // is more reliable than calling .click() programmatically.
     colorInput.addEventListener('input', () => {
+      const norm = parseHexInput(colorInput.value);
+      if (!norm) return;
+      // v2.18 — colour swatches apply to every selected member, no
+      // isTextBearing gate (unlike font size): setting `color` on a
+      // non-text element is inert, not wrong, so it isn't worth skipping.
+      if (hasMultiSelection()) {
+        const members = getSelectedElements();
+        if (!pickerSession[target].open) {
+          pickerSession[target].open = true;
+          pickerSession[target].inlineSpan = null;
+          pickerSession[target].restoreCtx = startInspectorTxn();
+          for (const el of members) touchElement(el);
+        }
+        for (const el of members) applyColorToElement(el, target, norm);
+        populateColoursMulti(members);
+        return;
+      }
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
-      const norm = parseHexInput(colorInput.value);
-      if (!norm) return;
       const textRange = target === 'text' && state.editingText && state.editingText.el === el
         ? getTextColourRange(el)
         : null;
@@ -1198,8 +1242,11 @@
         hexInput.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
+        // v2.18 code review (W3) — same multi/single split as the numeric
+        // fields' Escape handler above.
         revertingInput = hexInput;
-        populateColours(state.selected);
+        if (hasMultiSelection()) populateColoursMulti(getSelectedElements());
+        else populateColours(state.selected);
         hexInput.blur();
       }
     });
@@ -1217,10 +1264,22 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', (e) => {
         e.preventDefault();
+        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+        if (hasMultiSelection()) {
+          const members = getSelectedElements().filter((el) => !!el.style[cssProp]);
+          if (!members.length) return;
+          const ctx = startInspectorTxn();
+          for (const el of members) {
+            touchElement(el);
+            el.style[cssProp] = '';
+          }
+          endInspectorTxn(ctx);
+          populateColoursMulti(getSelectedElements());
+          return;
+        }
         const el = state.selected;
         if (!el) return;
         // Only meaningful if there's an inline colour to clear.
-        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
         if (!el.style[cssProp]) return;
         const ctx = startInspectorTxn();
         touchElement(el);
@@ -1277,20 +1336,28 @@
   // edits are retained; any container they still depend on stays pinned.
   // No original/group record means the editor never touched the element, so
   // an idle click cannot mutate it or push a no-op entry.
+  // v2.18 — getSelectedElements() covers both single and multi selection
+  // (it returns [state.selected] for a single selection), so one loop
+  // inside one txn serves both: every touched member restores together
+  // and undoes together. The no-op guard stays per-member (skip anything
+  // the editor never touched) via the `restorable` filter below.
   resetBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    const el = state.selected;
-    if (!el) return;
-    const unlockGroup = getActiveFlowUnlockGroup(el);
-    if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
+    const targets = getSelectedElements();
+    if (!targets.length) return;
+    const restorable = targets.filter((el) => getActiveFlowUnlockGroup(el) || state.originalStyles.has(el));
+    if (!restorable.length) return; // none of the targets were ever edited
     const ctx = startInspectorTxn();
-    if (unlockGroup) {
-      restoreFlowUnlockGroup(unlockGroup, el);
-    } else {
-      const original = state.originalStyles.get(el);
-      touchElement(el);
-      if (original === null) el.removeAttribute('style');
-      else el.setAttribute('style', original);
+    for (const el of restorable) {
+      const unlockGroup = getActiveFlowUnlockGroup(el);
+      if (unlockGroup) {
+        restoreFlowUnlockGroup(unlockGroup, el);
+      } else {
+        const original = state.originalStyles.get(el);
+        touchElement(el);
+        if (original === null) el.removeAttribute('style');
+        else el.setAttribute('style', original);
+      }
     }
     endInspectorTxn(ctx);
     refreshSelection();

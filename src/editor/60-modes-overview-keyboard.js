@@ -816,18 +816,29 @@
   // but bracketed with a fresh txn so each click is exactly one history
   // entry. Uses the inspector-txn isolation helpers so a click during
   // a text-edit produces its own entry separate from the typing.
+  //
+  // v2.18 — multi-selection steps every text-bearing member by the SAME
+  // delta from its OWN current computed size (nudgeFontSize reads current
+  // per element), preserving relative hierarchy between differently-sized
+  // members instead of collapsing them to one absolute value. Non-text
+  // members are skipped silently, same as the typed-value commit path.
   function nudgeFontSizeWithHistory(deltaPx) {
-    const el = state.selected;
-    if (!el || !isTextBearing(el)) return;
+    const members = getSelectedElements().filter(isTextBearing);
+    if (!members.length) return;
     const ctx = startInspectorTxn();
-    touchElement(el);
-    nudgeFontSize(el, deltaPx);
+    for (const el of members) {
+      touchElement(el);
+      nudgeFontSize(el, deltaPx);
+    }
     endInspectorTxn(ctx);
-    populateFontSize(el, { forceInput: true });
+    if (hasMultiSelection()) populateFontSizeMulti(getSelectedElements());
+    else populateFontSize(members[0], { forceInput: true });
     // v2.12 — each ± step blips the value tag (and the fade when the
     // selection sits under the panel); the settle timer keeps a burst of
-    // clicks from flickering the chrome.
-    const px = Math.round(parseFloat(getComputedStyle(el).fontSize));
+    // clicks from flickering the chrome. Blips the primary member when
+    // it's one of the ones that moved, else the last member touched.
+    const blipEl = (state.selected && isTextBearing(state.selected)) ? state.selected : members[members.length - 1];
+    const px = Math.round(parseFloat(getComputedStyle(blipEl).fontSize));
     liveEditBlip(`${px} px`);
     refreshSelection();
   }

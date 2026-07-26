@@ -191,7 +191,9 @@ test.describe('v2.x multi-select move', () => {
     ui = await readUiState(page);
     expect(ui.groupDisplay).toBe('block');
     expect(ui.outlines).toBe(2);
-    expect(ui.inspectorVisible).toBe('false');
+    // v2.18 — deliberate contract change: the inspector dock now shows
+    // (with a reduced surface) for a multi-selection instead of hiding.
+    expect(ui.inspectorVisible).toBe('true');
     expect(ui.ringDisplay).toBe('none');
     expect(ui.dimDisplay).toBe('none');
     expect(ui.visibleHandles).toBe(0);

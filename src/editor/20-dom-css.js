@@ -399,6 +399,14 @@
     #${ROOT_ID} .wfpe-inspector-dock[data-visible="false"] {
       grid-template-rows: 0fr;
     }
+    /* v2.18 — multi-selection reduced surface. Position/Size never carry
+       an inline display style (unlike weight/align/annotation, which the
+       populate JS toggles per-selection), so a plain attribute selector is
+       enough here with no inline-style fight to worry about. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="position"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="size"] {
+      display: none;
+    }
     #${ROOT_ID} .wfpe-inspector-dock-inner {
       min-height: 0;
       overflow: hidden;
@@ -951,9 +959,16 @@
       border-radius: 6px;
       transition: background-color 120ms ease;
     }
-    #${ROOT_ID} .wfpe-action-btn:hover { background: rgba(255,255,255,0.14); }
-    #${ROOT_ID} .wfpe-action-btn.wfpe-delete-btn:hover {
+    #${ROOT_ID} .wfpe-action-btn:hover:not(:disabled) { background: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-action-btn.wfpe-delete-btn:hover:not(:disabled) {
       background-color: rgba(220, 38, 38, 0.28);
+    }
+    /* v2.18 — Duplicate/Delete stay visible but inert for a multi-
+       selection: their functions already no-op there, so this stops the
+       UI from lying about it. */
+    #${ROOT_ID} .wfpe-action-btn:disabled {
+      color: rgba(255,255,255,0.35);
+      cursor: default;
     }
     #${ROOT_ID} .wfpe-action-btn .wfpe-icon {
       width: 12px;
