@@ -116,6 +116,46 @@
       '<polygon points="12 2 3 7 12 12 21 7 12 2" />' +
       '<polyline points="3 12 12 17 21 12" />' +
       '</svg>',
+    // v2.19 — object-alignment glyphs (bar + two boxes), distinct from the
+    // text-align triplet above: those set CSS text-align on one element,
+    // these move every selected element to an edge/midline of the
+    // selection bounding box.
+    alignObjLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="4" y1="2" x2="4" y2="22" />' +
+      '<rect x="7" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="7" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjCenterH:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="12" y1="2" x2="12" y2="22" />' +
+      '<rect x="5" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="8" height="6" rx="1" />' +
+      '</svg>',
+    alignObjRight:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="20" y1="2" x2="20" y2="22" />' +
+      '<rect x="3" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjTop:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="4" x2="22" y2="4" />' +
+      '<rect x="5" y="7" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="7" width="6" height="9" rx="1" />' +
+      '</svg>',
+    alignObjMiddleV:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="12" x2="22" y2="12" />' +
+      '<rect x="5" y="5" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="8" rx="1" />' +
+      '</svg>',
+    alignObjBottom:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="20" x2="22" y2="20" />' +
+      '<rect x="5" y="3" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="9" rx="1" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -445,6 +485,23 @@
     { action: 'text-align', value: 'right', iconKey: 'alignRight', hint: 'Align right' },
   ]);
 
+  // v2.19 — Align (object alignment) row: six one-shot actions against the
+  // SELECTION bounding box, multi-selection only. Named `alignElementsRow`
+  // (not `alignRow`, already taken by the text-align triplet above) and
+  // built on the same makeSegRow chrome, but buttons expose their mode as
+  // `dataset.align` — a plain action identity, not a persistent toggle
+  // state like weight/text-align, so `dataset.active` is left permanently
+  // 'false' (no highlighted state to track for a momentary action).
+  const alignElementsRow = makeSegRow('align-elements', 'Align', [
+    { action: 'align-elements', value: 'left', iconKey: 'alignObjLeft', hint: 'Align left' },
+    { action: 'align-elements', value: 'center-h', iconKey: 'alignObjCenterH', hint: 'Align center (horizontal)' },
+    { action: 'align-elements', value: 'right', iconKey: 'alignObjRight', hint: 'Align right' },
+    { action: 'align-elements', value: 'top', iconKey: 'alignObjTop', hint: 'Align top' },
+    { action: 'align-elements', value: 'middle-v', iconKey: 'alignObjMiddleV', hint: 'Align middle (vertical)' },
+    { action: 'align-elements', value: 'bottom', iconKey: 'alignObjBottom', hint: 'Align bottom' },
+  ]);
+  for (const b of alignElementsRow.buttons) b.dataset.align = b.dataset.wfpeValue;
+
   // Dividers bracket the typography section (Size ▸ | Font/Weight/Align | ▸
   // colours). They hide with the section for non-text selections so the
   // panel doesn't show a doubled rule.
@@ -465,6 +522,10 @@
   const sizeRow = makeInspectorRow('Size', [fieldW, fieldH]);
   sizeRow.dataset.wfpeRow = 'size';
   inspectorBody.appendChild(sizeRow);
+  // v2.19 — Align sits where Position/Size would be for a single selection:
+  // hidden by default, shown only under [data-multi="true"] (20-dom-css.js
+  // CSS gate, no inline JS toggle — same convention as position/size).
+  inspectorBody.appendChild(alignElementsRow.row);
   inspectorBody.appendChild(typographyDividerTop);
   inspectorBody.appendChild(fontSizeRow);
   inspectorBody.appendChild(weightRow.row);
@@ -1386,6 +1447,21 @@
     endInspectorTxn(ctx);
     refreshSelection();
   });
+  // v2.19 — Align: one click = one plan = one txn (applyAlignPlan owns the
+  // guard, the unlock, and the txn; see 40-helpers-selection-inspector.js).
+  // Row is CSS-gated to multi mode, but the length guard stays defensive
+  // (mirrors the reset/front handlers) in case a stale click ever lands
+  // outside it.
+  for (const b of alignElementsRow.buttons) {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      const members = getSelectedElements();
+      if (members.length < 2) return;
+      const plan = computeAlignPlan(b.dataset.align, members);
+      if (!applyAlignPlan(plan)) return;
+      refreshSelection();
+    });
+  }
   applyModeFeatureGating();
   reimportHandoffAnnotations();
   refreshExportUi();

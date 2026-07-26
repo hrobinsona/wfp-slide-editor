@@ -407,6 +407,16 @@
     #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="size"] {
       display: none;
     }
+    /* v2.19 — inverse of the above: Align is multi-selection ONLY (per-
+       element geometry rows disappear there; Align is what replaces them).
+       Same no-inline-style-fight reasoning — Align never carries an inline
+       display style either. */
+    #${ROOT_ID} .wfpe-inspector-dock [data-wfpe-row="align-elements"] {
+      display: none;
+    }
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="align-elements"] {
+      display: grid;
+    }
     #${ROOT_ID} .wfpe-inspector-dock-inner {
       min-height: 0;
       overflow: hidden;

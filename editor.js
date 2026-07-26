@@ -533,6 +533,16 @@
     #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="size"] {
       display: none;
     }
+    /* v2.19 — inverse of the above: Align is multi-selection ONLY (per-
+       element geometry rows disappear there; Align is what replaces them).
+       Same no-inline-style-fight reasoning — Align never carries an inline
+       display style either. */
+    #${ROOT_ID} .wfpe-inspector-dock [data-wfpe-row="align-elements"] {
+      display: none;
+    }
+    #${ROOT_ID} .wfpe-inspector-dock[data-multi="true"] [data-wfpe-row="align-elements"] {
+      display: grid;
+    }
     #${ROOT_ID} .wfpe-inspector-dock-inner {
       min-height: 0;
       overflow: hidden;
@@ -1772,6 +1782,46 @@
       '<polygon points="12 2 3 7 12 12 21 7 12 2" />' +
       '<polyline points="3 12 12 17 21 12" />' +
       '</svg>',
+    // v2.19 — object-alignment glyphs (bar + two boxes), distinct from the
+    // text-align triplet above: those set CSS text-align on one element,
+    // these move every selected element to an edge/midline of the
+    // selection bounding box.
+    alignObjLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="4" y1="2" x2="4" y2="22" />' +
+      '<rect x="7" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="7" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjCenterH:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="12" y1="2" x2="12" y2="22" />' +
+      '<rect x="5" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="8" height="6" rx="1" />' +
+      '</svg>',
+    alignObjRight:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="20" y1="2" x2="20" y2="22" />' +
+      '<rect x="3" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjTop:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="4" x2="22" y2="4" />' +
+      '<rect x="5" y="7" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="7" width="6" height="9" rx="1" />' +
+      '</svg>',
+    alignObjMiddleV:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="12" x2="22" y2="12" />' +
+      '<rect x="5" y="5" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="8" rx="1" />' +
+      '</svg>',
+    alignObjBottom:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="20" x2="22" y2="20" />' +
+      '<rect x="5" y="3" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="9" rx="1" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -2101,6 +2151,23 @@
     { action: 'text-align', value: 'right', iconKey: 'alignRight', hint: 'Align right' },
   ]);
 
+  // v2.19 — Align (object alignment) row: six one-shot actions against the
+  // SELECTION bounding box, multi-selection only. Named `alignElementsRow`
+  // (not `alignRow`, already taken by the text-align triplet above) and
+  // built on the same makeSegRow chrome, but buttons expose their mode as
+  // `dataset.align` — a plain action identity, not a persistent toggle
+  // state like weight/text-align, so `dataset.active` is left permanently
+  // 'false' (no highlighted state to track for a momentary action).
+  const alignElementsRow = makeSegRow('align-elements', 'Align', [
+    { action: 'align-elements', value: 'left', iconKey: 'alignObjLeft', hint: 'Align left' },
+    { action: 'align-elements', value: 'center-h', iconKey: 'alignObjCenterH', hint: 'Align center (horizontal)' },
+    { action: 'align-elements', value: 'right', iconKey: 'alignObjRight', hint: 'Align right' },
+    { action: 'align-elements', value: 'top', iconKey: 'alignObjTop', hint: 'Align top' },
+    { action: 'align-elements', value: 'middle-v', iconKey: 'alignObjMiddleV', hint: 'Align middle (vertical)' },
+    { action: 'align-elements', value: 'bottom', iconKey: 'alignObjBottom', hint: 'Align bottom' },
+  ]);
+  for (const b of alignElementsRow.buttons) b.dataset.align = b.dataset.wfpeValue;
+
   // Dividers bracket the typography section (Size ▸ | Font/Weight/Align | ▸
   // colours). They hide with the section for non-text selections so the
   // panel doesn't show a doubled rule.
@@ -2121,6 +2188,10 @@
   const sizeRow = makeInspectorRow('Size', [fieldW, fieldH]);
   sizeRow.dataset.wfpeRow = 'size';
   inspectorBody.appendChild(sizeRow);
+  // v2.19 — Align sits where Position/Size would be for a single selection:
+  // hidden by default, shown only under [data-multi="true"] (20-dom-css.js
+  // CSS gate, no inline JS toggle — same convention as position/size).
+  inspectorBody.appendChild(alignElementsRow.row);
   inspectorBody.appendChild(typographyDividerTop);
   inspectorBody.appendChild(fontSizeRow);
   inspectorBody.appendChild(weightRow.row);
@@ -3042,6 +3113,21 @@
     endInspectorTxn(ctx);
     refreshSelection();
   });
+  // v2.19 — Align: one click = one plan = one txn (applyAlignPlan owns the
+  // guard, the unlock, and the txn; see 40-helpers-selection-inspector.js).
+  // Row is CSS-gated to multi mode, but the length guard stays defensive
+  // (mirrors the reset/front handlers) in case a stale click ever lands
+  // outside it.
+  for (const b of alignElementsRow.buttons) {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      const members = getSelectedElements();
+      if (members.length < 2) return;
+      const plan = computeAlignPlan(b.dataset.align, members);
+      if (!applyAlignPlan(plan)) return;
+      refreshSelection();
+    });
+  }
   applyModeFeatureGating();
   reimportHandoffAnnotations();
   refreshExportUi();
@@ -4285,6 +4371,148 @@
       outline.style.height = `${r.height}px`;
       multiOutlineLayer.appendChild(outline);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Align (v2.19) — multi-selection alignment against the SELECTION
+  // bounding box (union of member rects), the standard design-tool
+  // reference frame. Movement is a positional move exactly like drag:
+  // computeAlignPlan is pure geometry (viewport-space rects in, viewport-
+  // space per-member deltas out — no DOM writes, no scale), and
+  // applyAlignPlan does the scale-aware writes, reusing the unlock-to-
+  // absolute path drag and inspector X/Y use (unlockToAbsolute) and the
+  // same anchor-then-delta write order as onMouseMove (80-drag-resize-
+  // unlock.js): touch every member, unlock whatever was flow-positioned,
+  // THEN re-read the position fresh (unlock can change it) before writing
+  // the final position. Align never touches width/height.
+  //
+  // Each entry also carries the ABSOLUTE viewport-space target for the axis
+  // it moves (targetLeft/targetTop, null on the untouched axis) alongside
+  // the initial dxView/dyView. dxView/dyView answer "would this member move
+  // at all" for the no-op filter; the write step re-derives its own delta
+  // from the target against a FRESH rect taken after unlock (see
+  // applyAlignPlan) rather than trusting the original delta, because
+  // unlockToAbsolute's own pinning is itself offsetLeft/offsetTop-based
+  // (integer) and can nudge a freshly-promoted flow member by a sub-pixel
+  // amount the original delta doesn't account for.
+  // ---------------------------------------------------------------------------
+  function computeAlignPlan(mode, members) {
+    const rects = members
+      .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 || rect.height > 0);
+    if (rects.length < 2) return [];
+
+    let bbox = null;
+    for (const { rect } of rects) {
+      bbox = bbox
+        ? {
+          left: Math.min(bbox.left, rect.left),
+          top: Math.min(bbox.top, rect.top),
+          right: Math.max(bbox.right, rect.right),
+          bottom: Math.max(bbox.bottom, rect.bottom),
+        }
+        : { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    }
+    const centerX = (bbox.left + bbox.right) / 2;
+    const centerY = (bbox.top + bbox.bottom) / 2;
+
+    return rects.map(({ el, rect }) => {
+      let dxView = 0;
+      let dyView = 0;
+      let targetLeft = null;
+      let targetTop = null;
+      switch (mode) {
+        case 'left': targetLeft = bbox.left; break;
+        case 'right': targetLeft = bbox.right - rect.width; break;
+        case 'center-h': targetLeft = centerX - rect.width / 2; break;
+        case 'top': targetTop = bbox.top; break;
+        case 'bottom': targetTop = bbox.bottom - rect.height; break;
+        case 'middle-v': targetTop = centerY - rect.height / 2; break;
+        default: break;
+      }
+      if (targetLeft !== null) dxView = targetLeft - rect.left;
+      if (targetTop !== null) dyView = targetTop - rect.top;
+      return { el, dxView, dyView, targetLeft, targetTop };
+    });
+  }
+
+  // The #1 CLAUDE.md gotcha: rects are viewport px, style writes are slide
+  // px — every delta here is divided by getCanvasScale() before it reaches
+  // a style write, same as drag (80-drag-resize-unlock.js:185-187).
+  const ALIGN_NOOP_SLIDE_PX = 0.5;
+
+  // Anchor for the write step. offsetLeft/offsetTop (what drag anchors on)
+  // are integers per DOM spec — fine for a live "follow the mouse" gesture,
+  // but align has an EXACT-equality invariant. getComputedStyle's used
+  // value for `left`/`top` on a positioned element is the same fractional
+  // CSS pixel value the layout engine derived the current rect from, so
+  // anchoring there (rather than the integer offset) keeps the anchor and
+  // the rect-derived delta in one consistent, sub-pixel-accurate frame.
+  // Falls back to 0 if the computed value is somehow unusable (defensive;
+  // unlockToAbsolute/an already-absolute element always yields a plain px
+  // value in practice) — a 0 fallback is at least in the SAME frame as the
+  // delta it's added to, unlike offsetLeft/offsetTop (which differ from
+  // `left`/`top` by margin, a mismatch the original fallback risked).
+  function readAlignAnchorPx(el, axis) {
+    const prop = axis === 'x' ? 'left' : 'top';
+    const parsed = parseFloat(getComputedStyle(el)[prop]);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  // Returns true if anything moved (a txn was opened and closed); false for
+  // a no-op plan, in which case NO txn is opened — no history entry, no
+  // unlock side-effects, matching the brief's no-op guard.
+  function applyAlignPlan(plan) {
+    const scale = getCanvasScale();
+    const changed = plan
+      .filter(({ dxView, dyView }) => (
+        Math.abs(dxView / scale) >= ALIGN_NOOP_SLIDE_PX ||
+        Math.abs(dyView / scale) >= ALIGN_NOOP_SLIDE_PX
+      ))
+      // wasAbsolute snapshotted BEFORE any unlock runs — mirrors drag's
+      // item.wasAbsolute (captured at mousedown, before the deadzone-
+      // triggered unlock loop). unlockToAbsolute is idempotent when a
+      // sibling's unlock already pinned this element via a shared flex/grid
+      // container, so calling it unconditionally per stale wasAbsolute is
+      // safe even if an earlier iteration already promoted this element.
+      .map((entry) => ({ ...entry, wasAbsolute: getComputedStyle(entry.el).position === 'absolute' }));
+    if (!changed.length) return false;
+
+    const ctx = startInspectorTxn();
+    for (const { el } of changed) touchElement(el);
+    for (const { el, wasAbsolute } of changed) {
+      if (!wasAbsolute) unlockToAbsolute(el);
+    }
+    for (const { el, targetLeft, targetTop } of changed) {
+      if (!el.isConnected) continue;
+      // Re-measure AFTER unlock and re-derive the delta from the absolute
+      // target rather than reusing the pre-unlock dxView/dyView: unlock's
+      // own pin (offsetLeft/offsetTop-based, integer) can nudge a freshly-
+      // promoted flow member by a sub-pixel amount the original delta
+      // doesn't know about, which would otherwise leave it just short of
+      // the target edge — close enough to dodge the no-op guard on a
+      // second click, but never exactly aligned.
+      const fresh = el.getBoundingClientRect();
+      // Axis-conditional: a pure horizontal align (targetTop === null) must
+      // leave top untouched, not just numerically unchanged — writing it
+      // unconditionally would convert e.g. a bottom-anchored absolute
+      // element's implicit top into an explicit one for no reason. Unlock
+      // (above) already establishes explicit left/top for a former flow
+      // member on BOTH axes, so the unmoved axis stays correctly pinned
+      // even though this loop never writes it.
+      if (targetLeft !== null) {
+        // dx is already slide px (viewport delta / scale) — compare it
+        // directly to the slide-px threshold, not a second time divided.
+        const dx = (targetLeft - fresh.left) / scale;
+        if (Math.abs(dx) >= ALIGN_NOOP_SLIDE_PX) el.style.left = `${readAlignAnchorPx(el, 'x') + dx}px`;
+      }
+      if (targetTop !== null) {
+        const dy = (targetTop - fresh.top) / scale;
+        if (Math.abs(dy) >= ALIGN_NOOP_SLIDE_PX) el.style.top = `${readAlignAnchorPx(el, 'y') + dy}px`;
+      }
+    }
+    endInspectorTxn(ctx);
+    return true;
   }
 
   let selectionRafId = 0;

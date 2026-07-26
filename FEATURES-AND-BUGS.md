@@ -92,6 +92,24 @@ patches instead of a whole-subtree write. Whichever is chosen, the
 regression test is the three-step sequence above with an assertion that the
 child's redo actually lands on the connected node.
 
+### Drag and Align can stretch a right-anchored, auto-width absolutely-positioned element
+
+- **Status:** open (pre-existing in drag; inherited by Align, v2.19)
+- **Raised:** 2026-07-26, code review during v2.19 (align-elements)
+
+Both drag's `onMouseMove` (`src/editor/80-drag-resize-unlock.js`) and the new
+Align feature's `applyAlignPlan` (`src/editor/40-helpers-selection-inspector.js`)
+move an absolutely-positioned element by writing `style.left`/`style.top`
+only. For an element authored with `right: Npx; left: auto; width: auto`,
+adding an explicit `left` leaves `left` + `right` + auto-`width` all
+constrained at once, and the browser solves `width` to fill the gap instead
+of preserving it — the element's position lands correctly but its box
+stretches or shrinks. No fixture in `fixtures/foreign-deck.html` currently
+exercises this shape, so it hasn't shown up in any spec. A fix would need to
+pin `width` (and clear `right`) as part of the same write whenever `right` is
+already a non-auto inline/computed value — worth doing for drag and Align
+together rather than one at a time, since they share the same write pattern.
+
 ## Resolved
 
 ### No keyboard way to deselect, so nav keys can only be handed back by mouse
