@@ -11,7 +11,40 @@ that a fresh session can act on it without archaeology.
 
 ## Open — behaviour iterations
 
-None.
+### Deselect/reselect click pattern remains a latent flake in one annotation test
+
+- **Status:** open (test hygiene; currently passing, hazard is latent)
+- **Raised:** 2026-07-26, cross-model review of PR #16
+
+`tests/v2-agent-annotations.spec.js` (~line 247) still re-renders the
+annotation row by deselecting and reselecting through a slide click. That is
+the exact pattern that made its sibling test ("saved notes, replies, and
+actions remain reachable in bounded inspectors") flaky: `onClick` rejects any
+click whose point lands inside the docked inspector's box
+(`isPointInsidePassiveEditorSurface`, `src/editor/40-helpers-selection-inspector.js`),
+and at 1280x720 that box spans roughly x 158-404, y 56-541 — covering the
+elements the test clicks. The round trip only lands while the dock is still
+animating; once settled the reselect is swallowed and the row never
+re-renders. PR #16 fixed the sibling test by pressing Escape in the note field
+instead (the editor's own force-repopulate path, reachable from the inspector
+alone). Apply the same approach here, then verify with `--repeat-each=5` and
+at `--workers=10`.
+
+### Transaction-flush loop guards double-invocation only across calls
+
+- **Status:** open (defensive; inert with today's single hook)
+- **Raised:** 2026-07-26, cross-model review of PR #16
+
+`flushPendingTxnSessions()` (`src/editor/50-history.js`) deletes each hook
+from the registry before invoking it, which prevents double-invocation across
+separate flush calls but not *within* one call: if a hook's own execution
+triggered a nested flush while a second hook was still in the outer loop's
+snapshot, that second hook could run twice. Inert today — exactly one hook
+exists (`closeOpacitySession` in `src/editor/30-ui-inspector-controls.js`,
+which self-unregisters as its first statement) and the shared `state.txn` slot
+rules out concurrency. Add a `has()` re-check inside the loop before invoking
+each hook so the invariant is structural rather than incidental, before any
+second settle-window control is introduced.
 
 ## Open — bugs
 
