@@ -64,6 +64,34 @@ specified the inspector buttons.
 
 ## Open — bugs
 
+### Overview Backspace/Delete silently chain-deletes slides under a stationary cursor
+
+- **Status:** open (UX hazard, downgraded from bug — the user confirmed the
+  9 missing slides in the originating report were deliberate deletions)
+- **Raised:** 2026-07-26, user report; chain-delete behaviour reproduced
+  independently of that report and remains worth hardening
+
+In Overview mode, Backspace/Delete deletes the slide under the *mouse hover*
+(`getOverviewDeleteTarget` falls back to `state.overviewHoveredSlide`,
+`src/editor/60-modes-overview-keyboard.js`) with no confirmation and no
+toast. Worse, it chains: after a delete the grid reflows, Chromium refires
+`mouseover` on the thumb that slides under the stationary cursor, and
+`onOverviewMouseOver` re-hydrates the hover target — so the
+`state.overviewHoveredSlide = null` reset inside `deleteSlideFromOverview`
+never protects the next press. Reproduced: hover one thumb, press Backspace
+three times without moving the mouse → three consecutive slides gone,
+zero feedback. Undo restores them correctly, but the user has no signal that
+anything was deleted, so exports go out missing slides. This matches the
+user's export, which was missing two consecutive runs (A2–A4, G1–G2) plus
+scattered singles.
+
+Fix direction: keep hover-delete but make each delete loud and non-chaining —
+show the existing toast ("Deleted slide N — Cmd+Z to undo"), and require a
+fresh *user-generated* hover (e.g. ignore synthetic mouseover until the
+pointer actually moves, or arm a per-press re-hover requirement) before
+Backspace acquires a new target. Regression test: the three-press scenario
+above must delete at most one slide and must show feedback.
+
 ### Content-edit undo can strand a later entry on a recreated child node
 
 - **Status:** open (latent; fails as a silent no-op, not an error)
@@ -111,6 +139,26 @@ already a non-auto inline/computed value — worth doing for drag and Align
 together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
+
+### Export carried dead session-scoped `blob:` URLs — charts and custom elements silently broke in the download
+
+- **Status:** fixed 2026-07-26 (v2.20; uncommitted at time of writing)
+- **Raised:** 2026-07-26, user report — "graph in slide 8 missing from fresh copy"
+
+Self-extracting bundled decks mint session-scoped `blob:` URLs at load time
+for their packed assets (Chart.js, `<image-slot>` component, images) and the
+export serialized those references verbatim — dead on reopen, so chart
+canvases rendered permanently blank and custom elements never registered.
+Reproduced with a zero-interaction export, so every download of a bundled
+deck was affected. Fixed by a blob-inlining pass in `src/editor/95-export.js`:
+payloads are fetched while the session keeps the URLs alive, blob script srcs
+become inline `<script>` text (with `</script`/`<script`/`<!--` escaped),
+other references become `data:` URIs, on the clone only. The pipeline became
+async; `saveInPlace` now pauses the agent watcher and binds its file handle
+before the build. See DESIGN.md's export section for the full contract and
+known limitations. Coverage: `tests/v2-20-blob-asset-export.spec.js`
+(download, handoff, srcset integrity, tokenizer-escape, live-DOM isolation);
+verified end-to-end against the originating bundled deck.
 
 ### No keyboard way to deselect, so nav keys can only be handed back by mouse
 

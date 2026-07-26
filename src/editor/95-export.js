@@ -129,10 +129,13 @@
     // URLs must stay relative or the deck breaks as soon as its folder moves.
     // Downloads keep absolutizing — see buildExportClone.
     const options = { absolutizeAssets: false };
-    const html = noteCount > 0 ? buildHandoffExportHtml(options) : buildExportHtml(options);
     // Live agent round-trip (v2.13): pause the watcher so our own write is
     // never mistaken for an external agent update; baseline is rebased
-    // after a successful write, and the watcher resumes in finally.
+    // after a successful write, and the watcher resumes in finally. The
+    // pause must come BEFORE the (async, v2.20) HTML build: a watcher tick
+    // firing between snapshot and write would live-refresh the document and
+    // then be overwritten by the stale snapshot, silently dropping the
+    // agent's edit.
     agentWatchPause();
     try {
       // A save fired right after ready can race the still-in-flight
@@ -141,11 +144,15 @@
       if (!boundFileHandle && handleRehydration) await handleRehydration;
       let handle = boundFileHandle;
       if (!handle) {
+        // Acquire the handle BEFORE the build: the native picker must run
+        // while the user gesture's transient activation is still fresh, and
+        // the blob-payload fetches can take long enough to expire it.
         handle = await pickSourceHandle();
       } else if (!(await ensureHandleWritable(handle))) {
         showToast(document.body, 'Save cancelled — file access not granted.');
         return;
       }
+      const html = await (noteCount > 0 ? buildHandoffExportHtml(options) : buildExportHtml(options));
       try {
         await writeHtmlToHandle(handle, html);
       } catch (err) {
@@ -213,10 +220,14 @@
     }
   }
 
+  // Shared by absolutization and blob inlining. Global regexes are safe to
+  // share here: replace() resets lastIndex and matchAll() clones.
+  const CSS_URL_PATTERN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g;
+
   function absolutizeCssUrls(cssText, baseUrl) {
     if (!cssText || !cssText.includes('url(')) return cssText;
     return cssText.replace(
-      /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*?))\s*\)/g,
+      CSS_URL_PATTERN,
       (match, doubleQuoted, singleQuoted, bare) => {
         const raw = doubleQuoted ?? singleQuoted ?? (bare || '').trim();
         const resolved = resolveExportAssetUrl(raw, baseUrl);
@@ -229,6 +240,10 @@
 
   function absolutizeSrcset(value, baseUrl) {
     if (!value) return value;
+    // A data: URI candidate (including ones the blob-inlining pass just
+    // wrote) contains a comma, which the split below would cut in half —
+    // leave such srcsets untouched rather than corrupt them.
+    if (value.includes('data:')) return value;
     return value
       .split(',')
       .map((candidate) => {
@@ -354,12 +369,196 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Blob-backed assets (v2.20)
+  //
+  // Self-extracting bundled decks mint session-scoped blob: URLs at load time
+  // (Chart.js, custom-element components, images) and wire them into the DOM
+  // as <script src="blob:..."> / <img src="blob:...">. Those URLs die with the
+  // minting document, so serializing them produces a download that reopens
+  // broken. While the editing session is alive the URLs still resolve, so the
+  // export captures each payload up front — scripts become inline <script>
+  // text, everything else becomes a data: URI — and rewrites the CLONE only.
+  // Fetch failures leave the original reference untouched: a dead link in the
+  // export is no worse than what serialization produced before.
+  // ---------------------------------------------------------------------------
+  // All three sequences the HTML script-data tokenizer reacts to must be
+  // broken: a bare close tag, and the `<!--` … `<script` pair that enters
+  // script-data-double-escaped state (where a later close tag no longer
+  // terminates the element and the rest of the document is swallowed). The
+  // inserted backslash is a no-op inside JS string literals, where these
+  // sequences occur in real payloads; a regex literal containing `<script`
+  // would change meaning, which we accept as vanishingly rare against the
+  // guaranteed parse break.
+  function escapeInlineScriptText(text) {
+    return text
+      .replace(/<\/script/gi, '<\\/script')
+      .replace(/<script/gi, '<\\script')
+      .replace(/<!--/g, '<\\!--');
+  }
+
+  function blobToDataUri(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function isBlobUrl(value) {
+    return /^blob:/i.test((value || '').trim());
+  }
+
+  // Blob URLs contain no whitespace or commas, so they can be tokenized out
+  // of composite values (srcset, css) without parsing the value's grammar —
+  // which matters for srcset, where a naive comma split would cut any data:
+  // URI candidate in half.
+  const BLOB_URL_TOKEN = /blob:[^\s,)"']+/g;
+
+  // Walk the same surfaces the absolutizer covers and record how each unique
+  // blob: URL is used — a script src needs the payload as text, anything else
+  // needs it as a data: URI (one URL can be both).
+  function collectBlobUrlUsage(root) {
+    const usage = new Map();
+    const record = (url, kind) => {
+      const key = (url || '').trim();
+      if (!isBlobUrl(key)) return;
+      const entry = usage.get(key) || { script: false, asset: false };
+      entry[kind] = true;
+      usage.set(key, entry);
+    };
+    // Editor chrome is removed from the clone, so its own blob refs would be
+    // fetched and encoded for nothing.
+    const skip = (el) => isInsideEditorRoot(el);
+
+    root.querySelectorAll('script[src]').forEach((s) => {
+      if (!skip(s)) record(s.getAttribute('src'), 'script');
+    });
+
+    const attrTargets = [
+      ['[src]:not(script)', 'src'],
+      ['link[href], image[href], use[href]', 'href'],
+      ['[poster]', 'poster'],
+      ['object[data]', 'data'],
+    ];
+    attrTargets.forEach(([selector, attr]) => {
+      root.querySelectorAll(selector).forEach((el) => {
+        if (!skip(el)) record(el.getAttribute(attr), 'asset');
+      });
+    });
+
+    root.querySelectorAll('[srcset]').forEach((el) => {
+      if (skip(el)) return;
+      for (const m of (el.getAttribute('srcset') || '').matchAll(BLOB_URL_TOKEN)) {
+        record(m[0], 'asset');
+      }
+    });
+
+    const recordCssUrls = (cssText) => {
+      if (!cssText || !cssText.includes('url(')) return;
+      for (const m of cssText.matchAll(CSS_URL_PATTERN)) {
+        record(m[1] ?? m[2] ?? (m[3] || '').trim(), 'asset');
+      }
+    };
+    root.querySelectorAll('[style]').forEach((el) => {
+      if (!skip(el)) recordCssUrls(el.getAttribute('style'));
+    });
+    root.querySelectorAll('style').forEach((style) => {
+      if (!skip(style)) recordCssUrls(style.textContent);
+    });
+
+    return usage;
+  }
+
+  // Fetches every blob: payload the LIVE document references. Must run while
+  // the session's blob URLs are still alive — i.e. before/independent of the
+  // clone, whose rewrite is then synchronous. Never rejects: per-URL failures
+  // are swallowed so one dead blob can't sink the whole export.
+  async function collectBlobAssetPayloads() {
+    const usage = collectBlobUrlUsage(document);
+    const payloads = new Map();
+    // Blob fetches are in-memory reads; resolve them concurrently so a
+    // bundle with many assets doesn't stack up serial round-trips.
+    await Promise.all(
+      [...usage].map(async ([url, use]) => {
+        try {
+          const blob = await (await fetch(url)).blob();
+          const entry = {};
+          if (use.script) entry.text = await blob.text();
+          if (use.asset) entry.dataUri = await blobToDataUri(blob);
+          payloads.set(url, entry);
+        } catch (_) {
+          /* dead or foreign blob — leave its references as-is */
+        }
+      }),
+    );
+    return payloads;
+  }
+
+  function replaceBlobCssUrls(cssText, payloads) {
+    if (!cssText || !cssText.includes('url(')) return cssText;
+    return cssText.replace(CSS_URL_PATTERN, (match, doubleQuoted, singleQuoted, bare) => {
+      const raw = (doubleQuoted ?? singleQuoted ?? bare ?? '').trim();
+      const payload = payloads.get(raw);
+      if (!payload || !payload.dataUri) return match;
+      return `url("${payload.dataUri}")`;
+    });
+  }
+
+  function inlineBlobAssets(root, payloads) {
+    if (!payloads || !payloads.size) return;
+
+    root.querySelectorAll('script[src]').forEach((s) => {
+      const payload = payloads.get((s.getAttribute('src') || '').trim());
+      if (!payload || payload.text === undefined) return;
+      s.removeAttribute('src');
+      s.textContent = escapeInlineScriptText(payload.text);
+    });
+
+    const attrTargets = [
+      ['[src]:not(script)', 'src'],
+      ['link[href], image[href], use[href]', 'href'],
+      ['[poster]', 'poster'],
+      ['object[data]', 'data'],
+    ];
+    attrTargets.forEach(([selector, attr]) => {
+      root.querySelectorAll(selector).forEach((el) => {
+        const payload = payloads.get((el.getAttribute(attr) || '').trim());
+        if (payload && payload.dataUri) el.setAttribute(attr, payload.dataUri);
+      });
+    });
+
+    root.querySelectorAll('[srcset]').forEach((el) => {
+      const value = el.getAttribute('srcset') || '';
+      // Substitute blob tokens in place instead of splitting the srcset on
+      // commas — a comma split would corrupt any data: URI candidate (and
+      // srcsets without blobs must come through byte-identical).
+      if (!value.includes('blob:')) return;
+      const rewritten = value.replace(BLOB_URL_TOKEN, (url) => {
+        const payload = payloads.get(url);
+        return payload && payload.dataUri ? payload.dataUri : url;
+      });
+      if (rewritten !== value) el.setAttribute('srcset', rewritten);
+    });
+
+    root.querySelectorAll('[style]').forEach((el) => {
+      const value = el.getAttribute('style');
+      const rewritten = replaceBlobCssUrls(value, payloads);
+      if (rewritten !== value) el.setAttribute('style', rewritten);
+    });
+    root.querySelectorAll('style').forEach((style) => {
+      const rewritten = replaceBlobCssUrls(style.textContent, payloads);
+      if (rewritten !== style.textContent) style.textContent = rewritten;
+    });
+  }
+
   // absolutizeAssets is a property of the DESTINATION, not of the pipeline:
   // a downloaded copy leaves the deck's folder and needs absolute asset URLs
   // to keep resolving, while save-in-place rewrites the source file in its own
   // folder, where absolutizing would freeze the deck to one machine path.
   // Default true so every download call site keeps its behaviour.
-  function buildExportClone({ absolutizeAssets = true } = {}) {
+  function buildExportClone({ absolutizeAssets = true, blobPayloads = null } = {}) {
     const clone = document.documentElement.cloneNode(true);
 
     const editorRoot = clone.querySelector(`#${ROOT_ID}`);
@@ -375,6 +574,10 @@
     clone.querySelectorAll('script[src*="editor.js"]').forEach((s) => s.remove());
 
     persistFlatPositionContext(clone);
+    // Blob inlining happens regardless of destination — session-scoped URLs
+    // are dead after this session whether the file is saved in place or
+    // downloaded — and before absolutization, which skips blob: anyway.
+    inlineBlobAssets(clone, blobPayloads);
     if (absolutizeAssets) absolutizeExportAssetUrls(clone);
     removeRuntimeGeneratedProgressDots(clone);
     normalizeExportStartupState(clone);
@@ -638,22 +841,28 @@
     targetParent.appendChild(script);
   }
 
-  function buildExportHtml(options) {
-    const clone = buildExportClone(options);
+  async function buildExportHtml(options) {
+    // Blob payloads must be fetched from the LIVE session (async); the clone
+    // rewrite itself stays synchronous inside buildExportClone.
+    const blobPayloads = await collectBlobAssetPayloads();
+    const clone = buildExportClone({ ...(options || {}), blobPayloads });
     removeHandoffArtifacts(clone);
     stripEditorArtifactsFromDocument(clone);
 
     return '<!DOCTYPE html>\n' + clone.outerHTML;
   }
 
-  function buildHandoffExportHtml(options) {
+  async function buildHandoffExportHtml(options) {
+    // Blob payloads are fetched BEFORE the ledger stamps the live DOM so the
+    // stamp → cloneNode → unstamp block below stays fully synchronous.
+    const blobPayloads = await collectBlobAssetPayloads();
     // v2.14 — the edit ledger stamps ids on the LIVE elements only for the
     // duration of the clone (stamp → cloneNode → unstamp, all synchronous)
     // so the live document never retains data-wfp-agent-edit-id.
     const ledger = collectEditLedger();
     let clone;
     try {
-      clone = buildExportClone(options);
+      clone = buildExportClone({ ...(options || {}), blobPayloads });
     } finally {
       for (const el of ledger.stamped) el.removeAttribute(EDIT_LEDGER_TARGET_ATTR);
     }
@@ -682,18 +891,25 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function exportHTML() {
+  // Both download exports are dispatched fire-and-forget from click/keydown
+  // handlers, so a failure would otherwise surface only as an unhandled
+  // rejection — catch locally and toast, mirroring saveInPlace.
+  async function exportHTML() {
     // If a text edit is open, commit it first so the latest content lands
     // in the export.
     if (state.editingText) endTextEdit();
 
     const filename = deriveExportFilename();
-    const html = buildExportHtml();
-    triggerDownload(filename, html);
-    showToast(document.body, `Exported to ${filename}`);
+    try {
+      const html = await buildExportHtml();
+      triggerDownload(filename, html);
+      showToast(document.body, `Exported to ${filename}`);
+    } catch (err) {
+      showToast(document.body, `Export failed (${(err && err.name) || 'unknown'}).`);
+    }
   }
 
-  function exportHandoffHTML() {
+  async function exportHandoffHTML() {
     if (state.editingText) endTextEdit();
 
     const annotations = getAnnotatedElements(document);
@@ -702,7 +918,11 @@
       return;
     }
     const filename = deriveExportFilename('-agent-handoff');
-    const html = buildHandoffExportHtml();
-    triggerDownload(filename, html);
-    showToast(document.body, `Exported handoff to ${filename}`);
+    try {
+      const html = await buildHandoffExportHtml();
+      triggerDownload(filename, html);
+      showToast(document.body, `Exported handoff to ${filename}`);
+    } catch (err) {
+      showToast(document.body, `Export failed (${(err && err.name) || 'unknown'}).`);
+    }
   }

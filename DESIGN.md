@@ -415,6 +415,25 @@ marked `data-wfp-edit-flat-position-context` before the attribute sweep runs,
 so elements the unlock pinned directly against that root keep their containing
 block instead of re-anchoring to the viewport — the live root stays pristine.
 
+Blob-backed assets are inlined on every export path (v2.20). Self-extracting
+bundled decks mint session-scoped `blob:` URLs at load time (Chart.js,
+custom-element components, images) and wire them into the DOM; serializing
+those references verbatim produced downloads whose scripts and images were
+dead on reopen. The export now scans the live document for `blob:` references
+(script src, asset attributes, srcset, inline-style and stylesheet `url()`),
+fetches each payload while the session keeps the URLs alive, and rewrites the
+clone only: blob script srcs become inline `<script>` text (with `</script`,
+`<script`, and `<!--` escaped so the HTML tokenizer can't be derailed), all
+other references become `data:` URIs. Fetches are best-effort — a dead blob
+leaves its reference untouched, no worse than before. This made
+`buildExportHtml`/`buildHandoffExportHtml` async; `saveInPlace` pauses the
+agent watcher and acquires its file handle *before* the build so a watcher
+tick can't interleave a live refresh with a stale snapshot and the native
+picker still runs inside fresh transient activation. Known limitation:
+inlining drops `defer`/`async` timing semantics on the affected script, and
+`type="module"` payloads whose internal imports reference further blob URLs
+are not traversed.
+
 Asset absolutization is a property of the export's destination, not of the
 pipeline, so `buildExportHtml`/`buildHandoffExportHtml` take an
 `absolutizeAssets` option (default `true`). Downloads leave the deck's folder
