@@ -130,9 +130,18 @@ test.describe('v2.4.1 — Foreign-deck editing', () => {
     await page.keyboard.press('ArrowRight');
     await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-2');
 
+    // Edit mode with nothing selected leaves the foreign deck's own nav in
+    // charge; only a live selection reserves the arrows for the editor.
+    // Full rule coverage lives in tests/v2-edit-mode-nav.spec.js.
     await page.keyboard.press('e');
     await page.keyboard.press('ArrowRight');
-    await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-2');
+    await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-3');
+
+    await page.locator('#foreign-slide-3 .foreign-title').click();
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'true');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(150);
+    await expect(page.locator('.slide.active')).toHaveAttribute('id', 'foreign-slide-3');
   });
 
   test('selects, drags, and undoes an element on a foreign slide', async ({ page }) => {

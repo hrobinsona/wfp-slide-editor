@@ -284,14 +284,35 @@ for (const fixture of FIXTURES_TO_TEST) {
       expect(after).toBe(before + 1);
     });
 
-    test('10. With edit mode ON, ArrowRight does NOT navigate slides', async ({ page }) => {
+    test('10. With edit mode ON and an element selected, ArrowRight does NOT navigate slides', async ({ page }) => {
+      await loadFixtureWithEditor(page, fixture);
+      await page.keyboard.press('e');
+      // A live selection is what reserves the navigation keys for the
+      // editor; edit mode alone hands them back to the deck (test 11).
+      const sel = await page.evaluate(() => {
+        const h = document.querySelector('.slide.active h1, .slide.active h2');
+        if (!h) return null;
+        h.dataset.testHeading = 'yes';
+        return '[data-test-heading="yes"]';
+      });
+      expect(sel).not.toBeNull();
+      await clickToSelect(page, sel);
+      await expect(page.locator('#wfp-editor-root .wfpe-selection-ring')).toHaveCSS('display', 'block');
+      const before = await activeSlideIndex(page);
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(120);
+      const after = await activeSlideIndex(page);
+      expect(after).toBe(before);
+    });
+
+    test('11. With edit mode ON and nothing selected, ArrowRight navigates slides', async ({ page }) => {
       await loadFixtureWithEditor(page, fixture);
       await page.keyboard.press('e');
       const before = await activeSlideIndex(page);
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(120);
       const after = await activeSlideIndex(page);
-      expect(after).toBe(before);
+      expect(after).toBe(before + 1);
     });
   });
 }

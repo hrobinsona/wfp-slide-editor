@@ -537,6 +537,7 @@ The editor coexists with slide-level keyboard listeners:
 
 - Edit mode off and Overview off: pass through normal slide keys.
 - Edit mode on: capture editor keys and stop propagation for relevant controls.
+- Slide navigation keys (`ArrowLeft` / `ArrowRight` / `Space`) are a single decision point, resolved before the edit/overview gate: an open export menu, Overview mode, a live selection, or an open text edit keeps them; otherwise they reach the deck, whether or not edit mode is on. Once they are the deck's, `state.deckMutated` picks the route — editor-owned `navigateRelativeInDeck` when the host's cached cursor may be stale, plain pass-through to the host's own handler when it is not.
 - Overview mode on: capture overview keys for exit/delete/undo/redo/navigation actions.
 - Inline text edit: allow text input while still handling commit/cancel keys.
 

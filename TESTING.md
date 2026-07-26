@@ -85,7 +85,7 @@ Before declaring a feature or refactor done:
 
 1. Open a fixture without the editor loaded and confirm arrows, animations, and scaling still work.
 2. Inject the editor through the bookmarklet or local script.
-3. Toggle edit mode with `E`; confirm slide navigation is suppressed while editing.
+3. Toggle edit mode with `E`; confirm arrows still change slides with nothing selected, and stop changing slides once an element is selected or a text edit is open.
 4. Select, drag, resize, and undo an element on a scaled deck.
 5. Cmd/Ctrl-click multiple elements, drag the group on a scaled deck, and undo/redo the group move.
 6. Use inspector controls for position, size, font size, colour, opacity, and reset.

@@ -11,6 +11,23 @@ that a fresh session can act on it without archaeology.
 
 ## Open — behaviour iterations
 
+### No keyboard way to deselect, so nav keys can only be handed back by mouse
+
+- **Status:** open (UX gap surfaced by the edit-mode navigation change)
+- **Raised:** 2026-07-26, code review of `feature-briefs/edit-mode-slide-navigation.md`
+
+`Escape` does not clear a live selection — the selection ring stays and the
+inspector stays open (`Escape` is bound to text-edit commit, Overview exit,
+and export-menu close, none of which touch `state.selected`). Since a live
+selection is now what reserves `ArrowLeft` / `ArrowRight` / `Space` for the
+editor, the only way to hand those keys back to the deck is clicking empty
+slide background — which itself is awkward while the docked inspector covers
+part of the slide (`isPointInsidePassiveEditorSurface`). Candidate: make
+`Escape` clear the selection when no text edit, Overview, or export menu owns
+it. Check the ordering against the existing `Escape` consumers before
+wiring it, and cover the "Escape then ArrowRight navigates" path in
+`tests/v2-edit-mode-nav.spec.js`.
+
 ### Deselect/reselect click pattern remains a latent flake in one annotation test
 
 - **Status:** open (test hygiene; currently passing, hazard is latent)

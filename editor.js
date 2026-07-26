@@ -5301,7 +5301,19 @@
     return slides[activeIndex];
   }
 
-  // Navigate the live deck by ±1. Used by the deckMutated arrow-nav
+  // The keys a slide deck conventionally navigates with. Cmd/Ctrl/Alt
+  // combinations are excluded — those belong to the browser or to the
+  // editor's own shortcuts. Shift is deliberately not excluded: unlike the
+  // Arrow↑/↓ font nudge, where Shift means "bigger step", host decks treat
+  // Shift+Arrow as a plain arrow.
+  function isSlideNavigationKey(e) {
+    return (
+      !e.metaKey && !e.ctrlKey && !e.altKey &&
+      (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Spacebar')
+    );
+  }
+
+  // Navigate the live deck by ±1. Used by the editor-owned arrow-nav
   // takeover in onKeyDown.
   function navigateRelativeInDeck(delta) {
     const slides = getSlides();
@@ -5711,20 +5723,49 @@
       return;
     }
 
-    // Plain-view arrow nav takeover (v2.1.0 hotfix). Once the editor has
-    // activated a slide, mutated the deck, or restored a live refresh, the
-    // fixture's own keydown handler — which commonly caches slides + cur at
-    // load time — may be stale. Editor navigation uses fresh DOM queries.
-    if (
-      state.deckMutated &&
-      !state.editMode &&
-      !state.overviewMode &&
-      !e.metaKey && !e.ctrlKey && !e.altKey &&
-      (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === ' ' || e.key === 'Spacebar')
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
-      navigateRelativeInDeck(e.key === 'ArrowLeft' ? -1 : +1);
+    // Slide navigation keys belong to the deck, not the editor. The editor
+    // only takes them away when something of its own is bound to them: an
+    // open export menu, Overview mode (its own surface), or a live selection
+    // — navigating away mid-edit would strand the selection on a hidden
+    // slide. Edit mode with nothing selected has no such claim, so the keys
+    // keep their normal meaning: slide navigation on a deck, page scroll on
+    // a flat document. (Text edit is handled earlier and returns before this
+    // point, so a caret keeps its arrows.)
+    if (isSlideNavigationKey(e)) {
+      // An open export menu owns the keyboard — the deck must not move
+      // behind it. Propagation stops either way; the default action is
+      // left intact while a menu row holds focus so Space still activates
+      // that row natively, the same focus carve-out Enter makes above.
+      if (state.exportMenuOpen) {
+        e.stopPropagation();
+        if (!exportMenu.contains(document.activeElement)) e.preventDefault();
+        return;
+      }
+      if (state.overviewMode || (state.editMode && state.selected)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // Editor-owned navigation (v2.1.0 hotfix). Once the editor has
+      // activated a slide, mutated the deck, or restored a live refresh, the
+      // fixture's own keydown handler — which commonly caches slides + cur at
+      // load time — may be stale. Editor navigation uses fresh DOM queries.
+      if (state.deckMutated) {
+        e.preventDefault();
+        e.stopPropagation();
+        navigateRelativeInDeck(e.key === 'ArrowLeft' ? -1 : +1);
+        return;
+      }
+      // Untouched deck: let the host's own bubble-phase handler navigate so
+      // its transitions, build steps, and counters run as they normally do.
+      //
+      // A toolbar button clicked with the mouse keeps focus, and Space's
+      // native default action would activate it — pressing Space right
+      // after clicking Edit would advance the slide AND toggle edit mode
+      // back off. Suppressing the default action (not propagation) kills
+      // that second effect while the host still navigates from its own
+      // keydown listener.
+      if (isInsideEditorRoot(document.activeElement)) e.preventDefault();
       return;
     }
 
@@ -5777,18 +5818,6 @@
         e.stopPropagation();
         deleteSlideFromOverview(target);
       }
-      return;
-    }
-
-    // Suppress slide navigation keys while edit mode is on. The fixture's
-    // own keydown handler is registered in bubble phase, so by registering
-    // ours in capture phase + stopPropagation here, we pre-empt it cleanly.
-    if (
-      (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Spacebar') &&
-      !e.metaKey && !e.ctrlKey && !e.altKey
-    ) {
-      e.preventDefault();
-      e.stopPropagation();
       return;
     }
 
