@@ -87,6 +87,8 @@ The boundaries below were the target list for modularization. Every one of them 
 - Export.
 - Bookmarklet/runtime initialization.
 
+Known shared-scope hazard, found in review 2026-07-26: `rectsOverlap` is declared twice in the single IIFE (`40-helpers-selection-inspector.js` and `85-adaptive-fade.js`). The later declaration wins for all callers, so Front's competitor test actually runs the adaptive-fade copy; the two are semantically identical today, but an edit to the Front-local copy would silently do nothing. Deduplicate to one shared helper during the next pass.
+
 What remains is dependency cleanup rather than further splitting. The fragments share one IIFE scope, so file boundaries currently document ownership without enforcing it: any fragment can still reach any other's helpers. The next pass should narrow those reaches — starting with the largest fragments (`20-dom-css.js`, `30-ui-inspector-controls.js`, `40-helpers-selection-inspector.js`, all around 1.3-1.5k lines) — while keeping the concatenated output byte-identical in behaviour and the deployed runtime a single dependency-free file.
 
 Also update `scripts/build-editor.js` whenever a fragment is added or reordered; its `PARTS` array, not the directory listing, is the source of truth for build order.
