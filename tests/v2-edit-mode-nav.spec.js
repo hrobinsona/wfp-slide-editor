@@ -157,6 +157,104 @@ test.describe('Edit mode + no selection — navigation keys reach the deck', () 
   });
 });
 
+// Escape is the keyboard counterpart to clicking empty slide background:
+// it clears a live selection so the navigation keys go back to the deck.
+// It only reaches the selection once the surfaces bound to Escape ahead of
+// it — export menu, text edit, Overview — have declined it.
+test.describe('Escape clears the selection', () => {
+  test('Escape deselects and hands the navigation keys back', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('e');
+    await page.locator('.slide.active [data-testid="foreign-card"]').click();
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'true');
+
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'false');
+    await expect(page.locator('#wfp-editor-root .wfpe-selection-ring')).toHaveCSS('display', 'none');
+    // Edit mode itself is untouched — only the selection goes.
+    await expect(page.locator('#wfp-editor-root .wfpe-toolbar')).toHaveAttribute('data-mode', 'on');
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#foreign-slide-2')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('2 / 4');
+  });
+
+  test('Escape clears a multi-selection in one press', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('e');
+    await page.locator('.slide.active [data-testid="foreign-card"]').click();
+    await page.locator('.slide.active [data-testid="resize-target"]').click({ modifiers: ['ControlOrMeta'] });
+    expect(await page.evaluate(() =>
+      document.querySelector('#wfp-editor-root .wfpe-multi-box').style.display
+    )).toBe('block');
+
+    await page.keyboard.press('Escape');
+
+    expect(await page.evaluate(() => ({
+      boxDisplay: document.querySelector('#wfp-editor-root .wfpe-multi-box').style.display,
+      outlines: document.querySelectorAll('#wfp-editor-root .wfpe-multi-outline').length,
+    }))).toEqual({ boxDisplay: 'none', outlines: 0 });
+
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#foreign-slide-2')).toHaveClass(/active/);
+  });
+
+  test('the first Escape commits a text edit and keeps the selection; the second clears it', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('e');
+    const title = page.locator('.slide.active .foreign-title').first();
+    await title.dblclick();
+    await expect(title).toHaveAttribute('contenteditable', 'true');
+
+    await page.keyboard.press('Escape');
+    await expect(title).not.toHaveAttribute('contenteditable', 'true');
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'true');
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'false');
+  });
+
+  test('Escape closes an open export menu before it touches the selection', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('e');
+    await page.locator('.slide.active [data-testid="foreign-card"]').click();
+    await page.locator('#wfp-editor-root button[data-action="export"]').click();
+    await expect(page.locator('#wfp-editor-root .wfpe-export-dock')).toHaveAttribute('data-visible', 'true');
+
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('#wfp-editor-root .wfpe-export-dock')).toHaveAttribute('data-visible', 'false');
+    await expect(page.locator('#wfp-editor-root .wfpe-inspector')).toHaveAttribute('data-visible', 'true');
+  });
+
+  test('Escape in Overview exits Overview and leaves the deck put', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('o');
+    await page.waitForFunction(() =>
+      document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4
+    );
+
+    await page.keyboard.press('Escape');
+
+    await expect(page.locator('#wfp-editor-root button[data-action="overview"]'))
+      .toHaveAttribute('data-mode', 'off');
+    await expect(page.locator('#foreign-slide-1')).toHaveClass(/active/);
+  });
+
+  test('Escape with nothing selected is inert', async ({ page }) => {
+    await loadForeignDeck(page);
+    await page.keyboard.press('e');
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(100);
+
+    await expect(page.locator('#wfp-editor-root .wfpe-toolbar')).toHaveAttribute('data-mode', 'on');
+    await expect(page.locator('#foreign-slide-1')).toHaveClass(/active/);
+    await expect(page.locator('.slide-count')).toHaveText('1 / 4');
+  });
+});
+
 test.describe('Flat documents', () => {
   test('Space scrolls a flat document with edit mode on and nothing selected', async ({ page }) => {
     await page.goto('/fixtures/flat-document.html', { timeout: 30_000 });

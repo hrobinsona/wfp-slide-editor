@@ -5723,6 +5723,22 @@
       return;
     }
 
+    // Escape is the keyboard counterpart to clicking empty slide background:
+    // it drops the selection so the ring and inspector go away and the
+    // navigation keys revert to the deck. It only gets here once every
+    // surface bound to Escape ahead of it has declined — the export menu and
+    // text edit return above, Overview one branch up, and inspector inputs
+    // (their own Escape reverts a pending value) at the isTypingTarget guard.
+    // An in-flight drag or resize keeps its selection: the pointer gesture
+    // still owns the element and releases it on mouseup.
+    if (e.key === 'Escape' && noModifier && state.selected && !state.drag && !state.resize) {
+      e.preventDefault();
+      e.stopPropagation();
+      setSelected(null);
+      refreshInspector();
+      return;
+    }
+
     // Slide navigation keys belong to the deck, not the editor. The editor
     // only takes them away when something of its own is bound to them: an
     // open export menu, Overview mode (its own surface), or a live selection

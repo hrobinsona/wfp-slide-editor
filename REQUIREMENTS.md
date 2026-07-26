@@ -28,6 +28,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - Press `O` or click the Overview toolbar button to toggle Overview mode.
 - When edit mode and Overview mode are off, the slide behaves as it would without the editor loaded.
 - Slide keyboard navigation (`ArrowLeft` / `ArrowRight` / `Space`) is suppressed only while the editor has those keys bound: Overview mode is on, an element is selected, a text edit is open, or the export menu is open. With edit mode on and nothing selected, the keys navigate the deck as usual, and `Space` does not double-fire on a toolbar button the user just clicked.
+- `Escape` clears the current element selection (single or multi), which also hands the navigation keys back to the deck. It reaches the selection only once the surfaces bound ahead of it decline: an open export menu closes, an open text edit commits, Overview mode exits, and an inspector input reverts its own pending value.
 - When Overview mode is on, the deck is shown as a thumbnail grid for slide-level operations.
 
 ## Shipped Features

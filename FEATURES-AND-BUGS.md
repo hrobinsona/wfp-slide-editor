@@ -11,23 +11,6 @@ that a fresh session can act on it without archaeology.
 
 ## Open — behaviour iterations
 
-### No keyboard way to deselect, so nav keys can only be handed back by mouse
-
-- **Status:** open (UX gap surfaced by the edit-mode navigation change)
-- **Raised:** 2026-07-26, code review of `feature-briefs/edit-mode-slide-navigation.md`
-
-`Escape` does not clear a live selection — the selection ring stays and the
-inspector stays open (`Escape` is bound to text-edit commit, Overview exit,
-and export-menu close, none of which touch `state.selected`). Since a live
-selection is now what reserves `ArrowLeft` / `ArrowRight` / `Space` for the
-editor, the only way to hand those keys back to the deck is clicking empty
-slide background — which itself is awkward while the docked inspector covers
-part of the slide (`isPointInsidePassiveEditorSurface`). Candidate: make
-`Escape` clear the selection when no text edit, Overview, or export menu owns
-it. Check the ordering against the existing `Escape` consumers before
-wiring it, and cover the "Escape then ArrowRight navigates" path in
-`tests/v2-edit-mode-nav.spec.js`.
-
 ### Deselect/reselect click pattern remains a latent flake in one annotation test
 
 - **Status:** open (test hygiene; currently passing, hazard is latent)
@@ -94,6 +77,30 @@ regression test is the three-step sequence above with an assertion that the
 child's redo actually lands on the connected node.
 
 ## Resolved
+
+### No keyboard way to deselect, so nav keys can only be handed back by mouse
+
+- **Status:** fixed 2026-07-26 (branch `main`)
+- **Raised:** 2026-07-26, code review of `feature-briefs/edit-mode-slide-navigation.md`
+
+`Escape` did not clear a live selection — the ring and inspector stayed up
+because `Escape` was bound only to text-edit commit, Overview exit, and
+export-menu close, none of which touch `state.selected`. Since a live
+selection is what reserves `ArrowLeft` / `ArrowRight` / `Space` for the
+editor, the only way to hand those keys back was clicking empty slide
+background, awkward while the docked inspector covers part of the slide
+(`isPointInsidePassiveEditorSurface`).
+
+Fixed in `onKeyDown` (`src/editor/60-modes-overview-keyboard.js`) with an
+`Escape` branch placed after the existing consumers: the export menu and
+text edit return earlier in the handler, Overview one branch above, and
+inspector inputs are excluded by the `isTypingTarget` guard, so their own
+revert-on-Escape still runs. The branch no-ops while a drag or resize is
+in flight — the pointer gesture owns the element until mouseup. Clearing
+goes through `setSelected(null)` + `refreshInspector()`, the same path as a
+background click, so single and multi selections both drop in one press.
+Coverage in `tests/v2-edit-mode-nav.spec.js` ("Escape clears the selection"),
+including the Escape-then-ArrowRight hand-back and the ordering cases.
 
 ### Flat-document export dropped the root positioning context
 
