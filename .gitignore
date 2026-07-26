@@ -10,6 +10,11 @@ test-results/
 bookmarklet.txt
 .worktrees/
 
+# Working-session scratch output: screenshots, spreadsheets, exported decks.
+# Same rule as tests/output/ — see the privacy section in CLAUDE.md, which
+# excludes screenshots, local notes, and private deck exports from git.
+outputs/
+
 # ═══════════════════════════════════════════════════════════════
 # PRIVACY: fixtures are gitignored by default
 # ═══════════════════════════════════════════════════════════════

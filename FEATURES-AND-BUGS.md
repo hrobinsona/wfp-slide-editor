@@ -15,9 +15,158 @@ None.
 
 ## Open — bugs
 
-None.
+### Content-edit undo can strand a later entry on a recreated child node
+
+- **Status:** open (latent; fails as a silent no-op, not an error)
+- **Raised:** 2026-07-25, post-merge review following PRs #13-#15
+
+A content-edit history entry restores through `applyElementSnapshot`'s
+`el.innerHTML = snap.html` write (`src/editor/50-history.js`). That write
+destroys and recreates the element's child nodes, so any *other* history
+entry that holds a direct reference to one of those children — because the
+user edited that child in its own later transaction — is left pointing at a
+detached node. Redoing that later entry then applies its snapshot to
+something no longer in the document: no error, no visible effect, no
+indication the redo did nothing.
+
+R1 already removed the common case by capturing `innerHTML` only for
+content-edit transactions, so style-only operations no longer recreate
+children. What remains is the genuinely nested sequence: edit an element's
+text, then edit one of its child elements, then undo past the text edit and
+redo forward.
+
+Not yet reproduced in a user report; the cost is a silently skipped redo
+step rather than corruption. A fix needs identity that survives an
+`innerHTML` rewrite — for example re-resolving each change's target by
+index path at apply time, or replaying content restores with node-level
+patches instead of a whole-subtree write. Whichever is chosen, the
+regression test is the three-step sequence above with an assertion that the
+child's redo actually lands on the connected node.
 
 ## Resolved
+
+### Flat-document export dropped the root positioning context
+
+- **Status:** fixed 2026-07-25 (PR #14, merge `8ecc685`; branch `fix/flat-export-position-context`)
+- **Raised:** 2026-07-24, flat-document export QA
+
+Exports of a flat (non-`.deck`) document re-anchored absolutely positioned
+elements to the document body instead of to the flat root, so every edited
+element drifted by roughly 120-170px — the drift scaled with the centering
+margin, which is exactly the offset between the two containing blocks. The
+live editor was correct; only the exported copy moved. A statically
+positioned flat root gets its positioning context from an editor-stylesheet
+rule keyed on `data-wfp-edit-flat-position-context` (deliberately, so the
+live document keeps a pristine root with no inline style), and the export
+strips both the editor CSS and that marker.
+
+Fixed by `persistFlatPositionContext` in `src/editor/95-export.js`, which
+stamps an inline `position: relative` on the CLONE's flat root before the
+marker sweep runs, so the exported document reproduces the same containing
+block without depending on editor CSS. Coverage in
+`tests/v2-4-modes.spec.js`.
+
+### Save-in-place rewrote relative asset URLs to machine-local file paths
+
+- **Status:** fixed 2026-07-25 (PR #14, merge `8ecc685`; branch `fix/flat-export-position-context`)
+- **Raised:** 2026-07-24, same review
+
+Absolutizing asset URLs is a property of the *destination*, not of the
+export pipeline: a downloaded copy leaves the deck's folder and needs
+absolute references to survive the move, but save-in-place writes back into
+that same folder, where turning `images/pic.png` into
+`file:///Users/.../images/pic.png` freezes the deck to one machine and
+breaks it the moment the folder is moved, renamed, or shared. Save-in-place
+now passes `absolutizeAssets: false`; downloads still absolutize.
+
+Covered in `tests/v2.11-save-in-place.spec.js` for both the clean pipeline
+and — added in the follow-up cleanup, branch `chore/post-fix-cleanup` — the
+annotated handoff pipeline, which is a separate builder that has to forward
+the same option.
+
+### Zero-movement resize-handle clicks mutated the element and pushed phantom history
+
+- **Status:** fixed 2026-07-25 (PR #13, merge `11f00b2`; branch `fix/unlock-resize-hardening`)
+- **Raised:** 2026-07-24, resize QA
+
+Pressing and releasing a resize handle without moving the pointer was
+treated as a resize: it unlocked flow positioning, wrote explicit
+width/height, and pushed a history entry for a gesture the user never made.
+The click-to-focus-a-handle case therefore silently changed the document and
+added an undo step that appeared to do nothing.
+
+Resize now defers all mutation — unlock, sibling pinning, and style writes —
+until the pointer leaves a deadzone, and re-reads its anchors at that point
+so the gesture measures from where the real drag began rather than from the
+press. Coverage in `tests/v2-15-unlock-hardening.spec.js`.
+
+### Unlocking a direct child of the slide/flat root collapsed its siblings
+
+- **Status:** fixed 2026-07-25 (PR #13, merge `11f00b2`; branch `fix/unlock-resize-hardening`)
+- **Raised:** 2026-07-24, flow-unlock QA
+
+Flow unlock pinned siblings when the unlocked element was nested, but not
+when it was a DIRECT child of the slide or flat root. Promoting such a child
+to absolute removed it from flow with nothing holding the remaining children
+in place, so the rest of the document jumped upward — measured at 554px in
+the reported case.
+
+Direct-child unlock now pins the root's siblings on the same paths nested
+unlock already used, and holds the flat root's height so the emptied flow
+does not collapse. The height hold is derived state: it is recorded as a
+`data-wfp-edit-*` attribute plus a dynamic editor CSS rule rather than an
+inline write on the user's root, re-derived whenever the pinned set changes
+(including delete, paste, and live refresh), released when the last pinned
+child goes away, and persisted into exports so the exported document matches
+what was on screen. Pin paths skip editor DOM and non-rendered children.
+Coverage in `tests/v2-15-unlock-hardening.spec.js`.
+
+### Idle selection tracking re-ran the full inspector populate every frame
+
+- **Status:** fixed 2026-07-25 (PR #15, merge `8fef716`; branch `fix/selection-tracking-perf`)
+- **Raised:** 2026-07-24, performance review of the R2 tracking loop
+
+The R2 requestAnimationFrame loop that keeps the selection ring aligned with
+an element moving under its own steam called the full `refreshSelection()`
+path on every tick, including a complete inspector repopulate, whether or
+not anything had moved. Idle edit mode therefore burned a steady stream of
+layout and script work.
+
+The loop now compares bounding rects each tick and only pays for a refresh
+when something actually moved. Measured over one idle second: inspector
+populate calls 121 → 0, `LayoutCount` 373 → ~9, `ScriptDuration` ~15ms →
+~5ms. The guarantee the loop exists for is unchanged and pinned by
+`tests/v2-16-tracking-efficiency.spec.js`: both the ring and an annotation
+marker on a non-selected element still catch up to an element moved by a
+host-page script with no editor event at all.
+
+### Opacity slider ignored keyboard input
+
+- **Status:** fixed 2026-07-25 (PR #15, merge `8fef716`; branch `fix/selection-tracking-perf`)
+- **Raised:** 2026-07-24, accessibility pass
+
+The slider opened its one-entry-per-gesture history session on `mousedown`
+only. A keyboard user focusing the slider and pressing arrow keys moved the
+native thumb but never changed the element's opacity, and the next
+repopulate snapped the thumb back.
+
+The session now opens lazily on the first `input` when none is open. A
+keyboard session cannot close the way a mouse drag does, because a native
+`<input type=range>` fires `change` immediately after *every* keyboard
+`input` — including every tick of OS auto-repeat — so closing on `change`
+would turn one held key into dozens of entries and evict unrelated undo
+state. It settles instead: `change` arms a short timer that closes the
+session once input stops, and a blur flushes it immediately.
+
+Holding `state.txn` open across that settle window is only safe because the
+session registers a flush hook with `50-history.js` for exactly as long as
+the window is armed, so any other gesture that opens a transaction forces it
+to finalize as its own entry first. Follow-up (branch
+`chore/post-fix-cleanup`) extended that flush to `undo()` and `redo()`,
+which move the same cursor: previously an undo during the settle window
+silently discarded the live opacity edit and truncated the redo stack, so
+the next undo appeared to step forward. Coverage in
+`tests/v2-16-tracking-efficiency.spec.js`.
 
 ### Editor-owned nav leaves foreign slide counters stale
 

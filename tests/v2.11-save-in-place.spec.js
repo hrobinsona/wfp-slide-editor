@@ -395,6 +395,37 @@ test.describe('v2.11 — save-in-place engine', () => {
     expect(content).not.toContain('src="assets/probe.png"');
   });
 
+  // Same destination rule, second pipeline. An annotated save does not go
+  // through buildExportHtml at all — triggerPrimaryExport routes it to
+  // buildHandoffExportHtml (95-export.js), which stamps the agent payload.
+  // Both take the same options object, but only the unannotated path was
+  // covered above, so nothing pinned the handoff pipeline forwarding
+  // absolutizeAssets: false. A regression there would rewrite every
+  // relative asset URL to a file:// path in exactly the case the round trip
+  // matters most: the file an agent is about to read and write back.
+  test('annotated save-in-place keeps relative asset URLs too', async ({ page }) => {
+    await installFsaStub(page);
+    await loadReady(page);
+    await page.evaluate(() => {
+      const img = document.createElement('img');
+      img.id = 'relative-asset-probe';
+      img.setAttribute('src', 'assets/probe.png');
+      document.querySelector('.slide.active').appendChild(img);
+    });
+    await addNote(page, 'RELATIVE URL HANDOFF NOTE');
+
+    await page.keyboard.press('Meta+s');
+    await page.waitForFunction(() => window.__fsa.written.length === 1);
+    const written = await page.evaluate(() => window.__fsa.written[0]);
+
+    // The handoff pipeline really did run...
+    expect(written).toContain('data-wfp-agent-annotations');
+    expect(written).toContain('RELATIVE URL HANDOFF NOTE');
+    // ...and it left the asset reference portable.
+    expect(written).toContain('src="assets/probe.png"');
+    expect(written).not.toMatch(/src="file:\/\/[^"]*assets\/probe\.png"/);
+  });
+
   test('menu Enter and clean-copy row behave with the engine active', async ({ page }) => {
     await installFsaStub(page);
     await loadReady(page);

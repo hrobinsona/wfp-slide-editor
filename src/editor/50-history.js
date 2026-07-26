@@ -61,6 +61,10 @@
   // session open like this MUST register a flush hook here for exactly as
   // long as the session stays open, so beginTxn() finalizes it as its own
   // history entry before deciding whether a genuine reentry exists.
+  //
+  // undo() and redo() flush for the same reason: they move the history
+  // cursor, which is meaningless while an uncommitted edit is still parked
+  // in the txn slot (see the comment above undo()).
   // ---------------------------------------------------------------------------
   const pendingTxnFlushHooks = new Set();
 
@@ -74,8 +78,16 @@
 
   function flushPendingTxnSessions() {
     if (!pendingTxnFlushHooks.size) return;
-    // Snapshot first — a hook's own cleanup unregisters itself mid-loop.
-    for (const hook of [...pendingTxnFlushHooks]) hook();
+    // Snapshot first — a hook's own cleanup unregisters itself mid-loop, and
+    // a hook may legitimately open a NEW session, which must not be flushed
+    // by the same pass. Deleting each hook BEFORE invoking it makes
+    // termination structural rather than a promise each hook has to keep:
+    // a hook that forgets to unregister itself (or throws before it can)
+    // still cannot be invoked twice by a later flush.
+    for (const hook of [...pendingTxnFlushHooks]) {
+      pendingTxnFlushHooks.delete(hook);
+      hook();
+    }
   }
 
   function beginTxn(options = {}) {
@@ -306,7 +318,19 @@
     }
   }
 
+  // Undo/redo are transaction boundaries in exactly the way beginTxn() is: a
+  // settle-window session (the opacity slider's keyboard burst) is a real,
+  // uncommitted edit parked in the shared txn slot, and moving the history
+  // cursor past it corrupts both halves. Without this flush, the entry being
+  // restored below overwrites the live edit wholesale — applyElementSnapshot
+  // writes the entire `style` attribute — so the edit is silently discarded;
+  // then the session's own timer commits from the already-moved cursor,
+  // truncating the redo stack and leaving the next undo looking like it
+  // stepped forward. Flushing first turns the pending session into its own
+  // entry, so undo/redo simply walk one more step. Runs before the
+  // index guards on purpose: the flush can add the entry those guards read.
   function undo() {
+    flushPendingTxnSessions();
     if (state.historyIndex <= 0) return;
     state.historyIndex--;
     const entry = state.history[state.historyIndex];
@@ -342,6 +366,7 @@
   }
 
   function redo() {
+    flushPendingTxnSessions(); // see undo()
     if (state.historyIndex >= state.history.length) return;
     const entry = state.history[state.historyIndex];
     if (entry.changes) {
