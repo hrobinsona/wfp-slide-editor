@@ -267,11 +267,11 @@ test.describe('v2.17 — Front (bring to front)', () => {
     expect(await card.evaluate((el) => el.getAttribute('style'))).toBe(cardBefore);
   });
 
-  // Review round — W1/W4b: siblingMaxZIndex excluded only the element
+  // Review round — W1/W4b: the required-z scan excluded only the element
   // itself, not its co-targets, so a multi-select's OWN just-bumped z fed
   // back into the next click's base (e.g. {1,2} -> {3,4} -> {5,6} on
   // repeated clicks), each pushing its own history entry. A second click
-  // with no other sibling change must be a full no-op.
+  // with nothing else on the slide changed must be a full no-op.
   test('repeated multi-select clicks do not inflate z-index further (W1 / W4b)', async ({ page }) => {
     await loadDocumentWithEditor(page, 'foreign-deck.html');
     await page.keyboard.press('e');
@@ -304,8 +304,8 @@ test.describe('v2.17 — Front (bring to front)', () => {
   // inert on position: static. Two consequences, both exercised here:
   //   (a) a STATIC target with an authored (inert) z-index must not read
   //       as "already front" — the click must still take effect.
-  //   (b) a STATIC sibling's inert z-index must not inflate the plan's
-  //       base for an unrelated (real) target.
+  //   (b) a STATIC competitor's inert z-index must not inflate the plan's
+  //       required base for an unrelated (real) target.
   test('static elements ignore inert z-index on both sides of the computation (W2)', async ({ page }) => {
     await loadDocumentWithEditor(page, 'foreign-deck.html');
     await page.keyboard.press('e');
@@ -627,16 +627,149 @@ test.describe('v2.17.1 — cross-container stacking', () => {
     }));
 
     const before = await readStyles();
-    // The inspector collapses for a multi-selection, so dispatch directly.
-    await page.locator(FRONT_BTN).dispatchEvent('click');
+    // v2.18 — the inspector dock renders a reduced control surface (Front
+    // included) for a multi-selection, so Front is a real pointer target
+    // here; a synthetic dispatchEvent would hide a regression in which the
+    // button is present but unclickable.
+    await page.locator(FRONT_BTN).click();
     const afterFirst = await readStyles();
     expect(afterFirst).not.toEqual(before);
 
-    await page.locator(FRONT_BTN).dispatchEvent('click');
+    await page.locator(FRONT_BTN).click();
     expect(await readStyles()).toEqual(afterFirst);
 
     // One undo unwinds the whole first click — target, co-target and the
     // ancestor the climb raised.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readStyles()).toEqual(before);
+  });
+
+  // Review round — C1 (multi-target convergence). The climb ran once per
+  // target, in sequence, and never looked back: raising a LATER target's
+  // capping ancestor carries that container's whole subtree forward,
+  // including NON-target children, which can bury an EARLIER target that the
+  // same pass had already verified as front-most. Measured against the
+  // pre-fix build, one click left .tA behind .occ (elementFromPoint at their
+  // overlap still returned .occ) and it took a second click — with a second
+  // history entry — to converge. One click has to reach the fixpoint: every
+  // target painting on top, and an immediately repeated click writing
+  // nothing.
+  //
+  // Shape: two targets, each trapped inside its own transformed (stacking-
+  // context) wrapper. .tB's wrapper also holds .occ, an unselected element
+  // overlapping .tA — so the raise that frees .tB is exactly what re-buries
+  // .tA.
+  test('one click converges for multi-target climbs whose containers re-occlude each other (C1)', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('e');
+    await page.evaluate(() => document.querySelector('.slide.active').insertAdjacentHTML('beforeend', `
+      <div class="wrapA" style="position:absolute;left:400px;top:120px;width:220px;height:300px;transform:translateZ(0);">
+        <div class="tA" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#c33"></div>
+      </div>
+      <div class="wrapB" style="position:absolute;left:480px;top:140px;width:200px;height:260px;transform:translateZ(0);">
+        <div class="occ" style="position:absolute;left:0;top:0;width:120px;height:60px;background:#39f"></div>
+        <div class="tB" style="position:absolute;left:0;top:160px;width:160px;height:80px;background:#3c3"></div>
+      </div>
+      <div class="pB" style="position:absolute;left:500px;top:320px;width:200px;height:100px;background:#333;z-index:2"></div>`));
+
+    // Overlap centres: .tA vs .occ, and .tB vs .pB. Both sit clear of the
+    // fixture's own card, so only the injected elements compete there.
+    const points = await page.evaluate(() => {
+      const box = (sel) => document.querySelector(`.slide.active ${sel}`).getBoundingClientRect();
+      const centre = (a, b) => ({
+        x: (Math.max(a.left, b.left) + Math.min(a.right, b.right)) / 2,
+        y: (Math.max(a.top, b.top) + Math.min(a.bottom, b.bottom)) / 2,
+      });
+      return { a: centre(box('.tA'), box('.occ')), b: centre(box('.tB'), box('.pB')) };
+    });
+    // Which of a pair paints above the other at `pt`: walk the hit stack
+    // (topmost first, editor chrome skipped) and report whichever turns up
+    // first. That is the contract's comparison — "the target paints above
+    // its COMPETITOR" — not "the target is topmost". A third element in
+    // between is neither's loss, and one is expected here: the climb raises
+    // .wrapA, a transparent container whose box happens to span this point,
+    // above .wrapB. It hides nothing (no background) and is excluded from
+    // both targets' competitor sets by design, being a co-target's ancestor.
+    const paintOrder = (pt, sels) => page.evaluate(([p, s]) => {
+      for (const node of document.elementsFromPoint(p.x, p.y)) {
+        if (node.closest('#wfp-editor-root')) continue;
+        const hit = s.find((sel) => node.closest(sel) != null);
+        if (hit) return hit;
+      }
+      return null;
+    }, [pt, sels]);
+
+    // Sanity: both targets start buried, each by a different mechanism —
+    // .tA by a later sibling container's subtree, .tB by a flat z-index: 2.
+    expect(await paintOrder(points.a, ['.tA', '.occ'])).toBe('.occ');
+    expect(await paintOrder(points.b, ['.tB', '.pB'])).toBe('.pB');
+
+    // Click clear of every occluder: .tA's top-right corner is above .occ and
+    // right of the fixture card; .tB's top-left corner is above .pB.
+    await page.locator('.slide.active .tA').click({ position: { x: 160, y: 8 } });
+    await page.locator('.slide.active .tB').click({ position: { x: 8, y: 8 }, modifiers: ['ControlOrMeta'] });
+    // Both injected targets overlap other slide content, so "two things are
+    // selected" is not enough — pin the selection to .tA and .tB through the
+    // multi-outline boxes, or a mis-selection turns into a confusing paint
+    // assertion failure further down.
+    await expect.poll(() => page.evaluate((rootSel) => {
+      const outlines = [...document.querySelectorAll(`${rootSel} .wfpe-multi-outline`)]
+        .map((o) => o.getBoundingClientRect());
+      if (outlines.length !== 2) return false;
+      return ['.tA', '.tB'].every((sel) => {
+        const r = document.querySelector(`.slide.active ${sel}`).getBoundingClientRect();
+        return outlines.some((o) => Math.abs(o.left - r.left) < 4 && Math.abs(o.top - r.top) < 4
+          && Math.abs(o.width - r.width) < 8 && Math.abs(o.height - r.height) < 8);
+      });
+    }, ROOT)).toBe(true);
+
+    const readStyles = () => page.evaluate(() => {
+      const style = (sel) => document.querySelector(`.slide.active ${sel}`).getAttribute('style');
+      return {
+        tA: style('.tA'), wrapA: style('.wrapA'),
+        tB: style('.tB'), wrapB: style('.wrapB'),
+        occ: style('.occ'), pB: style('.pB'),
+      };
+    });
+
+    const before = await readStyles();
+    await page.locator(FRONT_BTN).click();
+    const afterFirst = await readStyles();
+    expect(afterFirst).not.toEqual(before);
+
+    // (a) ONE click: both targets paint above their occluders. Pre-fix, .tA
+    // failed here — wrapB's raise carried .occ back over it.
+    expect(await paintOrder(points.a, ['.tA', '.occ'])).toBe('.tA');
+    expect(await paintOrder(points.b, ['.tB', '.pB'])).toBe('.tB');
+
+    // (c) The retry re-plans ALL targets together, so the z ASSIGNMENT keeps
+    // the plan's order: .tB sorted after .tA (both z:auto, .tB later in DOM)
+    // and still gets the higher z. Escalating only the target that needed
+    // another climb — the obvious cheaper retry — inverts this.
+    //
+    // Note this is the assignment, not paint order, and in THIS shape the two
+    // genuinely part company: .occ must end below .tA, .occ lives in wrapB,
+    // so wrapA must out-stack wrapB — which lifts .tA's whole container above
+    // .tB's. The containers make (a) and (c) mutually exclusive here and the
+    // brief makes paint truth decisive, so (a) wins. It costs nothing
+    // visually (the targets do not overlap) and it is where the pre-fix
+    // build's own second click landed too. Paint-order preservation is
+    // covered where it is actually satisfiable, on flat siblings: see
+    // 'multi-select raises both above an unselected sibling and preserves
+    // their relative order'.
+    const zA = await effectiveZ(page, '.slide.active .tA');
+    const zB = await effectiveZ(page, '.slide.active .tB');
+    expect(zB).toBeGreaterThan(zA);
+
+    // (b) Fixpoint: the second click recomputes the same plan, writes
+    // nothing, and pushes no history entry.
+    await page.locator(FRONT_BTN).click();
+    expect(await readStyles()).toEqual(afterFirst);
+    expect(await paintOrder(points.a, ['.tA', '.occ'])).toBe('.tA');
+    expect(await paintOrder(points.b, ['.tB', '.pB'])).toBe('.tB');
+
+    // Undo depth is the proof: one undo unwinds the whole first click, so
+    // the second click cannot have pushed an entry of its own.
     await page.keyboard.press('ControlOrMeta+z');
     expect(await readStyles()).toEqual(before);
   });

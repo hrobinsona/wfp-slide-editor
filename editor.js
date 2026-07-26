@@ -3587,36 +3587,104 @@
     el.style.zIndex = String(z);
   }
 
+  // Verify and climb. A correct z-index is inert inside a capping ancestor
+  // (transform, opacity < 1, an own z-index, …), so when the target still
+  // paints below a competitor we raise the nearest such ancestor as well,
+  // then the next one out, re-checking after each step.
+  //
+  // Raising a container carries its whole subtree forward. That is
+  // unavoidable — it is precisely what "in front" means for a nested
+  // element — and it is why we climb only as far as the occlusion needs.
+  //
+  // v2.18.1 (C1) — that carry is also why ONE sequential sweep does not
+  // converge: the subtree a later target's climb brings forward contains
+  // NON-target elements, which can bury an earlier target the same sweep had
+  // already verified as front-most. Nothing looked back, so the click ended
+  // with a target still behind and only a SECOND click (pushing a second
+  // history entry) finished the job. The sweep therefore runs in passes —
+  // re-verify every target, climb whoever is still occluded — and a pass has
+  // to strictly SHRINK the occluded set to earn another. That one rule does
+  // both jobs: it caps the loop at one pass per target, and it stops dead on
+  // the shapes no amount of climbing can fix (a refused static ancestor;
+  // containers that occlude each other mutually), so nothing is spent
+  // inflating z on them and their repeat clicks stay silent.
+  //
+  // A retry needs a HIGHER z than the plan asked for: the per-ancestor dedupe
+  // keeps the highest request seen for each ancestor, so replaying a target's
+  // original z is refused as already-satisfied and the pass spins. Passes
+  // after the first therefore re-plan every target from a base above
+  // everything this apply has put into play (`ceiling`), keeping the plan's
+  // index order — base + 1 + i, all targets moving together — so the retry is
+  // deterministic and the z assignment never inverts.
+  //
+  // Repeat clicks then settle: every z a later plan can derive from a
+  // competitor's chain is one this apply wrote, so the next `required` lands
+  // at or below `ceiling` and each target already sits at or above its
+  // recomputed required + 1 + i. The guard drops that click, and the writes
+  // would be snapshot-equal anyway, so endTxn() pushes nothing. That argument
+  // assumes the occlusion sampling sees everything; where it is blind by
+  // design (the brief's accepted pointer-events: none case) a shape can still
+  // cost one extra click before it settles — it does settle.
   function applyFrontPlan(plan) {
     const chains = new Map();
     for (const { el } of plan.entries) {
       chains.set(el, stackingContextAncestors(el, plan.slide));
     }
 
-    for (const { el, z } of plan.entries) raiseElementZIndex(el, z);
+    // Planned z per target, kept out of `plan` so the plan stays the
+    // immutable value object the guard already read.
+    const zFor = new Map(plan.entries.map((entry) => [entry.el, entry.z]));
 
-    // Verify and climb. A correct z-index is inert inside a capping ancestor
-    // (transform, opacity < 1, an own z-index, …), so when the target still
-    // paints below a competitor we raise the nearest such ancestor as well,
-    // then the next one out, re-checking after each step. Bounded by the
-    // ancestor chain, which was captured before any of these writes.
-    //
-    // Raising a container carries its whole subtree forward. That is
-    // unavoidable — it is precisely what "in front" means for a nested
-    // element — and it is why we climb only as far as the occlusion needs.
+    // The highest z this apply has put into play — the base a retry has to
+    // clear. Read back from the element rather than from the request, since
+    // raiseElementZIndex never demotes: an element authored above the plan
+    // keeps its own (higher) value, and that is what competitors now face.
+    let ceiling = 0;
+    function raise(el, z) {
+      raiseElementZIndex(el, z);
+      ceiling = Math.max(ceiling, effectiveZIndex(el));
+    }
+
+    function applyTargetZIndexes() {
+      for (const { el } of plan.entries) raise(el, zFor.get(el));
+    }
+
+    // Dedupe across targets by keeping the highest request per ancestor; the
+    // climb still advances either way, so a shared ancestor can't stall it.
     const raisedAncestors = new Map();
-    for (const { el, z, competitors } of plan.entries) {
-      if (!isTargetOccluded(el, competitors)) continue;
-      for (const ancestor of chains.get(el)) {
+    function climb(entry) {
+      const z = zFor.get(entry.el);
+      for (const ancestor of chains.get(entry.el)) {
         if (!canRaiseAncestor(ancestor)) continue;
-        // Dedupe across targets by keeping the highest request per ancestor;
-        // the climb still advances either way, so a shared ancestor can't
-        // stall the loop.
         if ((raisedAncestors.get(ancestor) || 0) < z) {
           raisedAncestors.set(ancestor, z);
-          raiseElementZIndex(ancestor, z);
+          raise(ancestor, z);
         }
-        if (!isTargetOccluded(el, competitors)) break;
+        if (!isTargetOccluded(entry.el, entry.competitors)) return;
+      }
+    }
+
+    applyTargetZIndexes();
+
+    // The shrink rule already bounds this at one pass per target; the counter
+    // is a backstop, not the argument.
+    let remaining = Infinity;
+    for (let pass = 0; pass <= plan.entries.length; pass += 1) {
+      const occluded = plan.entries.filter(
+        ({ el, competitors }) => isTargetOccluded(el, competitors),
+      );
+      if (!occluded.length) break;
+      if (occluded.length >= remaining) break; // no progress: stop, don't escalate
+      remaining = occluded.length;
+      if (pass > 0) {
+        const base = ceiling;
+        plan.entries.forEach((entry, i) => { zFor.set(entry.el, base + 1 + i); });
+        applyTargetZIndexes();
+      }
+      for (const entry of occluded) {
+        // An earlier climb in this same pass may already have freed this one.
+        if (!isTargetOccluded(entry.el, entry.competitors)) continue;
+        climb(entry);
       }
     }
   }
