@@ -106,6 +106,16 @@
       '<circle cx="8" cy="17" r="1.5" />' +
       '<circle cx="16" cy="17" r="1.5" />' +
       '</svg>',
+    // Stacked-planes glyph — paired with the inspector Front action (v2.17,
+    // bring to front). A diamond over a single chevron reads unambiguously
+    // as "layers" with fill: none; two overlapping rects (the original
+    // v2.17 icon) crossed their strokes in the overlap zone and read as a
+    // hash mark instead (code review, v2.17.1).
+    layers:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polygon points="12 2 3 7 12 12 21 7 12 2" />' +
+      '<polyline points="3 12 12 17 21 12" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -619,8 +629,8 @@
   annotationRow.appendChild(annotationActions);
   inspectorBody.appendChild(annotationRow);
 
-  // Element action row. Duplicate/delete/reset live together to avoid
-  // growing the inspector vertically as structural actions are added.
+  // Element action row. Duplicate/delete/reset/front live together to
+  // avoid growing the inspector vertically as structural actions are added.
   const actionRow = document.createElement('div');
   actionRow.className = 'wfpe-action-row';
   actionRow.dataset.wfpeRow = 'actions';
@@ -653,6 +663,18 @@
   resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
   resetBtn.title = "Restore the selected element's styles to their state before any edits";
   actionRow.appendChild(resetBtn);
+
+  // Front action (v2.17). Bumps the selection's z-index above every sibling
+  // in its stacking scope (element children of parentElement) — the actual
+  // CSS competition, matching how WFP decks stack overlapping absolutely-
+  // positioned slide children. One-way only: no send-to-back/step controls.
+  const frontBtn = document.createElement('button');
+  frontBtn.type = 'button';
+  frontBtn.className = 'wfpe-action-btn wfpe-front-btn';
+  frontBtn.dataset.action = 'bring-to-front';
+  frontBtn.innerHTML = ICONS.layers + '<span>Front</span>';
+  frontBtn.title = "Bring the selected element in front of its siblings";
+  actionRow.appendChild(frontBtn);
   inspectorBody.appendChild(actionRow);
 
   inspectorDockInner.appendChild(inspector);
@@ -1280,6 +1302,21 @@
   deleteBtn.addEventListener('click', (e) => {
     e.preventDefault();
     deleteSelectedElement();
+  });
+  // Guarded before the txn opens (no selection, or every target already
+  // meets its planned z) so an idle/repeat click pushes no history entry
+  // and inflates no z-index. Plan computed once and reused for both the
+  // guard and the write.
+  frontBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const targets = getSelectedElements();
+    if (!targets.length) return;
+    const plan = computeFrontZIndexPlan(targets);
+    if (isFrontPlanNoop(plan)) return;
+    const ctx = startInspectorTxn();
+    applyFrontZIndexPlan(plan);
+    endInspectorTxn(ctx);
+    refreshSelection();
   });
   applyModeFeatureGating();
   reimportHandoffAnnotations();

@@ -190,6 +190,95 @@
     return getSelectedElements().length > 1;
   }
 
+  // ---------------------------------------------------------------------------
+  // Bring to front (v2.17). Stacking scope = an element's own siblings
+  // (element children of its parentElement) — that's the actual CSS
+  // competition, and matches how WFP decks lay out overlapping absolutely-
+  // positioned children of the slide. We do not try to out-stack elements
+  // in other stacking contexts.
+  // ---------------------------------------------------------------------------
+  // z-index is inert while position is static — the used value never
+  // applies, so it must read as 0 both when this element IS the target
+  // (an authored-but-inert z-index must not falsely look "already front")
+  // and when it's a sibling being folded into someone else's max (an inert
+  // z-index there must not inflate the plan).
+  function effectiveZIndex(el) {
+    if (getComputedStyle(el).position === 'static') return 0;
+    const z = parseInt(getComputedStyle(el).zIndex, 10);
+    return Number.isFinite(z) ? z : 0; // auto (or garbage) reads as 0
+  }
+
+  // `exclude` is every element in THIS plan, not just `el` itself — a
+  // multi-select's co-targets are siblings of each other, so without
+  // excluding all of them a second click would fold each target's own
+  // freshly-bumped z back in as a "sibling max" and inflate the whole
+  // group again ({1,2} -> {3,4} -> {5,6} on repeated clicks).
+  function siblingMaxZIndex(el, exclude) {
+    const parent = el.parentElement;
+    if (!parent) return 0;
+    let max = 0;
+    for (const sib of parent.children) {
+      if (sib === el || exclude.has(sib)) continue;
+      max = Math.max(max, effectiveZIndex(sib));
+    }
+    return max;
+  }
+
+  // DOM-order tiebreak for equal effective z: the element that comes later
+  // in the document currently paints on top, so it sorts after — a bump
+  // then preserves that relative order instead of collapsing ties.
+  function compareStackOrder(a, b) {
+    const za = effectiveZIndex(a);
+    const zb = effectiveZIndex(b);
+    if (za !== zb) return za - zb;
+    const position = a.compareDocumentPosition(b);
+    return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  }
+
+  // One shared counter above the highest sibling max across every target,
+  // assigned in current-stack order so a multi-select bump keeps the
+  // targets' relative order (maxZ + 1, maxZ + 2, …) instead of tying them.
+  //
+  // Multi-target input is currently unreachable through the UI — the
+  // inspector dock (and this action row with it) only renders while
+  // exactly one element is selected, so a real pointer click can never
+  // land on this button during a multi-selection. The multi-target path
+  // is kept correct anyway as deliberate forward-compat for whenever
+  // multi-select gets its own surface; tests exercise it by dispatching
+  // the click event directly rather than driving a real (unreachable)
+  // pointer click.
+  function computeFrontZIndexPlan(elements) {
+    const ordered = [...elements].sort(compareStackOrder);
+    const targets = new Set(ordered);
+    const baseZ = ordered.reduce((max, el) => Math.max(max, siblingMaxZIndex(el, targets)), 0);
+    return ordered.map((el, i) => ({ el, z: baseZ + i + 1 }));
+  }
+
+  // No-op guard: true when every target's CURRENT z already meets or beats
+  // its planned z — not just equals it, or an element deliberately authored
+  // above the plan (e.g. z-index: 30 among all-auto siblings, where the
+  // plan only asks for 1) would be DEMOTED down to the plan value instead
+  // of being left alone. `>=` is safe across the whole multi-select plan
+  // too: both the current effective z (sorted ascending via
+  // compareStackOrder) and the planned z (baseZ + 1, baseZ + 2, …) rise in
+  // the same order, so a per-element "already meets its own threshold"
+  // check can't let a later, higher-z element mask an earlier shortfall.
+  function isFrontPlanNoop(plan) {
+    return plan.every(({ el, z }) => effectiveZIndex(el) >= z);
+  }
+
+  // z-index is inert on position: static, so a changed element is promoted
+  // to position: relative first — no offsets are written, so no layout
+  // shift. touchElement() must be called before either write lands.
+  function applyFrontZIndexPlan(plan) {
+    for (const { el, z } of plan) {
+      if (effectiveZIndex(el) >= z) continue;
+      touchElement(el);
+      if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+      el.style.zIndex = String(z);
+    }
+  }
+
   function toggleSelectedElement(target) {
     if (!target) return;
     const current = getSelectedElements();

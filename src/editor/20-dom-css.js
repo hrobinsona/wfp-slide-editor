@@ -919,10 +919,18 @@
       color: rgba(255,255,255,0.4);
       cursor: default;
     }
-    /* Footer actions: Duplicate / Delete / Reset */
+    /* Footer actions: Duplicate / Delete / Reset / Front. flex-wrap is load-
+       bearing, not cosmetic: the panel is a fixed 246px with overflow:
+       hidden (see .wfpe-inspector above), and four buttons' natural width
+       can exceed the ~218px content box at some font/platform metrics —
+       without wrap the overflow doesn't reflow, it gets hard-clipped
+       mid-label by the ancestor (code review, v2.17.1: "Fro" for "Front").
+       gap replaces the space-between reliance on exact single-row fit. */
     #${ROOT_ID} .wfpe-action-row {
       display: flex;
+      flex-wrap: wrap;
       justify-content: space-between;
+      gap: 4px 8px;
       border-top: 1px solid rgba(255,255,255,0.13);
       padding-top: 9px;
       margin-top: 1px;
@@ -932,14 +940,14 @@
       -webkit-appearance: none;
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       background: transparent;
       border: 0;
       color: rgba(255,255,255,0.95);
       font-size: 10.5px;
       font-weight: 600;
       cursor: pointer;
-      padding: 4px 6px;
+      padding: 4px 5px;
       border-radius: 6px;
       transition: background-color 120ms ease;
     }

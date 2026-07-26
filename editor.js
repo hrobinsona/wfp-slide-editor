@@ -1045,10 +1045,18 @@
       color: rgba(255,255,255,0.4);
       cursor: default;
     }
-    /* Footer actions: Duplicate / Delete / Reset */
+    /* Footer actions: Duplicate / Delete / Reset / Front. flex-wrap is load-
+       bearing, not cosmetic: the panel is a fixed 246px with overflow:
+       hidden (see .wfpe-inspector above), and four buttons' natural width
+       can exceed the ~218px content box at some font/platform metrics —
+       without wrap the overflow doesn't reflow, it gets hard-clipped
+       mid-label by the ancestor (code review, v2.17.1: "Fro" for "Front").
+       gap replaces the space-between reliance on exact single-row fit. */
     #${ROOT_ID} .wfpe-action-row {
       display: flex;
+      flex-wrap: wrap;
       justify-content: space-between;
+      gap: 4px 8px;
       border-top: 1px solid rgba(255,255,255,0.13);
       padding-top: 9px;
       margin-top: 1px;
@@ -1058,14 +1066,14 @@
       -webkit-appearance: none;
       display: flex;
       align-items: center;
-      gap: 5px;
+      gap: 4px;
       background: transparent;
       border: 0;
       color: rgba(255,255,255,0.95);
       font-size: 10.5px;
       font-weight: 600;
       cursor: pointer;
-      padding: 4px 6px;
+      padding: 4px 5px;
       border-radius: 6px;
       transition: background-color 120ms ease;
     }
@@ -1739,6 +1747,16 @@
       '<circle cx="8" cy="17" r="1.5" />' +
       '<circle cx="16" cy="17" r="1.5" />' +
       '</svg>',
+    // Stacked-planes glyph — paired with the inspector Front action (v2.17,
+    // bring to front). A diamond over a single chevron reads unambiguously
+    // as "layers" with fill: none; two overlapping rects (the original
+    // v2.17 icon) crossed their strokes in the overlap zone and read as a
+    // hash mark instead (code review, v2.17.1).
+    layers:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polygon points="12 2 3 7 12 12 21 7 12 2" />' +
+      '<polyline points="3 12 12 17 21 12" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -2252,8 +2270,8 @@
   annotationRow.appendChild(annotationActions);
   inspectorBody.appendChild(annotationRow);
 
-  // Element action row. Duplicate/delete/reset live together to avoid
-  // growing the inspector vertically as structural actions are added.
+  // Element action row. Duplicate/delete/reset/front live together to
+  // avoid growing the inspector vertically as structural actions are added.
   const actionRow = document.createElement('div');
   actionRow.className = 'wfpe-action-row';
   actionRow.dataset.wfpeRow = 'actions';
@@ -2286,6 +2304,18 @@
   resetBtn.innerHTML = ICONS.refresh + '<span>Reset</span>';
   resetBtn.title = "Restore the selected element's styles to their state before any edits";
   actionRow.appendChild(resetBtn);
+
+  // Front action (v2.17). Bumps the selection's z-index above every sibling
+  // in its stacking scope (element children of parentElement) — the actual
+  // CSS competition, matching how WFP decks stack overlapping absolutely-
+  // positioned slide children. One-way only: no send-to-back/step controls.
+  const frontBtn = document.createElement('button');
+  frontBtn.type = 'button';
+  frontBtn.className = 'wfpe-action-btn wfpe-front-btn';
+  frontBtn.dataset.action = 'bring-to-front';
+  frontBtn.innerHTML = ICONS.layers + '<span>Front</span>';
+  frontBtn.title = "Bring the selected element in front of its siblings";
+  actionRow.appendChild(frontBtn);
   inspectorBody.appendChild(actionRow);
 
   inspectorDockInner.appendChild(inspector);
@@ -2914,6 +2944,21 @@
     e.preventDefault();
     deleteSelectedElement();
   });
+  // Guarded before the txn opens (no selection, or every target already
+  // meets its planned z) so an idle/repeat click pushes no history entry
+  // and inflates no z-index. Plan computed once and reused for both the
+  // guard and the write.
+  frontBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const targets = getSelectedElements();
+    if (!targets.length) return;
+    const plan = computeFrontZIndexPlan(targets);
+    if (isFrontPlanNoop(plan)) return;
+    const ctx = startInspectorTxn();
+    applyFrontZIndexPlan(plan);
+    endInspectorTxn(ctx);
+    refreshSelection();
+  });
   applyModeFeatureGating();
   reimportHandoffAnnotations();
   refreshExportUi();
@@ -3107,6 +3152,95 @@
 
   function hasMultiSelection() {
     return getSelectedElements().length > 1;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bring to front (v2.17). Stacking scope = an element's own siblings
+  // (element children of its parentElement) — that's the actual CSS
+  // competition, and matches how WFP decks lay out overlapping absolutely-
+  // positioned children of the slide. We do not try to out-stack elements
+  // in other stacking contexts.
+  // ---------------------------------------------------------------------------
+  // z-index is inert while position is static — the used value never
+  // applies, so it must read as 0 both when this element IS the target
+  // (an authored-but-inert z-index must not falsely look "already front")
+  // and when it's a sibling being folded into someone else's max (an inert
+  // z-index there must not inflate the plan).
+  function effectiveZIndex(el) {
+    if (getComputedStyle(el).position === 'static') return 0;
+    const z = parseInt(getComputedStyle(el).zIndex, 10);
+    return Number.isFinite(z) ? z : 0; // auto (or garbage) reads as 0
+  }
+
+  // `exclude` is every element in THIS plan, not just `el` itself — a
+  // multi-select's co-targets are siblings of each other, so without
+  // excluding all of them a second click would fold each target's own
+  // freshly-bumped z back in as a "sibling max" and inflate the whole
+  // group again ({1,2} -> {3,4} -> {5,6} on repeated clicks).
+  function siblingMaxZIndex(el, exclude) {
+    const parent = el.parentElement;
+    if (!parent) return 0;
+    let max = 0;
+    for (const sib of parent.children) {
+      if (sib === el || exclude.has(sib)) continue;
+      max = Math.max(max, effectiveZIndex(sib));
+    }
+    return max;
+  }
+
+  // DOM-order tiebreak for equal effective z: the element that comes later
+  // in the document currently paints on top, so it sorts after — a bump
+  // then preserves that relative order instead of collapsing ties.
+  function compareStackOrder(a, b) {
+    const za = effectiveZIndex(a);
+    const zb = effectiveZIndex(b);
+    if (za !== zb) return za - zb;
+    const position = a.compareDocumentPosition(b);
+    return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+  }
+
+  // One shared counter above the highest sibling max across every target,
+  // assigned in current-stack order so a multi-select bump keeps the
+  // targets' relative order (maxZ + 1, maxZ + 2, …) instead of tying them.
+  //
+  // Multi-target input is currently unreachable through the UI — the
+  // inspector dock (and this action row with it) only renders while
+  // exactly one element is selected, so a real pointer click can never
+  // land on this button during a multi-selection. The multi-target path
+  // is kept correct anyway as deliberate forward-compat for whenever
+  // multi-select gets its own surface; tests exercise it by dispatching
+  // the click event directly rather than driving a real (unreachable)
+  // pointer click.
+  function computeFrontZIndexPlan(elements) {
+    const ordered = [...elements].sort(compareStackOrder);
+    const targets = new Set(ordered);
+    const baseZ = ordered.reduce((max, el) => Math.max(max, siblingMaxZIndex(el, targets)), 0);
+    return ordered.map((el, i) => ({ el, z: baseZ + i + 1 }));
+  }
+
+  // No-op guard: true when every target's CURRENT z already meets or beats
+  // its planned z — not just equals it, or an element deliberately authored
+  // above the plan (e.g. z-index: 30 among all-auto siblings, where the
+  // plan only asks for 1) would be DEMOTED down to the plan value instead
+  // of being left alone. `>=` is safe across the whole multi-select plan
+  // too: both the current effective z (sorted ascending via
+  // compareStackOrder) and the planned z (baseZ + 1, baseZ + 2, …) rise in
+  // the same order, so a per-element "already meets its own threshold"
+  // check can't let a later, higher-z element mask an earlier shortfall.
+  function isFrontPlanNoop(plan) {
+    return plan.every(({ el, z }) => effectiveZIndex(el) >= z);
+  }
+
+  // z-index is inert on position: static, so a changed element is promoted
+  // to position: relative first — no offsets are written, so no layout
+  // shift. touchElement() must be called before either write lands.
+  function applyFrontZIndexPlan(plan) {
+    for (const { el, z } of plan) {
+      if (effectiveZIndex(el) >= z) continue;
+      touchElement(el);
+      if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+      el.style.zIndex = String(z);
+    }
   }
 
   function toggleSelectedElement(target) {
