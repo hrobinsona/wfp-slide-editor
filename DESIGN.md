@@ -100,11 +100,11 @@ The user-facing marker is editor chrome, not slide content: compact peach circul
 
 **Decision:** Primary-element selection with move-only multi-select.
 
-The primary selected element is tracked by DOM reference in `state.selected`. Multi-select stores active-slide DOM references in `state.selectedElements`; `state.selected` remains the primary member so existing single-element commands retain their contract. A single selected element still shows the selection ring, handle set, dimension bubble, and inspector. Multiple selected elements show one editor-owned group box plus per-element outlines.
+The primary selected element is tracked by DOM reference in `state.selected`. Multi-select stores active-slide DOM references in `state.selectedElements`; `state.selected` remains the primary member so existing single-element commands retain their contract. A single selected element still shows the selection ring, handle set, dimension bubble, and inspector. Multiple selected elements show one editor-owned group box plus per-element outlines, and (since v2.18) the inspector dock with a reduced multi-select surface gated by `data-multi`.
 
 Selection is only valid while targets remain connected to the active slide. History restore paths must either preserve selected nodes or clear/re-resolve selection when a selected node is recreated. Ancestor/descendant pairs are normalized so the latest clicked target wins and the same visual content is not moved twice.
 
-The first multi-select release is intentionally move-only: group resize, group delete/copy/duplicate, group inspector edits, group/ungroup, and marquee selection stay out of scope.
+The first multi-select release was intentionally move-only. v2.18/v2.19 extended it with group inspector edits (font size, opacity, colour, bring-to-front, align, Reset — one txn per gesture). Group resize, group delete/copy/duplicate, group/ungroup, and marquee selection remain out of scope.
 
 ## Element Conversion to Absolute Positioning
 

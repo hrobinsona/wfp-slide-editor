@@ -228,7 +228,12 @@ test.describe('v2.10 — typography section', () => {
 
     const styleAttr = () => page.evaluate(() => document.querySelector('.s1 .headline').getAttribute('style'));
     const segStates = () => page.evaluate(() =>
-      [...document.querySelectorAll('#wfp-editor-root .wfpe-seg-item')].map(
+      // Scoped to the typography rows: v2.19's align-elements row reuses the
+      // seg chrome, so an unscoped .wfpe-seg-item query would drag in its
+      // six mode buttons.
+      [...document.querySelectorAll(
+        '#wfp-editor-root [data-wfpe-row="font-weight"] .wfpe-seg-item, #wfp-editor-root [data-wfpe-row="text-align"] .wfpe-seg-item',
+      )].map(
         (b) => `${b.dataset.wfpeValue}:${b.dataset.active}`,
       ),
     );

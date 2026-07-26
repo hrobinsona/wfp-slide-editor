@@ -399,14 +399,12 @@
   // in current-stack order so a multi-select bump keeps the targets' relative
   // order (required + 1, required + 2, …) instead of tying them.
   //
-  // Multi-target input is currently unreachable through the UI — the
-  // inspector dock (and this action row with it) only renders while
-  // exactly one element is selected, so a real pointer click can never
-  // land on this button during a multi-selection. The multi-target path
-  // is kept correct anyway as deliberate forward-compat for whenever
-  // multi-select gets its own surface; tests exercise it by dispatching
-  // the click event directly rather than driving a real (unreachable)
-  // pointer click.
+  // Multi-target input is reachable through the UI as of v2.18 — the
+  // inspector dock now renders (with a reduced control surface) for any
+  // selection of one or more elements, not just exactly one, so a real
+  // pointer click on the Front button can land during a multi-selection.
+  // Tests drive a real click accordingly (tests/v2-17-bring-to-front.spec.js,
+  // tests/v2-18-multi-select-inspector.spec.js).
   function computeFrontPlan(elements) {
     const slide = getActiveSlide();
     if (!slide) return null;
@@ -456,36 +454,104 @@
     el.style.zIndex = String(z);
   }
 
+  // Verify and climb. A correct z-index is inert inside a capping ancestor
+  // (transform, opacity < 1, an own z-index, …), so when the target still
+  // paints below a competitor we raise the nearest such ancestor as well,
+  // then the next one out, re-checking after each step.
+  //
+  // Raising a container carries its whole subtree forward. That is
+  // unavoidable — it is precisely what "in front" means for a nested
+  // element — and it is why we climb only as far as the occlusion needs.
+  //
+  // v2.18.1 (C1) — that carry is also why ONE sequential sweep does not
+  // converge: the subtree a later target's climb brings forward contains
+  // NON-target elements, which can bury an earlier target the same sweep had
+  // already verified as front-most. Nothing looked back, so the click ended
+  // with a target still behind and only a SECOND click (pushing a second
+  // history entry) finished the job. The sweep therefore runs in passes —
+  // re-verify every target, climb whoever is still occluded — and a pass has
+  // to strictly SHRINK the occluded set to earn another. That one rule does
+  // both jobs: it caps the loop at one pass per target, and it stops dead on
+  // the shapes no amount of climbing can fix (a refused static ancestor;
+  // containers that occlude each other mutually), so nothing is spent
+  // inflating z on them and their repeat clicks stay silent.
+  //
+  // A retry needs a HIGHER z than the plan asked for: the per-ancestor dedupe
+  // keeps the highest request seen for each ancestor, so replaying a target's
+  // original z is refused as already-satisfied and the pass spins. Passes
+  // after the first therefore re-plan every target from a base above
+  // everything this apply has put into play (`ceiling`), keeping the plan's
+  // index order — base + 1 + i, all targets moving together — so the retry is
+  // deterministic and the z assignment never inverts.
+  //
+  // Repeat clicks then settle: every z a later plan can derive from a
+  // competitor's chain is one this apply wrote, so the next `required` lands
+  // at or below `ceiling` and each target already sits at or above its
+  // recomputed required + 1 + i. The guard drops that click, and the writes
+  // would be snapshot-equal anyway, so endTxn() pushes nothing. That argument
+  // assumes the occlusion sampling sees everything; where it is blind by
+  // design (the brief's accepted pointer-events: none case) a shape can still
+  // cost one extra click before it settles — it does settle.
   function applyFrontPlan(plan) {
     const chains = new Map();
     for (const { el } of plan.entries) {
       chains.set(el, stackingContextAncestors(el, plan.slide));
     }
 
-    for (const { el, z } of plan.entries) raiseElementZIndex(el, z);
+    // Planned z per target, kept out of `plan` so the plan stays the
+    // immutable value object the guard already read.
+    const zFor = new Map(plan.entries.map((entry) => [entry.el, entry.z]));
 
-    // Verify and climb. A correct z-index is inert inside a capping ancestor
-    // (transform, opacity < 1, an own z-index, …), so when the target still
-    // paints below a competitor we raise the nearest such ancestor as well,
-    // then the next one out, re-checking after each step. Bounded by the
-    // ancestor chain, which was captured before any of these writes.
-    //
-    // Raising a container carries its whole subtree forward. That is
-    // unavoidable — it is precisely what "in front" means for a nested
-    // element — and it is why we climb only as far as the occlusion needs.
+    // The highest z this apply has put into play — the base a retry has to
+    // clear. Read back from the element rather than from the request, since
+    // raiseElementZIndex never demotes: an element authored above the plan
+    // keeps its own (higher) value, and that is what competitors now face.
+    let ceiling = 0;
+    function raise(el, z) {
+      raiseElementZIndex(el, z);
+      ceiling = Math.max(ceiling, effectiveZIndex(el));
+    }
+
+    function applyTargetZIndexes() {
+      for (const { el } of plan.entries) raise(el, zFor.get(el));
+    }
+
+    // Dedupe across targets by keeping the highest request per ancestor; the
+    // climb still advances either way, so a shared ancestor can't stall it.
     const raisedAncestors = new Map();
-    for (const { el, z, competitors } of plan.entries) {
-      if (!isTargetOccluded(el, competitors)) continue;
-      for (const ancestor of chains.get(el)) {
+    function climb(entry) {
+      const z = zFor.get(entry.el);
+      for (const ancestor of chains.get(entry.el)) {
         if (!canRaiseAncestor(ancestor)) continue;
-        // Dedupe across targets by keeping the highest request per ancestor;
-        // the climb still advances either way, so a shared ancestor can't
-        // stall the loop.
         if ((raisedAncestors.get(ancestor) || 0) < z) {
           raisedAncestors.set(ancestor, z);
-          raiseElementZIndex(ancestor, z);
+          raise(ancestor, z);
         }
-        if (!isTargetOccluded(el, competitors)) break;
+        if (!isTargetOccluded(entry.el, entry.competitors)) return;
+      }
+    }
+
+    applyTargetZIndexes();
+
+    // The shrink rule already bounds this at one pass per target; the counter
+    // is a backstop, not the argument.
+    let remaining = Infinity;
+    for (let pass = 0; pass <= plan.entries.length; pass += 1) {
+      const occluded = plan.entries.filter(
+        ({ el, competitors }) => isTargetOccluded(el, competitors),
+      );
+      if (!occluded.length) break;
+      if (occluded.length >= remaining) break; // no progress: stop, don't escalate
+      remaining = occluded.length;
+      if (pass > 0) {
+        const base = ceiling;
+        plan.entries.forEach((entry, i) => { zFor.set(entry.el, base + 1 + i); });
+        applyTargetZIndexes();
+      }
+      for (const entry of occluded) {
+        // An earlier climb in this same pass may already have freed this one.
+        if (!isTargetOccluded(entry.el, entry.competitors)) continue;
+        climb(entry);
       }
     }
   }
@@ -1147,7 +1213,10 @@
       hideHandles();
       hideDimBubble();
       positionMultiSelection(members);
-      populateInspector(null);
+      populateInspectorMulti(members);
+      if (!state.drag && !state.resize && !state.txn && !state.editingText) {
+        positionInspectorStack();
+      }
       refreshAnnotationMarkers();
       startSelectionTracking();
     } else if (members.length === 1) {
@@ -1237,6 +1306,148 @@
       outline.style.height = `${r.height}px`;
       multiOutlineLayer.appendChild(outline);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Align (v2.19) — multi-selection alignment against the SELECTION
+  // bounding box (union of member rects), the standard design-tool
+  // reference frame. Movement is a positional move exactly like drag:
+  // computeAlignPlan is pure geometry (viewport-space rects in, viewport-
+  // space per-member deltas out — no DOM writes, no scale), and
+  // applyAlignPlan does the scale-aware writes, reusing the unlock-to-
+  // absolute path drag and inspector X/Y use (unlockToAbsolute) and the
+  // same anchor-then-delta write order as onMouseMove (80-drag-resize-
+  // unlock.js): touch every member, unlock whatever was flow-positioned,
+  // THEN re-read the position fresh (unlock can change it) before writing
+  // the final position. Align never touches width/height.
+  //
+  // Each entry also carries the ABSOLUTE viewport-space target for the axis
+  // it moves (targetLeft/targetTop, null on the untouched axis) alongside
+  // the initial dxView/dyView. dxView/dyView answer "would this member move
+  // at all" for the no-op filter; the write step re-derives its own delta
+  // from the target against a FRESH rect taken after unlock (see
+  // applyAlignPlan) rather than trusting the original delta, because
+  // unlockToAbsolute's own pinning is itself offsetLeft/offsetTop-based
+  // (integer) and can nudge a freshly-promoted flow member by a sub-pixel
+  // amount the original delta doesn't account for.
+  // ---------------------------------------------------------------------------
+  function computeAlignPlan(mode, members) {
+    const rects = members
+      .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 || rect.height > 0);
+    if (rects.length < 2) return [];
+
+    let bbox = null;
+    for (const { rect } of rects) {
+      bbox = bbox
+        ? {
+          left: Math.min(bbox.left, rect.left),
+          top: Math.min(bbox.top, rect.top),
+          right: Math.max(bbox.right, rect.right),
+          bottom: Math.max(bbox.bottom, rect.bottom),
+        }
+        : { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+    }
+    const centerX = (bbox.left + bbox.right) / 2;
+    const centerY = (bbox.top + bbox.bottom) / 2;
+
+    return rects.map(({ el, rect }) => {
+      let dxView = 0;
+      let dyView = 0;
+      let targetLeft = null;
+      let targetTop = null;
+      switch (mode) {
+        case 'left': targetLeft = bbox.left; break;
+        case 'right': targetLeft = bbox.right - rect.width; break;
+        case 'center-h': targetLeft = centerX - rect.width / 2; break;
+        case 'top': targetTop = bbox.top; break;
+        case 'bottom': targetTop = bbox.bottom - rect.height; break;
+        case 'middle-v': targetTop = centerY - rect.height / 2; break;
+        default: break;
+      }
+      if (targetLeft !== null) dxView = targetLeft - rect.left;
+      if (targetTop !== null) dyView = targetTop - rect.top;
+      return { el, dxView, dyView, targetLeft, targetTop };
+    });
+  }
+
+  // The #1 CLAUDE.md gotcha: rects are viewport px, style writes are slide
+  // px — every delta here is divided by getCanvasScale() before it reaches
+  // a style write, same as drag (80-drag-resize-unlock.js:185-187).
+  const ALIGN_NOOP_SLIDE_PX = 0.5;
+
+  // Anchor for the write step. offsetLeft/offsetTop (what drag anchors on)
+  // are integers per DOM spec — fine for a live "follow the mouse" gesture,
+  // but align has an EXACT-equality invariant. getComputedStyle's used
+  // value for `left`/`top` on a positioned element is the same fractional
+  // CSS pixel value the layout engine derived the current rect from, so
+  // anchoring there (rather than the integer offset) keeps the anchor and
+  // the rect-derived delta in one consistent, sub-pixel-accurate frame.
+  // Falls back to 0 if the computed value is somehow unusable (defensive;
+  // unlockToAbsolute/an already-absolute element always yields a plain px
+  // value in practice) — a 0 fallback is at least in the SAME frame as the
+  // delta it's added to, unlike offsetLeft/offsetTop (which differ from
+  // `left`/`top` by margin, a mismatch the original fallback risked).
+  function readAlignAnchorPx(el, axis) {
+    const prop = axis === 'x' ? 'left' : 'top';
+    const parsed = parseFloat(getComputedStyle(el)[prop]);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  // Returns true if anything moved (a txn was opened and closed); false for
+  // a no-op plan, in which case NO txn is opened — no history entry, no
+  // unlock side-effects, matching the brief's no-op guard.
+  function applyAlignPlan(plan) {
+    const scale = getCanvasScale();
+    const changed = plan
+      .filter(({ dxView, dyView }) => (
+        Math.abs(dxView / scale) >= ALIGN_NOOP_SLIDE_PX ||
+        Math.abs(dyView / scale) >= ALIGN_NOOP_SLIDE_PX
+      ))
+      // wasAbsolute snapshotted BEFORE any unlock runs — mirrors drag's
+      // item.wasAbsolute (captured at mousedown, before the deadzone-
+      // triggered unlock loop). unlockToAbsolute is idempotent when a
+      // sibling's unlock already pinned this element via a shared flex/grid
+      // container, so calling it unconditionally per stale wasAbsolute is
+      // safe even if an earlier iteration already promoted this element.
+      .map((entry) => ({ ...entry, wasAbsolute: getComputedStyle(entry.el).position === 'absolute' }));
+    if (!changed.length) return false;
+
+    const ctx = startInspectorTxn();
+    for (const { el } of changed) touchElement(el);
+    for (const { el, wasAbsolute } of changed) {
+      if (!wasAbsolute) unlockToAbsolute(el);
+    }
+    for (const { el, targetLeft, targetTop } of changed) {
+      if (!el.isConnected) continue;
+      // Re-measure AFTER unlock and re-derive the delta from the absolute
+      // target rather than reusing the pre-unlock dxView/dyView: unlock's
+      // own pin (offsetLeft/offsetTop-based, integer) can nudge a freshly-
+      // promoted flow member by a sub-pixel amount the original delta
+      // doesn't know about, which would otherwise leave it just short of
+      // the target edge — close enough to dodge the no-op guard on a
+      // second click, but never exactly aligned.
+      const fresh = el.getBoundingClientRect();
+      // Axis-conditional: a pure horizontal align (targetTop === null) must
+      // leave top untouched, not just numerically unchanged — writing it
+      // unconditionally would convert e.g. a bottom-anchored absolute
+      // element's implicit top into an explicit one for no reason. Unlock
+      // (above) already establishes explicit left/top for a former flow
+      // member on BOTH axes, so the unmoved axis stays correctly pinned
+      // even though this loop never writes it.
+      if (targetLeft !== null) {
+        // dx is already slide px (viewport delta / scale) — compare it
+        // directly to the slide-px threshold, not a second time divided.
+        const dx = (targetLeft - fresh.left) / scale;
+        if (Math.abs(dx) >= ALIGN_NOOP_SLIDE_PX) el.style.left = `${readAlignAnchorPx(el, 'x') + dx}px`;
+      }
+      if (targetTop !== null) {
+        const dy = (targetTop - fresh.top) / scale;
+        if (Math.abs(dy) >= ALIGN_NOOP_SLIDE_PX) el.style.top = `${readAlignAnchorPx(el, 'y') + dy}px`;
+      }
+    }
+    endInspectorTxn(ctx);
+    return true;
   }
 
   let selectionRafId = 0;
@@ -1446,10 +1657,30 @@
     typographyDividerBottom.style.display = d;
   }
 
+  // v2.18 — shared multi-select vs single-select chrome: header label and
+  // the Duplicate/Delete disabled state are functions of selection
+  // membership alone, so both populate entry points (single-element
+  // populateInspector below, and populateInspectorMulti further down) set
+  // them explicitly on every call rather than relying on stale state left
+  // by whichever path ran last.
+  function updateActionRowGating(multi) {
+    duplicateBtn.disabled = multi;
+    duplicateBtn.title = multi
+      ? 'Duplicate is not available for a multi-selection'
+      : 'Duplicate selected element';
+    deleteBtn.disabled = multi;
+    deleteBtn.title = multi
+      ? 'Delete is not available for a multi-selection'
+      : 'Delete selected element';
+  }
+
   function populateInspector(el) {
+    inspectorTitle.textContent = 'Inspector';
+    updateActionRowGating(false);
     if (!el) {
       for (const k of ['x', 'y', 'w', 'h', 'fontSize', 'opacity']) {
         if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+        inspectorInputs[k].placeholder = '';
       }
       setTypographyRowsVisible(false);
       textColourRow.row.style.display = 'none';
@@ -1519,7 +1750,35 @@
     return true;
   }
 
+  // v2.18 — typed hex commit for a multi-selection: applies to every
+  // member unconditionally (no isTextBearing gate, matching the picker's
+  // live `input` handler in 30-ui-inspector-controls.js). One txn, per-
+  // member no-op guard.
+  function commitColourHexMulti(target, raw) {
+    const norm = parseHexInput(raw);
+    const members = getSelectedElements();
+    if (!norm) {
+      // Garbage input — restore from the live elements.
+      populateColoursMulti(members);
+      return;
+    }
+    const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+    const changed = members.filter((el) => rgbStringToHex(getComputedStyle(el)[cssProp]) !== norm);
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style[cssProp] = norm;
+    }
+    endInspectorTxn(ctx);
+    populateColoursMulti(members);
+  }
+
   function commitColourHex(target, raw, targetEl) {
+    if (hasMultiSelection()) {
+      commitColourHexMulti(target, raw);
+      return;
+    }
     const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
     if (!el) return;
     if (target === 'text' && !isTextBearing(el)) return;
@@ -1548,6 +1807,11 @@
   }
 
   function populateColours(el) {
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection; a single selection always shows
+    // a concrete value below (bgColourRow's placeholder is already
+    // unconditionally reassigned further down, to '' or 'image / gradient').
+    textColourRow.hexInput.placeholder = '';
     if (!el) {
       for (const r of [textColourRow, bgColourRow]) {
         if (document.activeElement !== r.hexInput) r.hexInput.value = '';
@@ -1596,11 +1860,98 @@
     }
   }
 
+  // v2.18 — shared/mixed reducer for multi-select populate. `mixed: true`
+  // means the values disagree — populate call sites blank the field and
+  // show the `Mixed` placeholder rather than guessing at a shared value.
+  function computeSharedValue(values) {
+    if (!values.length) return { shared: null, mixed: false };
+    const first = values[0];
+    const mixed = !values.every((v) => v === first);
+    return { shared: mixed ? null : first, mixed };
+  }
+
+  // Background colour of one member, reduced to a value computeSharedValue
+  // can compare: a hex string, or the sentinels 'transparent' / 'image'
+  // (a gradient/image background has no single hex to show or agree on).
+  function readBgColourToken(el) {
+    const bgRgb = getComputedStyle(el).backgroundColor;
+    const bgImage = getComputedStyle(el).backgroundImage;
+    if (bgImage && bgImage !== 'none') return 'image';
+    if (bgRgb === 'rgba(0, 0, 0, 0)' || bgRgb === 'transparent') return 'transparent';
+    return rgbStringToHex(bgRgb) || '#ffffff';
+  }
+
+  // Populates the text/background colour rows for a multi-selection.
+  // Unlike single-selection populateColours(), text colour is read from
+  // EVERY member regardless of isTextBearing — the brief enables the text
+  // colour row unconditionally for multi (writes are likewise unfiltered;
+  // see commitColourHexMulti).
+  function populateColoursMulti(members) {
+    const textHexes = members.map((el) => rgbStringToHex(getComputedStyle(el).color) || '#000000');
+    const { shared: sharedText, mixed: textMixed } = computeSharedValue(textHexes);
+    if (document.activeElement !== textColourRow.hexInput) {
+      textColourRow.hexInput.value = sharedText || '';
+    }
+    textColourRow.hexInput.placeholder = textMixed ? 'Mixed' : '';
+    textColourRow.colorInput.value = sharedText || '#000000';
+    if (sharedText) {
+      textColourRow.swatch.style.backgroundColor = sharedText;
+      delete textColourRow.swatch.dataset.transparent;
+    } else {
+      textColourRow.swatch.style.backgroundColor = '';
+      textColourRow.swatch.dataset.transparent = 'true';
+    }
+
+    const bgTokens = members.map(readBgColourToken);
+    const { shared: sharedBg, mixed: bgMixed } = computeSharedValue(bgTokens);
+    const sharedBgHex = (sharedBg && sharedBg !== 'transparent' && sharedBg !== 'image') ? sharedBg : null;
+    if (document.activeElement !== bgColourRow.hexInput) {
+      bgColourRow.hexInput.value = sharedBgHex || '';
+    }
+    bgColourRow.hexInput.placeholder = bgMixed ? 'Mixed' : (sharedBg === 'image' ? 'image / gradient' : '');
+    bgColourRow.colorInput.value = sharedBgHex || '#ffffff';
+    if (bgMixed) {
+      bgColourRow.swatch.style.backgroundColor = '';
+      delete bgColourRow.swatch.dataset.image;
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'image') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.image = 'true';
+      delete bgColourRow.swatch.dataset.transparent;
+    } else if (sharedBg === 'transparent') {
+      bgColourRow.swatch.style.backgroundColor = '';
+      bgColourRow.swatch.dataset.transparent = 'true';
+      delete bgColourRow.swatch.dataset.image;
+    } else {
+      bgColourRow.swatch.style.backgroundColor = sharedBgHex;
+      delete bgColourRow.swatch.dataset.transparent;
+      delete bgColourRow.swatch.dataset.image;
+    }
+  }
+
   function populateFontSize(el, { forceInput = false } = {}) {
     const px = Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX;
     if (forceInput || document.activeElement !== inspectorInputs.fontSize) {
       inspectorInputs.fontSize.value = String(px);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.fontSize.placeholder = '';
+  }
+
+  // v2.18 — font size only participates in multi-select from text-bearing
+  // members (writes skip non-text members too; see commitFontSizeMulti).
+  // With no text-bearing member in the set the field just goes blank —
+  // there's nothing to show shared-or-Mixed for.
+  function populateFontSizeMulti(members) {
+    const sizes = members
+      .filter(isTextBearing)
+      .map((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) || FONT_SIZE_MIN_PX);
+    const { shared, mixed } = computeSharedValue(sizes);
+    if (document.activeElement !== inspectorInputs.fontSize) {
+      inspectorInputs.fontSize.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.fontSize.placeholder = mixed ? 'Mixed' : '';
   }
 
   // Typography seg-state (ink-glass 3b). Computed font-weight normalises
@@ -1636,7 +1987,96 @@
     if (document.activeElement !== inspectorInputs.opacity) {
       inspectorInputs.opacity.value = String(pct);
     }
+    // v2.18 code review (suggestion) — clear any 'Mixed' placeholder left
+    // over from a prior multi-selection.
+    inspectorInputs.opacity.placeholder = '';
     opacitySlider.value = String(Math.max(0, Math.min(100, pct)));
+  }
+
+  // v2.18 — opacity applies to every member unconditionally (no text-
+  // bearing gate). Per the brief, the slider thumb tracks the PRIMARY
+  // (state.selected) value when the set disagrees, rather than an
+  // arbitrary member or a computed average.
+  function populateOpacityMulti(members) {
+    const pcts = members.map((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      return Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+    });
+    const { shared, mixed } = computeSharedValue(pcts);
+    if (document.activeElement !== inspectorInputs.opacity) {
+      inspectorInputs.opacity.value = shared != null ? String(shared) : '';
+    }
+    inspectorInputs.opacity.placeholder = mixed ? 'Mixed' : '';
+    const primaryRaw = state.selected ? parseFloat(getComputedStyle(state.selected).opacity) : NaN;
+    const primaryPct = Math.round((Number.isFinite(primaryRaw) ? primaryRaw : 1) * 100);
+    opacitySlider.value = String(Math.max(0, Math.min(100, shared != null ? shared : primaryPct)));
+  }
+
+  // v2.18 — multi-selection inspector content. Geometry rows are hidden
+  // purely by the [data-multi="true"] CSS gate (20-dom-css.js) since they
+  // never carry inline display styles to begin with; weight/align and the
+  // typography dividers DO get inline-toggled by populateInspector() for a
+  // single text selection, so this path must explicitly reset them on
+  // every call — CSS alone can't win against a stale inline style left
+  // over from switching out of a single selection.
+  function populateInspectorMulti(members) {
+    inspectorTitle.textContent = `${members.length} elements`;
+    updateActionRowGating(true);
+    for (const k of ['x', 'y', 'w', 'h']) {
+      if (document.activeElement !== inspectorInputs[k]) inspectorInputs[k].value = '';
+    }
+    fontSizeRow.style.display = '';
+    weightRow.row.style.display = 'none';
+    alignRow.row.style.display = 'none';
+    typographyDividerTop.style.display = 'none';
+    typographyDividerBottom.style.display = 'none';
+    textColourRow.row.style.display = '';
+    populateFontSizeMulti(members);
+    populateColoursMulti(members);
+    populateOpacityMulti(members);
+    populateAnnotation(null);
+  }
+
+  // v2.18 — typed (absolute) font-size commit for a multi-selection: every
+  // text-bearing member ends at the SAME value (unlike the ± steppers,
+  // which step each member relatively). Non-text members are skipped
+  // silently. One txn covers every member that actually changes; the
+  // no-op guard is per-member so an already-matching member doesn't churn
+  // its style or drag in a spurious history entry.
+  function commitFontSizeMulti(next) {
+    const clamped = Math.max(FONT_SIZE_MIN_PX, next);
+    const members = getSelectedElements().filter(isTextBearing);
+    const changed = members.filter((el) => Math.round(parseFloat(getComputedStyle(el).fontSize)) !== Math.round(clamped));
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.fontSize = `${clamped}px`;
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
+  }
+
+  // v2.18 — typed (absolute) opacity commit for a multi-selection: every
+  // member ends at the same value (no isTextBearing gate — see
+  // populateOpacityMulti). Same one-txn / per-member-no-op shape as
+  // commitFontSizeMulti above.
+  function commitOpacityMulti(next) {
+    const pct = Math.max(0, Math.min(100, next));
+    const members = getSelectedElements();
+    const changed = members.filter((el) => {
+      const raw = parseFloat(getComputedStyle(el).opacity);
+      const currentPct = Math.round((Number.isFinite(raw) ? raw : 1) * 100);
+      return Math.round(pct) !== currentPct;
+    });
+    if (!changed.length) return;
+    const ctx = startInspectorTxn();
+    for (const el of changed) {
+      touchElement(el);
+      el.style.opacity = String(pct / 100);
+    }
+    endInspectorTxn(ctx);
+    refreshSelection();
   }
 
   function commitInspectorInput(prop, raw, targetEl) {
@@ -1646,11 +2086,16 @@
     if (!el) return;
     const next = parseFloat(raw);
     if (!Number.isFinite(next)) {
-      // Garbage input — restore the readout from the live element.
-      populateInspector(el);
+      // Garbage input — restore the readout from the live element(s).
+      if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+      else populateInspector(el);
       return;
     }
     if (prop === 'fontSize') {
+      if (hasMultiSelection()) {
+        commitFontSizeMulti(next);
+        return;
+      }
       if (!isTextBearing(el)) return;
       const current = parseFloat(getComputedStyle(el).fontSize);
       const clamped = Math.max(FONT_SIZE_MIN_PX, next);
@@ -1663,6 +2108,10 @@
       return;
     }
     if (prop === 'opacity') {
+      if (hasMultiSelection()) {
+        commitOpacityMulti(next);
+        return;
+      }
       const pct = Math.max(0, Math.min(100, next));
       // `|| 1` would treat a legitimate 0 as falsy and default to 100,
       // breaking the no-op guard after a clamp-to-zero. Use isFinite.
@@ -1676,6 +2125,9 @@
       refreshSelection();
       return;
     }
+    // x/y/w/h stay single-element only — their rows are hidden in multi
+    // mode, but the guard is defensive in case a commit ever reaches here
+    // (e.g. a stale focus-time target) with a multi-selection now active.
     // Compare against the live offset; abort no-op commits so blur
     // cycling doesn't pollute history.
     const offsetMap = { x: 'offsetLeft', y: 'offsetTop', w: 'offsetWidth', h: 'offsetHeight' };
@@ -1711,13 +2163,18 @@
   // is a v2.x ROADMAP item).
   // ===========================================================================
   function refreshInspector() {
-    const visible = getSelectedElements().length === 1 && !!state.selected;
+    // v2.18 — deliberate behaviour change: the dock is visible for ANY
+    // non-empty selection, not just exactly one. `data-multi` drives the
+    // reduced-surface CSS gate (20-dom-css.js) for a set of 2+.
+    const members = getSelectedElements();
+    const visible = members.length >= 1;
     // Ink-glass 3b/5b: selection drives the dock fold, then the shared
     // seam refresh reconciles the toolbar corner morph, the menu's
     // bottom radius, and inspector suppression in one place — the three
     // must never disagree, or a seam breaks (squared bar over no panel,
     // or panel under a capsule).
     inspectorDock.dataset.visible = visible ? 'true' : 'false';
+    inspectorDock.dataset.multi = members.length > 1 ? 'true' : 'false';
     refreshStackSeams();
     // Legacy mirror — no CSS keys off this any more, but it's a stable
     // hook existing tests/tooling query.
@@ -1745,7 +2202,11 @@
   // hysteresis prevents placement oscillation as layout settles.
   function positionInspectorStack() {
     const visible = inspectorDock.dataset.visible === 'true';
-    if (!visible || state.overviewMode || getSelectedElements().length !== 1) {
+    // v2.18 — was `length !== 1`; the dock now also opens for a
+    // multi-selection, and getLiveSelectionRect() (85-adaptive-fade.js)
+    // already aggregates every selected member's rect into one bounding
+    // box, so the avoidance math below needs no other change.
+    if (!visible || state.overviewMode || !getSelectedElements().length) {
       inspector.dataset.avoidance = 'clear';
       inspector.dataset.revealed = 'false';
       return;

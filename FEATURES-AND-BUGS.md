@@ -46,6 +46,22 @@ rules out concurrency. Add a `has()` re-check inside the loop before invoking
 each hook so the invariant is structural rather than incidental, before any
 second settle-window control is introduced.
 
+### Font-size ± steppers and the ↑/↓ keyboard nudge disagree on multi-selection
+
+- **Status:** open (behaviour inconsistency; candidate follow-up)
+- **Raised:** 2026-07-26, code review of v2.18 (multi-select inspector)
+
+v2.18 made the inspector's font ± stepper buttons (`nudgeFontSizeWithHistory`,
+`src/editor/60-modes-overview-keyboard.js`) operate on every text-bearing
+member of a multi-selection, each stepped relatively from its own size. The
+keyboard ArrowUp/ArrowDown font nudge (same file, ~line 1041) still bails
+outright on `hasMultiSelection()` and does nothing. Two paths that read as
+the same feature (step the selected text size by one) now disagree on
+whether a multi-selection is a valid target. Worth reconciling — most likely
+by extending the keyboard path to the same per-member relative-step logic
+the ± buttons now use — but out of scope for the v2.18 brief, which only
+specified the inspector buttons.
+
 ## Open — bugs
 
 ### Content-edit undo can strand a later entry on a recreated child node
@@ -75,6 +91,24 @@ index path at apply time, or replaying content restores with node-level
 patches instead of a whole-subtree write. Whichever is chosen, the
 regression test is the three-step sequence above with an assertion that the
 child's redo actually lands on the connected node.
+
+### Drag and Align can stretch a right-anchored, auto-width absolutely-positioned element
+
+- **Status:** open (pre-existing in drag; inherited by Align, v2.19)
+- **Raised:** 2026-07-26, code review during v2.19 (align-elements)
+
+Both drag's `onMouseMove` (`src/editor/80-drag-resize-unlock.js`) and the new
+Align feature's `applyAlignPlan` (`src/editor/40-helpers-selection-inspector.js`)
+move an absolutely-positioned element by writing `style.left`/`style.top`
+only. For an element authored with `right: Npx; left: auto; width: auto`,
+adding an explicit `left` leaves `left` + `right` + auto-`width` all
+constrained at once, and the browser solves `width` to fill the gap instead
+of preserving it — the element's position lands correctly but its box
+stretches or shrinks. No fixture in `fixtures/foreign-deck.html` currently
+exercises this shape, so it hasn't shown up in any spec. A fix would need to
+pin `width` (and clear `right`) as part of the same write whenever `right` is
+already a non-auto inline/computed value — worth doing for drag and Align
+together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 

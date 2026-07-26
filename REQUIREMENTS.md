@@ -68,7 +68,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - Unlocking protects affected siblings and layout containers so nearby content does not shift unexpectedly.
 - Unlock protection includes direct children of the slide/page root: their siblings are pinned without writing inline styles on the root itself.
 - Unlock conversion and the drag/resize operation are undoable.
-- Resize handles, the inspector, and dimension bubble are hidden while multiple elements are selected.
+- Resize handles and the dimension bubble are hidden while multiple elements are selected. The inspector stays open with a reduced multi-select surface (v2.18): font size, opacity, colour, bring-to-front, align, and Reset apply to every member; Duplicate/Delete render disabled; geometry and annotation rows hide.
 
 ### Inspector
 
@@ -168,13 +168,13 @@ fully click-through to the slide.
 - Element paste/duplicate is undoable and redoable as a structural insert.
 - Element delete is undoable and redoable as a structural removal.
 - Element clipboard state is not integrated with the system clipboard and does not persist across reloads.
-- Multi-selected elements do not copy, paste, duplicate, delete, resize, or receive inspector edits as a group in the first multi-select release.
+- Multi-selected elements do not copy, paste, duplicate, delete, or resize as a group. As of v2.18/v2.19 they DO receive group inspector edits (font size, opacity, colour, bring-to-front, align, Reset), one history entry per gesture.
 
 ### Undo and Redo
 
 - Cmd/Ctrl+Z undoes the last change.
 - Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y redoes.
-- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit, flow-unlock group reset, annotation save/delete, text edit, element insert/delete, slide reorder, slide delete.
+- Atomic actions are one history entry: drag, multi-selection drag, resize, font-size nudge, inspector commit (single or multi-member), bring-to-front (including ancestor raises), align, flow-unlock group reset, annotation save/delete, text edit, element insert/delete, slide reorder, slide delete.
 - History persists for the current page session only.
 - History must support at least 50 entries.
 

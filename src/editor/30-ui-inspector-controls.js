@@ -116,6 +116,46 @@
       '<polygon points="12 2 3 7 12 12 21 7 12 2" />' +
       '<polyline points="3 12 12 17 21 12" />' +
       '</svg>',
+    // v2.19 — object-alignment glyphs (bar + two boxes), distinct from the
+    // text-align triplet above: those set CSS text-align on one element,
+    // these move every selected element to an edge/midline of the
+    // selection bounding box.
+    alignObjLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="4" y1="2" x2="4" y2="22" />' +
+      '<rect x="7" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="7" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjCenterH:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="12" y1="2" x2="12" y2="22" />' +
+      '<rect x="5" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="8" height="6" rx="1" />' +
+      '</svg>',
+    alignObjRight:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="20" y1="2" x2="20" y2="22" />' +
+      '<rect x="3" y="5" width="14" height="6" rx="1" />' +
+      '<rect x="8" y="14" width="9" height="6" rx="1" />' +
+      '</svg>',
+    alignObjTop:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="4" x2="22" y2="4" />' +
+      '<rect x="5" y="7" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="7" width="6" height="9" rx="1" />' +
+      '</svg>',
+    alignObjMiddleV:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="12" x2="22" y2="12" />' +
+      '<rect x="5" y="5" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="8" rx="1" />' +
+      '</svg>',
+    alignObjBottom:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="2" y1="20" x2="22" y2="20" />' +
+      '<rect x="5" y="3" width="6" height="14" rx="1" />' +
+      '<rect x="14" y="8" width="6" height="9" rx="1" />' +
+      '</svg>',
   };
 
   const toolbar = document.createElement('div');
@@ -260,6 +300,10 @@
   const inspectorDock = document.createElement('div');
   inspectorDock.className = 'wfpe-inspector-dock';
   inspectorDock.dataset.visible = 'false';
+  // v2.18 — set by refreshInspector() from getSelectedElements().length > 1.
+  // Gates the reduced multi-selection control surface in CSS (geometry
+  // rows) and in the populate/gating JS below (typography, action row).
+  inspectorDock.dataset.multi = 'false';
   const inspectorDockInner = document.createElement('div');
   inspectorDockInner.className = 'wfpe-inspector-dock-inner';
   inspectorDock.appendChild(inspectorDockInner);
@@ -441,6 +485,23 @@
     { action: 'text-align', value: 'right', iconKey: 'alignRight', hint: 'Align right' },
   ]);
 
+  // v2.19 — Align (object alignment) row: six one-shot actions against the
+  // SELECTION bounding box, multi-selection only. Named `alignElementsRow`
+  // (not `alignRow`, already taken by the text-align triplet above) and
+  // built on the same makeSegRow chrome, but buttons expose their mode as
+  // `dataset.align` — a plain action identity, not a persistent toggle
+  // state like weight/text-align, so `dataset.active` is left permanently
+  // 'false' (no highlighted state to track for a momentary action).
+  const alignElementsRow = makeSegRow('align-elements', 'Align', [
+    { action: 'align-elements', value: 'left', iconKey: 'alignObjLeft', hint: 'Align left' },
+    { action: 'align-elements', value: 'center-h', iconKey: 'alignObjCenterH', hint: 'Align center (horizontal)' },
+    { action: 'align-elements', value: 'right', iconKey: 'alignObjRight', hint: 'Align right' },
+    { action: 'align-elements', value: 'top', iconKey: 'alignObjTop', hint: 'Align top' },
+    { action: 'align-elements', value: 'middle-v', iconKey: 'alignObjMiddleV', hint: 'Align middle (vertical)' },
+    { action: 'align-elements', value: 'bottom', iconKey: 'alignObjBottom', hint: 'Align bottom' },
+  ]);
+  for (const b of alignElementsRow.buttons) b.dataset.align = b.dataset.wfpeValue;
+
   // Dividers bracket the typography section (Size ▸ | Font/Weight/Align | ▸
   // colours). They hide with the section for non-text selections so the
   // panel doesn't show a doubled rule.
@@ -452,8 +513,19 @@
   const typographyDividerTop = makeInspectorDivider();
   const typographyDividerBottom = makeInspectorDivider();
 
-  inspectorBody.appendChild(makeInspectorRow('Position', [fieldX, fieldY]));
-  inspectorBody.appendChild(makeInspectorRow('Size', [fieldW, fieldH]));
+  // v2.18 — data-wfpe-row identifies these for the [data-multi="true"] CSS
+  // gate (20-dom-css.js): per-element X/Y/W/H is ambiguous for a set, so
+  // they're hidden outright rather than showing shared-or-Mixed values.
+  const positionRow = makeInspectorRow('Position', [fieldX, fieldY]);
+  positionRow.dataset.wfpeRow = 'position';
+  inspectorBody.appendChild(positionRow);
+  const sizeRow = makeInspectorRow('Size', [fieldW, fieldH]);
+  sizeRow.dataset.wfpeRow = 'size';
+  inspectorBody.appendChild(sizeRow);
+  // v2.19 — Align sits where Position/Size would be for a single selection:
+  // hidden by default, shown only under [data-multi="true"] (20-dom-css.js
+  // CSS gate, no inline JS toggle — same convention as position/size).
+  inspectorBody.appendChild(alignElementsRow.row);
   inspectorBody.appendChild(typographyDividerTop);
   inspectorBody.appendChild(fontSizeRow);
   inspectorBody.appendChild(weightRow.row);
@@ -949,11 +1021,19 @@
         input.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
-        // Revert by repopulating from the live element, then blur. The
+        // Revert by repopulating from the live element(s), then blur. The
         // revertingInput flag suppresses the blur's commit so the no-op
         // path stays explicit rather than implicit-via-equality.
+        //
+        // v2.18 code review (W3) — was an unconditional
+        // populateInspector(state.selected), which repaints the SINGLE-
+        // selection surface (Duplicate/Delete enabled, geometry rows
+        // shown) over a live multi-selection until the next tracking
+        // tick quietly repairs it. Route through the same multi/single
+        // split every other repopulate call site uses.
         revertingInput = input;
-        populateInspector(state.selected);
+        if (hasMultiSelection()) populateInspectorMulti(getSelectedElements());
+        else populateInspector(state.selected);
         input.blur();
       }
     });
@@ -1044,15 +1124,22 @@
   // entry FIRST, so it can never silently absorb an unrelated change or
   // swallow another beginTxn() call's own options (e.g. captureHtml).
   const OPACITY_KEYBOARD_SETTLE_MS = 380;
-  let opacitySliderTarget = null;
+  // v2.18 code review (C1) — was a single `opacitySliderTarget` element, so
+  // a slider DRAG under a multi-selection wrote only state.selected: the
+  // dock would then repopulate "Mixed" for the other member(s) right after
+  // a gesture that visually claimed to edit the whole set. Generalised to
+  // the member array captured at session-open; the typed-value path
+  // (commitOpacityMulti, 40-helpers-selection-inspector.js) was already
+  // correct — this brings the slider's live-drag path to the same scope.
+  let opacitySliderMembers = null;
   let opacitySliderRestoreCtx = null;
   let opacitySliderOwnedTxn = null; // identity guard for the deferred keyboard close, below
   let opacitySliderKeyboardSession = false;
   let opacitySliderSettleTimer = null;
-  function beginOpacitySession(el, { keyboard = false } = {}) {
-    opacitySliderTarget = el;
+  function beginOpacitySession(members, { keyboard = false } = {}) {
+    opacitySliderMembers = members;
     opacitySliderRestoreCtx = startInspectorTxn();
-    touchElement(el);
+    for (const el of members) touchElement(el);
     opacitySliderOwnedTxn = state.txn;
     opacitySliderKeyboardSession = keyboard;
   }
@@ -1064,8 +1151,8 @@
     unregisterPendingTxnFlush(closeOpacitySession);
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (!opacitySliderTarget) return;
-    opacitySliderTarget = null;
+    if (!opacitySliderMembers) return;
+    opacitySliderMembers = null;
     opacitySliderKeyboardSession = false;
     const owned = opacitySliderOwnedTxn;
     opacitySliderOwnedTxn = null;
@@ -1078,38 +1165,41 @@
     liveEditEnd();
   }
   opacitySlider.addEventListener('mousedown', () => {
-    const el = state.selected;
-    if (!el) return;
+    const members = getSelectedElements();
+    if (!members.length) return;
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    beginOpacitySession(el);
+    beginOpacitySession(members);
   });
   opacitySlider.addEventListener('input', () => {
     clearTimeout(opacitySliderSettleTimer);
     opacitySliderSettleTimer = null;
-    if (opacitySliderTarget && opacitySliderTarget !== state.selected) {
+    const currentMembers = getSelectedElements();
+    if (opacitySliderMembers && !selectionArraysEqual(opacitySliderMembers, currentMembers)) {
       // An earlier session — most often an orphaned mouse drag whose
-      // mouseup never reached us (button released outside the window) —
-      // never closed before the selection moved on. Close it out for
-      // real (a harmless no-op if it captured no change) instead of
-      // silently continuing to apply values to the stale element.
+      // mouseup never reached us (button released outside the window), or
+      // a selection change mid-drag — never closed before membership
+      // moved on. Close it out for real (a harmless no-op if it captured
+      // no change) instead of silently continuing to apply values to a
+      // stale member set.
       closeOpacitySession();
     }
-    if (!opacitySliderTarget) {
-      if (!state.selected) return;
-      beginOpacitySession(state.selected, { keyboard: true });
+    if (!opacitySliderMembers) {
+      if (!currentMembers.length) return;
+      beginOpacitySession(currentMembers, { keyboard: true });
     }
-    const el = opacitySliderTarget;
+    const members = opacitySliderMembers;
     const pct = Math.max(0, Math.min(100, parseFloat(opacitySlider.value)));
-    el.style.opacity = String(pct / 100);
-    populateOpacity(el);
+    for (const el of members) el.style.opacity = String(pct / 100);
+    if (members.length > 1) populateOpacityMulti(members);
+    else populateOpacity(members[0]);
     // v2.12 — bounded control keeps its slider; each tick refreshes the
     // tag/fade, and the restore is anchored to true drag-end below so a
     // mid-drag pause can't flicker the chrome back in.
     liveEditUpdate(`${Math.round(pct)} %`);
   });
   const endOpacityDrag = () => {
-    if (!opacitySliderTarget) return;
+    if (!opacitySliderMembers) return;
     if (opacitySliderKeyboardSession) {
       clearTimeout(opacitySliderSettleTimer);
       opacitySliderSettleTimer = setTimeout(closeOpacitySession, OPACITY_KEYBOARD_SETTLE_MS);
@@ -1153,11 +1243,26 @@
     // handler — letting the browser open the picker on a real user click
     // is more reliable than calling .click() programmatically.
     colorInput.addEventListener('input', () => {
+      const norm = parseHexInput(colorInput.value);
+      if (!norm) return;
+      // v2.18 — colour swatches apply to every selected member, no
+      // isTextBearing gate (unlike font size): setting `color` on a
+      // non-text element is inert, not wrong, so it isn't worth skipping.
+      if (hasMultiSelection()) {
+        const members = getSelectedElements();
+        if (!pickerSession[target].open) {
+          pickerSession[target].open = true;
+          pickerSession[target].inlineSpan = null;
+          pickerSession[target].restoreCtx = startInspectorTxn();
+          for (const el of members) touchElement(el);
+        }
+        for (const el of members) applyColorToElement(el, target, norm);
+        populateColoursMulti(members);
+        return;
+      }
       const el = state.selected;
       if (!el) return;
       if (target === 'text' && !isTextBearing(el)) return;
-      const norm = parseHexInput(colorInput.value);
-      if (!norm) return;
       const textRange = target === 'text' && state.editingText && state.editingText.el === el
         ? getTextColourRange(el)
         : null;
@@ -1198,8 +1303,11 @@
         hexInput.blur();
       } else if (e.key === 'Escape') {
         e.preventDefault();
+        // v2.18 code review (W3) — same multi/single split as the numeric
+        // fields' Escape handler above.
         revertingInput = hexInput;
-        populateColours(state.selected);
+        if (hasMultiSelection()) populateColoursMulti(getSelectedElements());
+        else populateColours(state.selected);
         hexInput.blur();
       }
     });
@@ -1217,10 +1325,22 @@
     if (clearBtn) {
       clearBtn.addEventListener('click', (e) => {
         e.preventDefault();
+        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
+        if (hasMultiSelection()) {
+          const members = getSelectedElements().filter((el) => !!el.style[cssProp]);
+          if (!members.length) return;
+          const ctx = startInspectorTxn();
+          for (const el of members) {
+            touchElement(el);
+            el.style[cssProp] = '';
+          }
+          endInspectorTxn(ctx);
+          populateColoursMulti(getSelectedElements());
+          return;
+        }
         const el = state.selected;
         if (!el) return;
         // Only meaningful if there's an inline colour to clear.
-        const cssProp = target === 'text' ? 'color' : 'backgroundColor';
         if (!el.style[cssProp]) return;
         const ctx = startInspectorTxn();
         touchElement(el);
@@ -1277,20 +1397,28 @@
   // edits are retained; any container they still depend on stays pinned.
   // No original/group record means the editor never touched the element, so
   // an idle click cannot mutate it or push a no-op entry.
+  // v2.18 — getSelectedElements() covers both single and multi selection
+  // (it returns [state.selected] for a single selection), so one loop
+  // inside one txn serves both: every touched member restores together
+  // and undoes together. The no-op guard stays per-member (skip anything
+  // the editor never touched) via the `restorable` filter below.
   resetBtn.addEventListener('click', (e) => {
     e.preventDefault();
-    const el = state.selected;
-    if (!el) return;
-    const unlockGroup = getActiveFlowUnlockGroup(el);
-    if (!unlockGroup && !state.originalStyles.has(el)) return; // never edited — already original
+    const targets = getSelectedElements();
+    if (!targets.length) return;
+    const restorable = targets.filter((el) => getActiveFlowUnlockGroup(el) || state.originalStyles.has(el));
+    if (!restorable.length) return; // none of the targets were ever edited
     const ctx = startInspectorTxn();
-    if (unlockGroup) {
-      restoreFlowUnlockGroup(unlockGroup, el);
-    } else {
-      const original = state.originalStyles.get(el);
-      touchElement(el);
-      if (original === null) el.removeAttribute('style');
-      else el.setAttribute('style', original);
+    for (const el of restorable) {
+      const unlockGroup = getActiveFlowUnlockGroup(el);
+      if (unlockGroup) {
+        restoreFlowUnlockGroup(unlockGroup, el);
+      } else {
+        const original = state.originalStyles.get(el);
+        touchElement(el);
+        if (original === null) el.removeAttribute('style');
+        else el.setAttribute('style', original);
+      }
     }
     endInspectorTxn(ctx);
     refreshSelection();
@@ -1319,6 +1447,21 @@
     endInspectorTxn(ctx);
     refreshSelection();
   });
+  // v2.19 — Align: one click = one plan = one txn (applyAlignPlan owns the
+  // guard, the unlock, and the txn; see 40-helpers-selection-inspector.js).
+  // Row is CSS-gated to multi mode, but the length guard stays defensive
+  // (mirrors the reset/front handlers) in case a stale click ever lands
+  // outside it.
+  for (const b of alignElementsRow.buttons) {
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      const members = getSelectedElements();
+      if (members.length < 2) return;
+      const plan = computeAlignPlan(b.dataset.align, members);
+      if (!applyAlignPlan(plan)) return;
+      refreshSelection();
+    });
+  }
   applyModeFeatureGating();
   reimportHandoffAnnotations();
   refreshExportUi();

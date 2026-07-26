@@ -573,7 +573,15 @@ test.describe('v2.12 — adaptive inspector fade', () => {
     expect(s.bubbleDisplay).toBe('block');
   });
 
-  test('multi-select drag shows no tag and never fades (dock is closed)', async ({ page }) => {
+  // v2.18 — deliberate contract change (fourth existing-test edit,
+  // reviewed): the inspector dock now shows (with a reduced surface) for
+  // a multi-selection instead of hiding, so this drag — which keeps
+  // .s1 .headline clear of the (right-docked) panel throughout — no longer
+  // has a closed dock to point at. The dock IS open, but the fade gate is
+  // still purely overlap-driven: no tag either way (multi selections never
+  // show the coral value tag; see liveEditUpdate), and no fade because the
+  // dragged selection's box never intersects the panel's rect.
+  test('multi-select drag shows no tag and does not fade while clear of the dock (dock is open)', async ({ page }) => {
     await loadHarness(page);
     await page.keyboard.press('e');
     await selectByMouse(page, '.s1 .headline');
@@ -588,7 +596,7 @@ test.describe('v2.12 — adaptive inspector fade', () => {
     await page.mouse.move(start.x + 200, start.y + 10, { steps: 5 });
 
     const s = await fadeState(page, null);
-    expect(s.dockVisible).toBe('false');
+    expect(s.dockVisible).toBe('true');
     expect(s.faded).toBe(false);
     expect(s.tagShown).toBe(false);
     await page.mouse.up();
