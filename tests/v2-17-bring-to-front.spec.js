@@ -380,3 +380,299 @@ test.describe('v2.17 — Front (bring to front)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// v2.17.1 — the shipped v2.17 computed the required z from the target's
+// SIBLINGS. z-order does not compete among siblings: it competes inside the
+// nearest stacking-context ancestor, and every intermediate stacking context
+// caps what a descendant's z-index can reach. Three shapes from real decks
+// (reproduced with a standalone probe against the shipped editor.js) made
+// Front visibly do nothing:
+//
+//   B — the competitor lives in a LATER container carrying z-index: 5.
+//   C — the target's ancestor has a transform (a stacking-context cap; WFP
+//       entrance animations do this constantly), so no z on the target can
+//       escape it.
+//   D — the competitor is a non-sibling elsewhere in the slide with z-index: 2.
+//
+// Case A (plain overlapping siblings) is the baseline the describe block
+// above already covers and must keep passing unchanged.
+// ---------------------------------------------------------------------------
+test.describe('v2.17.1 — cross-container stacking', () => {
+  // Ported verbatim from the repro probe. In every case .pA is the target and
+  // .pB the competitor, .pB covers .pA's centre, and .pA's top-left corner is
+  // left clear so a real pointer click can select it.
+  const CASE_B = `
+    <div class="wrapA" style="position:absolute;left:300px;top:300px;">
+      <div class="pA" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#c33"></div>
+    </div>
+    <div class="wrapB" style="position:absolute;left:340px;top:330px;z-index:5;">
+      <div class="pB" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#33c"></div>
+    </div>`;
+
+  const CASE_C = `
+    <div class="wrapA" style="position:absolute;left:300px;top:300px;transform:translateZ(0);">
+      <div class="pA" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#c33"></div>
+    </div>
+    <div class="pB" style="position:absolute;left:340px;top:330px;width:200px;height:100px;background:#33c"></div>`;
+
+  const CASE_D = `
+    <div class="wrapA" style="position:absolute;left:300px;top:300px;">
+      <div class="pA" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#c33"></div>
+    </div>
+    <div class="pB" style="position:absolute;left:340px;top:330px;width:200px;height:100px;background:#33c;z-index:2"></div>`;
+
+  async function buildCase(page, markup) {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('e');
+    await page.evaluate(
+      (html) => document.querySelector('.slide.active').insertAdjacentHTML('beforeend', html),
+      markup,
+    );
+    // The competitor covers the centre; the target's top-left corner is clear.
+    await page.locator('.slide.active .pA').click({ position: { x: 8, y: 8 } });
+    await expect(page.locator(`${ROOT} .wfpe-inspector`)).toHaveAttribute('data-visible', 'true');
+    // .pA overlaps the fixture's own card, so "something got selected" is not
+    // enough — pin the selection to .pA via the ring's box before the Front
+    // click, or a mis-selected element turns into a confusing assertion
+    // failure three lines later.
+    await expect.poll(() => page.evaluate((rootSel) => {
+      const ring = document.querySelector(`${rootSel} .wfpe-selection-ring`).getBoundingClientRect();
+      const pa = document.querySelector('.slide.active .pA').getBoundingClientRect();
+      return Math.abs(ring.left - pa.left) < 4 && Math.abs(ring.top - pa.top) < 4
+        && Math.abs(ring.width - pa.width) < 8 && Math.abs(ring.height - pa.height) < 8;
+    }, ROOT)).toBe(true);
+  }
+
+  function overlapPoint(page) {
+    return page.evaluate(() => {
+      const ra = document.querySelector('.slide.active .pA').getBoundingClientRect();
+      const rb = document.querySelector('.slide.active .pB').getBoundingClientRect();
+      return {
+        x: (Math.max(ra.left, rb.left) + Math.min(ra.right, rb.right)) / 2,
+        y: (Math.max(ra.top, rb.top) + Math.min(ra.bottom, rb.bottom)) / 2,
+      };
+    });
+  }
+
+  function paintsOnTop(page, pt, selector) {
+    return page.evaluate(
+      ([p, sel]) => document.elementFromPoint(p.x, p.y)?.closest(sel) != null,
+      [pt, selector],
+    );
+  }
+
+  test('B — out-stacks a competitor nested in a later container with z-index: 5', async ({ page }) => {
+    await buildCase(page, CASE_B);
+    const pt = await overlapPoint(page);
+    expect(await paintsOnTop(page, pt, '.pB')).toBe(true);
+
+    await page.locator(FRONT_BTN).click();
+
+    expect(await paintsOnTop(page, pt, '.pA')).toBe(true);
+    // The container's z-index, not the (auto) competitor's own, is what has
+    // to be beaten — a sibling-scoped plan only ever asked for 1.
+    expect(await effectiveZ(page, '.slide.active .pA')).toBeGreaterThan(5);
+  });
+
+  test('C — climbs to the capping ancestor when a transform traps the z-index', async ({ page }) => {
+    await buildCase(page, CASE_C);
+    const pt = await overlapPoint(page);
+    expect(await paintsOnTop(page, pt, '.pB')).toBe(true);
+
+    const before = await page.evaluate(() => ({
+      pA: document.querySelector('.slide.active .pA').getAttribute('style'),
+      wrapA: document.querySelector('.slide.active .wrapA').getAttribute('style'),
+    }));
+
+    await page.locator(FRONT_BTN).click();
+
+    expect(await paintsOnTop(page, pt, '.pA')).toBe(true);
+    // The transformed ancestor is a stacking context, so it had to be raised
+    // too — a z on the target alone can never escape it.
+    expect(await page.evaluate(
+      () => document.querySelector('.slide.active .wrapA').style.zIndex,
+    )).not.toBe('');
+
+    // Both writes landed in ONE transaction: a single undo unwinds the target
+    // AND the ancestor.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await page.evaluate(() => ({
+      pA: document.querySelector('.slide.active .pA').getAttribute('style'),
+      wrapA: document.querySelector('.slide.active .wrapA').getAttribute('style'),
+    }))).toEqual(before);
+  });
+
+  test('D — out-stacks a non-sibling flat competitor with z-index: 2', async ({ page }) => {
+    await buildCase(page, CASE_D);
+    const pt = await overlapPoint(page);
+    expect(await paintsOnTop(page, pt, '.pB')).toBe(true);
+
+    await page.locator(FRONT_BTN).click();
+
+    expect(await paintsOnTop(page, pt, '.pA')).toBe(true);
+    expect(await effectiveZ(page, '.slide.active .pA')).toBeGreaterThan(2);
+  });
+
+  // The no-op guard must be PAINT truth, not a z-index comparison. Here the
+  // target already carries z-index: 30 — far above anything a plan would ask
+  // for — yet it is buried, because its transformed ancestor caps it. A
+  // z-comparison guard returns early and does nothing; the paint-truth guard
+  // has to see the occlusion and climb.
+  test('the no-op guard is paint truth, not z-index comparison', async ({ page }) => {
+    await buildCase(page, CASE_C);
+    await page.evaluate(() => { document.querySelector('.slide.active .pA').style.zIndex = '30'; });
+    const pt = await overlapPoint(page);
+    expect(await paintsOnTop(page, pt, '.pB')).toBe(true);
+
+    await page.locator(FRONT_BTN).click();
+
+    expect(await paintsOnTop(page, pt, '.pA')).toBe(true);
+    expect(await page.evaluate(
+      () => document.querySelector('.slide.active .wrapA').style.zIndex,
+    )).not.toBe('');
+    // No demotion: an element authored above the plan value keeps its own z.
+    expect(await page.evaluate(
+      () => document.querySelector('.slide.active .pA').style.zIndex,
+    )).toBe('30');
+  });
+
+  test('a second click after a climb writes nothing and pushes no history entry', async ({ page }) => {
+    await buildCase(page, CASE_C);
+    const readStyles = () => page.evaluate(() => ({
+      pA: document.querySelector('.slide.active .pA').getAttribute('style'),
+      wrapA: document.querySelector('.slide.active .wrapA').getAttribute('style'),
+    }));
+
+    const before = await readStyles();
+    await page.locator(FRONT_BTN).click();
+    const afterFirst = await readStyles();
+    expect(afterFirst).not.toEqual(before);
+
+    await page.locator(FRONT_BTN).click();
+    expect(await readStyles()).toEqual(afterFirst);
+
+    // One undo unwinds the whole first click — proof the second pushed nothing.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readStyles()).toEqual(before);
+  });
+
+  // Review round — the climb may raise ANY ancestor, and "position: relative
+  // costs nothing" (true for the element's own box, and the basis of the
+  // static fix-up on the target) stops being true there: promoting a STATIC
+  // ancestor re-anchors every absolutely-positioned descendant that used to
+  // resolve against a higher containing block, moving real slide content and
+  // baking the move into the export. Stacking-context triggers that are not
+  // also containing-block triggers — opacity < 1 here, plus isolation,
+  // mix-blend-mode, will-change: opacity — are exactly the dangerous set.
+  // Front leaving an occlusion unresolved is far cheaper than a silent
+  // relayout, so the climb must skip such an ancestor.
+  test('the climb never re-anchors content by positioning a static ancestor', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('e');
+    // margin-top gives the wrapper a static position well away from the
+    // slide's origin, so a re-anchor shows up as a large, unmistakable shift.
+    await page.evaluate(() => document.querySelector('.slide.active').insertAdjacentHTML('beforeend', `
+      <div class="fadeWrap" style="opacity:0.9;margin-top:120px;">
+        <div class="pA" style="position:absolute;left:20px;top:20px;width:200px;height:100px;background:#c33"></div>
+      </div>
+      <div class="pB" style="position:absolute;left:60px;top:50px;width:200px;height:100px;background:#33c;z-index:2"></div>`));
+
+    const rectBefore = await page.evaluate(() => {
+      const r = document.querySelector('.slide.active .pA').getBoundingClientRect();
+      return { x: r.x, y: r.y };
+    });
+    await page.locator('.slide.active .pA').click({ position: { x: 8, y: 8 } });
+    await expect(page.locator(`${ROOT} .wfpe-inspector`)).toHaveAttribute('data-visible', 'true');
+
+    await page.locator(FRONT_BTN).click();
+
+    const after = await page.evaluate(() => {
+      const r = document.querySelector('.slide.active .pA').getBoundingClientRect();
+      const wrap = document.querySelector('.slide.active .fadeWrap');
+      return {
+        rect: { x: r.x, y: r.y },
+        wrapPosition: wrap.style.position,
+        wrapZIndex: wrap.style.zIndex,
+      };
+    });
+    expect(after.rect).toEqual(rectBefore);
+    expect(after.wrapPosition).toBe('');
+    expect(after.wrapZIndex).toBe('');
+  });
+
+  // Review round — brief step 6 requires a second click to be a full no-op
+  // "including for multi-target plans". Excluding co-targets and their
+  // descendants is not enough: an ancestor raised by one target's climb is
+  // not a descendant of any target, so it fed back in as a competitor of the
+  // OTHER target and inflated the next plan. Co-targets' ancestors have to be
+  // out of scope too — their z is already accounted for through the chain max
+  // of whatever else lives inside them.
+  test('repeat multi-select clicks stay stable when a co-target sits inside a raised ancestor', async ({ page }) => {
+    await loadDocumentWithEditor(page, 'foreign-deck.html');
+    await page.keyboard.press('e');
+    await page.evaluate(() => document.querySelector('.slide.active').insertAdjacentHTML('beforeend', `
+      <div class="wrapA" style="position:absolute;left:20px;top:20px;width:200px;height:100px;transform:translateZ(0);">
+        <div class="tA" style="position:absolute;left:0;top:0;width:200px;height:100px;background:#c33"></div>
+      </div>
+      <div class="tB" style="position:absolute;left:40px;top:40px;width:200px;height:100px;background:#3c3"></div>
+      <div class="pB" style="position:absolute;left:60px;top:60px;width:200px;height:100px;background:#33c;z-index:2"></div>`));
+
+    await page.locator('.slide.active .tA').click({ position: { x: 8, y: 8 } });
+    await page.locator('.slide.active .tB').click({ position: { x: 8, y: 8 }, modifiers: ['ControlOrMeta'] });
+
+    const readStyles = () => page.evaluate(() => ({
+      tA: document.querySelector('.slide.active .tA').getAttribute('style'),
+      tB: document.querySelector('.slide.active .tB').getAttribute('style'),
+      wrapA: document.querySelector('.slide.active .wrapA').getAttribute('style'),
+    }));
+
+    const before = await readStyles();
+    // The inspector collapses for a multi-selection, so dispatch directly.
+    await page.locator(FRONT_BTN).dispatchEvent('click');
+    const afterFirst = await readStyles();
+    expect(afterFirst).not.toEqual(before);
+
+    await page.locator(FRONT_BTN).dispatchEvent('click');
+    expect(await readStyles()).toEqual(afterFirst);
+
+    // One undo unwinds the whole first click — target, co-target and the
+    // ancestor the climb raised.
+    await page.keyboard.press('ControlOrMeta+z');
+    expect(await readStyles()).toEqual(before);
+  });
+
+  test('exported HTML keeps both the target and the climbed ancestor z-index', async ({ page, context }) => {
+    await buildCase(page, CASE_C);
+    await page.locator(FRONT_BTN).click();
+
+    const live = await page.evaluate(() => ({
+      pA: document.querySelector('.slide.active .pA').style.zIndex,
+      wrapA: document.querySelector('.slide.active .wrapA').style.zIndex,
+    }));
+    expect(live.wrapA).not.toBe('');
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 8_000 });
+    await page.keyboard.press('ControlOrMeta+s');
+    const download = await downloadPromise;
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const outPath = path.join(
+      OUTPUT_DIR,
+      `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+    );
+    await download.saveAs(outPath);
+    const html = fs.readFileSync(outPath, 'utf-8');
+
+    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toContain('contenteditable');
+    expect(html).not.toContain('id="wfp-editor-root"');
+
+    const exportedPage = await context.newPage();
+    await exportedPage.goto(pathToFileURL(outPath).href);
+    expect(await exportedPage.evaluate(() => ({
+      pA: document.querySelector('.pA').style.zIndex,
+      wrapA: document.querySelector('.wrapA').style.zIndex,
+    }))).toEqual(live);
+    await exportedPage.close();
+  });
+});

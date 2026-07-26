@@ -664,16 +664,16 @@
   resetBtn.title = "Restore the selected element's styles to their state before any edits";
   actionRow.appendChild(resetBtn);
 
-  // Front action (v2.17). Bumps the selection's z-index above every sibling
-  // in its stacking scope (element children of parentElement) — the actual
-  // CSS competition, matching how WFP decks stack overlapping absolutely-
-  // positioned slide children. One-way only: no send-to-back/step controls.
+  // Front action (v2.17; scope corrected in v2.17.1). Raises the selection
+  // above everything it visually overlaps anywhere in the active slide —
+  // climbing to a capping ancestor when one traps the z-index — and verifies
+  // the result by paint truth. One-way only: no send-to-back/step controls.
   const frontBtn = document.createElement('button');
   frontBtn.type = 'button';
   frontBtn.className = 'wfpe-action-btn wfpe-front-btn';
   frontBtn.dataset.action = 'bring-to-front';
   frontBtn.innerHTML = ICONS.layers + '<span>Front</span>';
-  frontBtn.title = "Bring the selected element in front of its siblings";
+  frontBtn.title = "Bring the selected element in front of everything it overlaps";
   actionRow.appendChild(frontBtn);
   inspectorBody.appendChild(actionRow);
 
@@ -1304,17 +1304,18 @@
     deleteSelectedElement();
   });
   // Guarded before the txn opens (no selection, or every target already
-  // meets its planned z) so an idle/repeat click pushes no history entry
-  // and inflates no z-index. Plan computed once and reused for both the
-  // guard and the write.
+  // paints above its competitors and already meets its planned z) so an
+  // idle/repeat click pushes no history entry and inflates no z-index. The
+  // plan — competitor sets included — is computed once and reused for the
+  // guard, the writes and the post-write verification.
   frontBtn.addEventListener('click', (e) => {
     e.preventDefault();
     const targets = getSelectedElements();
     if (!targets.length) return;
-    const plan = computeFrontZIndexPlan(targets);
-    if (isFrontPlanNoop(plan)) return;
+    const plan = computeFrontPlan(targets);
+    if (!plan || isFrontPlanNoop(plan)) return;
     const ctx = startInspectorTxn();
-    applyFrontZIndexPlan(plan);
+    applyFrontPlan(plan);
     endInspectorTxn(ctx);
     refreshSelection();
   });

@@ -191,16 +191,32 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Bring to front (v2.17). Stacking scope = an element's own siblings
-  // (element children of its parentElement) — that's the actual CSS
-  // competition, and matches how WFP decks lay out overlapping absolutely-
-  // positioned children of the slide. We do not try to out-stack elements
-  // in other stacking contexts.
+  // Bring to front (v2.17; stacking scope corrected in v2.17.1).
+  //
+  // v2.17 derived the required z from the target's SIBLINGS. That model is
+  // wrong: z-order competes inside the nearest stacking-context ancestor, and
+  // every intermediate stacking context caps what a descendant's z-index can
+  // reach. On real decks Front therefore did nothing whenever the overlapping
+  // element lived in another container (its container's z is what has to be
+  // beaten), or whenever an ancestor of the target carried a transform (WFP
+  // entrance animations do this constantly), which traps any z we write.
+  //
+  // So: the scope is the whole active slide — anything whose box actually
+  // overlaps the target competes with it, wherever it sits in the tree — and
+  // the result is checked against paint truth (elementsFromPoint) rather than
+  // inferred from z values, because a capping ancestor can make a perfectly
+  // correct z-index irrelevant.
+  //
+  // All rects here are viewport rects compared against other viewport rects,
+  // and none of them is ever written back as a style value, so the deck's
+  // transform: scale() never enters the maths (scale division applies only
+  // when converting pointer deltas into slide pixels — this feature does no
+  // such conversion).
   // ---------------------------------------------------------------------------
   // z-index is inert while position is static — the used value never
   // applies, so it must read as 0 both when this element IS the target
   // (an authored-but-inert z-index must not falsely look "already front")
-  // and when it's a sibling being folded into someone else's max (an inert
+  // and when it's a competitor being folded into the required max (an inert
   // z-index there must not inflate the plan).
   function effectiveZIndex(el) {
     if (getComputedStyle(el).position === 'static') return 0;
@@ -208,20 +224,164 @@
     return Number.isFinite(z) ? z : 0; // auto (or garbage) reads as 0
   }
 
-  // `exclude` is every element in THIS plan, not just `el` itself — a
-  // multi-select's co-targets are siblings of each other, so without
-  // excluding all of them a second click would fold each target's own
-  // freshly-bumped z back in as a "sibling max" and inflate the whole
-  // group again ({1,2} -> {3,4} -> {5,6} on repeated clicks).
-  function siblingMaxZIndex(el, exclude) {
-    const parent = el.parentElement;
-    if (!parent) return 0;
+  // The z a competitor really defends is the highest one on its ancestor
+  // chain, not its own: an ancestor's z-index carries its whole subtree, so a
+  // z:auto element inside a z-index:5 container beats a z-index:1 element
+  // outside it. Walk up to (but not including) the slide.
+  function chainMaxZIndex(el, slide) {
     let max = 0;
-    for (const sib of parent.children) {
-      if (sib === el || exclude.has(sib)) continue;
-      max = Math.max(max, effectiveZIndex(sib));
+    let node = el;
+    while (node && node !== slide && slide.contains(node)) {
+      max = Math.max(max, effectiveZIndex(node));
+      node = node.parentElement;
     }
     return max;
+  }
+
+  function rectsOverlap(a, b) {
+    return (
+      Math.max(a.left, b.left) < Math.min(a.right, b.right) &&
+      Math.max(a.top, b.top) < Math.min(a.bottom, b.bottom)
+    );
+  }
+
+  // Everything in the slide that visually overlaps `el`, minus the things it
+  // makes no sense to compete with: editor chrome, anything that paints
+  // nothing (a zero-area rect — wrapper divs whose children are all
+  // absolutely positioned are the common case), and anything related by
+  // containment to a target of this plan in either direction.
+  //
+  // "Either direction" is load-bearing. Descendants ride with their target,
+  // and ancestors contain it — but the ancestors of a CO-target matter too:
+  // the climb may raise one, and if it then counted as a competitor of
+  // another target in the same plan, the next click would fold our own write
+  // back into `required` and inflate the whole group ({3,4} -> {4,5} -> …).
+  // Nothing is lost by dropping them, because whatever else lives inside
+  // such an ancestor is still a competitor and still reports the ancestor's
+  // z through chainMaxZIndex.
+  function frontCompetitorsFor(el, targets, slide) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return [];
+    const out = [];
+    for (const node of slide.querySelectorAll('*')) {
+      if (isInsideEditorRoot(node)) continue;
+      if (targets.some((t) => t === node || t.contains(node) || node.contains(t))) continue;
+      const nodeRect = node.getBoundingClientRect();
+      if (nodeRect.width <= 0 || nodeRect.height <= 0) continue;
+      if (!rectsOverlap(rect, nodeRect)) continue;
+      out.push(node);
+    }
+    return out;
+  }
+
+  // Centre plus the four quarter points of the overlap. A lone centre sample
+  // is easy to fool — a partial overlap, or a competitor whose middle is a
+  // hole punched by a positioned child, both read as "not covered".
+  function overlapSamplePoints(a, b) {
+    const left = Math.max(a.left, b.left);
+    const right = Math.min(a.right, b.right);
+    const top = Math.max(a.top, b.top);
+    const bottom = Math.min(a.bottom, b.bottom);
+    if (right <= left || bottom <= top) return [];
+    const w = right - left;
+    const h = bottom - top;
+    return [
+      { x: left + w / 2, y: top + h / 2 },
+      { x: left + w / 4, y: top + h / 4 },
+      { x: left + (w * 3) / 4, y: top + h / 4 },
+      { x: left + w / 4, y: top + (h * 3) / 4 },
+      { x: left + (w * 3) / 4, y: top + (h * 3) / 4 },
+    ];
+  }
+
+  // Paint truth for one target/competitor pair. elementsFromPoint returns the
+  // hit stack topmost-first, so whichever of the two shows up first is the
+  // one actually painting on top; anything else at that point (a third
+  // element, another co-target) is skipped rather than counted as a loss.
+  //
+  // Known blind spot, accepted: elements with pointer-events: none are
+  // invisible to hit testing (the editor's own ring depends on that). We do
+  // not try to compensate.
+  function competitorPaintsAbove(target, competitor, points) {
+    for (const point of points) {
+      for (const node of document.elementsFromPoint(point.x, point.y)) {
+        if (isInsideEditorRoot(node)) continue;
+        if (node === target || target.contains(node)) break; // target wins here
+        if (node === competitor || competitor.contains(node)) return true;
+      }
+    }
+    return false;
+  }
+
+  function isTargetOccluded(el, competitors) {
+    const rect = el.getBoundingClientRect();
+    for (const competitor of competitors) {
+      const points = overlapSamplePoints(rect, competitor.getBoundingClientRect());
+      if (!points.length) continue;
+      if (competitorPaintsAbove(el, competitor, points)) return true;
+    }
+    return false;
+  }
+
+  // Pragmatic stacking-context test: the cases that actually occur in slide
+  // decks, not the full CSS list. Missing a real stacking context means the
+  // climb skips past the ancestor that was actually capping us and raises a
+  // larger subtree than necessary (or fails to resolve at all), so the list
+  // errs towards including the common triggers.
+  function establishesStackingContext(el) {
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'static' && cs.zIndex !== 'auto') return true;
+    if (cs.position === 'fixed' || cs.position === 'sticky') return true;
+    if (cs.transform !== 'none' || cs.filter !== 'none' || cs.perspective !== 'none') return true;
+    if (cs.clipPath && cs.clipPath !== 'none') return true;
+    if (parseFloat(cs.opacity) < 1) return true;
+    if (/transform|opacity/.test(cs.willChange || '')) return true;
+    if (cs.isolation === 'isolate') return true;
+    if (cs.mixBlendMode && cs.mixBlendMode !== 'normal') return true;
+    if (/\b(layout|paint|strict|content)\b/.test(cs.contain || '')) return true;
+    return false;
+  }
+
+  // Is `cs` a containing block for absolutely-positioned descendants? Only
+  // relevant for elements that are position: static, where the answer decides
+  // whether we may promote them (see canRaiseAncestor).
+  function establishesAbsoluteContainingBlock(cs) {
+    return (
+      cs.transform !== 'none' ||
+      cs.filter !== 'none' ||
+      cs.perspective !== 'none' ||
+      /transform|perspective|filter/.test(cs.willChange || '') ||
+      /\b(layout|paint|strict|content)\b/.test(cs.contain || '')
+    );
+  }
+
+  // "position: relative costs nothing" holds for an element's own box — it is
+  // why the static fix-up on the TARGET is safe — but not for its subtree. A
+  // static ancestor we promote becomes the containing block for every
+  // absolutely-positioned descendant that used to resolve against something
+  // further up, and they all jump. That is a silent relayout of the deck,
+  // exported along with everything else, so we refuse: the dangerous set is
+  // precisely the stacking-context triggers that are NOT also containing-block
+  // triggers (opacity < 1, isolation, mix-blend-mode, will-change: opacity).
+  // Leaving an occlusion unresolved is much cheaper than moving content, so
+  // the climb skips such an ancestor and carries on outwards.
+  function canRaiseAncestor(el) {
+    const cs = getComputedStyle(el);
+    if (cs.position !== 'static') return true;
+    return establishesAbsoluteContainingBlock(cs);
+  }
+
+  // Nearest-first, strictly below the slide. Captured BEFORE any write:
+  // raising an ancestor turns it into a stacking context itself, which would
+  // otherwise grow the very chain we are walking.
+  function stackingContextAncestors(el, slide) {
+    const chain = [];
+    let node = el.parentElement;
+    while (node && node !== slide && slide.contains(node)) {
+      if (establishesStackingContext(node)) chain.push(node);
+      node = node.parentElement;
+    }
+    return chain;
   }
 
   // DOM-order tiebreak for equal effective z: the element that comes later
@@ -235,9 +395,9 @@
     return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
   }
 
-  // One shared counter above the highest sibling max across every target,
-  // assigned in current-stack order so a multi-select bump keeps the
-  // targets' relative order (maxZ + 1, maxZ + 2, …) instead of tying them.
+  // One shared counter above the highest z any competitor defends, assigned
+  // in current-stack order so a multi-select bump keeps the targets' relative
+  // order (required + 1, required + 2, …) instead of tying them.
   //
   // Multi-target input is currently unreachable through the UI — the
   // inspector dock (and this action row with it) only renders while
@@ -247,35 +407,86 @@
   // multi-select gets its own surface; tests exercise it by dispatching
   // the click event directly rather than driving a real (unreachable)
   // pointer click.
-  function computeFrontZIndexPlan(elements) {
-    const ordered = [...elements].sort(compareStackOrder);
-    const targets = new Set(ordered);
-    const baseZ = ordered.reduce((max, el) => Math.max(max, siblingMaxZIndex(el, targets)), 0);
-    return ordered.map((el, i) => ({ el, z: baseZ + i + 1 }));
+  function computeFrontPlan(elements) {
+    const slide = getActiveSlide();
+    if (!slide) return null;
+    const scoped = [...elements].filter((el) => el && el.isConnected && slide.contains(el));
+    if (!scoped.length) return null;
+    const ordered = scoped.sort(compareStackOrder);
+    let required = 0;
+    const entries = ordered.map((el) => {
+      const competitors = frontCompetitorsFor(el, ordered, slide);
+      for (const competitor of competitors) {
+        required = Math.max(required, chainMaxZIndex(competitor, slide));
+      }
+      return { el, competitors, z: 0 };
+    });
+    entries.forEach((entry, i) => { entry.z = required + 1 + i; });
+    return { slide, entries };
   }
 
-  // No-op guard: true when every target's CURRENT z already meets or beats
-  // its planned z — not just equals it, or an element deliberately authored
-  // above the plan (e.g. z-index: 30 among all-auto siblings, where the
-  // plan only asks for 1) would be DEMOTED down to the plan value instead
-  // of being left alone. `>=` is safe across the whole multi-select plan
-  // too: both the current effective z (sorted ascending via
-  // compareStackOrder) and the planned z (baseZ + 1, baseZ + 2, …) rise in
-  // the same order, so a per-element "already meets its own threshold"
-  // check can't let a later, higher-z element mask an earlier shortfall.
+  // No-op guard (v2.17.1: paint truth, not a z comparison). An element can
+  // carry a huge z-index and still be buried, because a capping ancestor
+  // swallows it — so "already high enough" is not evidence of anything and
+  // the sampling has to run first.
+  //
+  // The planned-z check is kept as a second, independent condition: an
+  // element with no overlapping competitor at all is trivially "painting
+  // above all of them", and Front on it should still do the obvious thing
+  // (give it an explicit z-index) rather than silently nothing. Both
+  // conditions must hold for a click to be dropped, which is what keeps
+  // repeated clicks from inflating z or pushing history entries.
   function isFrontPlanNoop(plan) {
-    return plan.every(({ el, z }) => effectiveZIndex(el) >= z);
+    return plan.entries.every(({ el, z, competitors }) => (
+      effectiveZIndex(el) >= z && !isTargetOccluded(el, competitors)
+    ));
   }
 
-  // z-index is inert on position: static, so a changed element is promoted
-  // to position: relative first — no offsets are written, so no layout
-  // shift. touchElement() must be called before either write lands.
-  function applyFrontZIndexPlan(plan) {
-    for (const { el, z } of plan) {
-      if (effectiveZIndex(el) >= z) continue;
-      touchElement(el);
-      if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
-      el.style.zIndex = String(z);
+  // z-index is inert on position: static, so a raised element is promoted to
+  // position: relative first — no offsets are written, so the element's own
+  // box does not move. (Its abs-positioned DESCENDANTS can re-anchor, which
+  // is why ancestors go through canRaiseAncestor first; on the target itself
+  // this is the long-standing v2.17 fix-up.) Never demotes: an element
+  // already sitting above the requested z keeps it. touchElement() must run
+  // before either write lands.
+  function raiseElementZIndex(el, z) {
+    if (effectiveZIndex(el) >= z) return;
+    touchElement(el);
+    if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+    el.style.zIndex = String(z);
+  }
+
+  function applyFrontPlan(plan) {
+    const chains = new Map();
+    for (const { el } of plan.entries) {
+      chains.set(el, stackingContextAncestors(el, plan.slide));
+    }
+
+    for (const { el, z } of plan.entries) raiseElementZIndex(el, z);
+
+    // Verify and climb. A correct z-index is inert inside a capping ancestor
+    // (transform, opacity < 1, an own z-index, …), so when the target still
+    // paints below a competitor we raise the nearest such ancestor as well,
+    // then the next one out, re-checking after each step. Bounded by the
+    // ancestor chain, which was captured before any of these writes.
+    //
+    // Raising a container carries its whole subtree forward. That is
+    // unavoidable — it is precisely what "in front" means for a nested
+    // element — and it is why we climb only as far as the occlusion needs.
+    const raisedAncestors = new Map();
+    for (const { el, z, competitors } of plan.entries) {
+      if (!isTargetOccluded(el, competitors)) continue;
+      for (const ancestor of chains.get(el)) {
+        if (!canRaiseAncestor(ancestor)) continue;
+        // Dedupe across targets by keeping the highest request per ancestor;
+        // the climb still advances either way, so a shared ancestor can't
+        // stall the loop.
+        if ((raisedAncestors.get(ancestor) || 0) < z) {
+          raisedAncestors.set(ancestor, z);
+          raiseElementZIndex(ancestor, z);
+        }
+        if (!isTargetOccluded(el, competitors)) break;
+      }
     }
   }
 
