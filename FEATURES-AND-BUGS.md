@@ -142,7 +142,7 @@ together rather than one at a time, since they share the same write pattern.
 
 ### Export carried dead session-scoped `blob:` URLs — charts and custom elements silently broke in the download
 
-- **Status:** fixed 2026-07-26 (v2.20; uncommitted at time of writing)
+- **Status:** fixed 2026-07-26 (v2.20, commit `d06caf4`)
 - **Raised:** 2026-07-26, user report — "graph in slide 8 missing from fresh copy"
 
 Self-extracting bundled decks mint session-scoped `blob:` URLs at load time
