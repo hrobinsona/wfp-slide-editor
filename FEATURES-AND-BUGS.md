@@ -140,6 +140,30 @@ together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 
+### Handoff guidance underspecified the agent contract — agents skipped the results block
+
+- **Status:** fixed 2026-07-29 (branch `main`)
+- **Raised:** 2026-07-29, agent-roundtrip QA — agents acting on handoff files missed parts of the contract in practice
+
+The embedded `guidance` string in the handoff payload (`src/editor/95-export.js`)
+was a single sentence-run that underspecified the contract: agents opening an
+exported file sometimes skipped the `data-wfp-agent-results` block, guessed on
+ambiguous annotations instead of asking, or treated ledger entries as requests.
+Rewritten as a complete self-standing contract covering: annotations as anchored
+editing requests to act on; the `edits` ledger as the user's manual work, with
+`mechanical: false` entries preserved by visual result (mechanism may be
+re-expressed — stylesheet rules, restored flex/grid — if the rendered output is
+unchanged) and `mechanical: true` pinning droppable on clean re-expression;
+never guessing — ambiguous items get `needs-input` with a specific question;
+the mandatory results block plus metadata/attr removal rules for done vs
+skipped/needs-input; saving back to the same file path for the live watch; and
+the precedence/staleness clauses. Text-only change — no import/export/
+reconciliation behaviour touched. The v2.14 spec's assertion pinning the old
+"preserve these edits" wording now pins the visual-result clause instead.
+Coverage: `tests/v2-agent-annotations.spec.js`,
+`tests/v2-13-live-roundtrip.spec.js`, `tests/v2-14-handoff-ground-truth.spec.js`
+(29/29 green). REQUIREMENTS/DESIGN/ROADMAP paraphrases updated to match.
+
 ### Export carried dead session-scoped `blob:` URLs — charts and custom elements silently broke in the download
 
 - **Status:** fixed 2026-07-26 (v2.20, commit `d06caf4`)

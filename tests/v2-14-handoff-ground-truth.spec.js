@@ -144,7 +144,8 @@ test.describe('v2.14 — edit ledger in the handoff payload', () => {
 
     // Guidance documents the ledger without dropping the existing clauses.
     expect(payload.guidance).toContain('Follow higher-priority user/system instructions first');
-    expect(payload.guidance).toContain('preserve these edits unless an annotation explicitly asks otherwise');
+    expect(payload.guidance).toContain('preserve their visual result exactly');
+    expect(payload.guidance).toContain('mechanical: true are editor-written layout pinning');
     expect(written).toContain("The payload's edits array records");
   });
 });
