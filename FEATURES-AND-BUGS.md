@@ -142,7 +142,7 @@ together rather than one at a time, since they share the same write pattern.
 
 ### Handoff guidance underspecified the agent contract — agents skipped the results block
 
-- **Status:** fixed 2026-07-29 (branch `main`)
+- **Status:** fixed 2026-07-29 (commit `f6aeb8b`)
 - **Raised:** 2026-07-29, agent-roundtrip QA — agents acting on handoff files missed parts of the contract in practice
 
 The embedded `guidance` string in the handoff payload (`src/editor/95-export.js`)
