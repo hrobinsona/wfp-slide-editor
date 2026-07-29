@@ -140,6 +140,53 @@ together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 
+### Handoff guidance let an agent keep every mechanical pin and ship a broken slide
+
+- **Status:** fixed 2026-07-29
+- **Raised:** 2026-07-29, live end-to-end agent pass on a 9-slide deck — the agent
+  reported success on a visibly broken result
+
+The rewritten contract (`f6aeb8b`) fixed the results-block problem below but
+introduced three defects of its own, all found by the first real agent to act on
+an exported file:
+
+1. **Permissive wording, so absorption never happened.** "You may re-express the
+   mechanism … provided the rendered output is unchanged" read as an optional
+   nicety. The agent preserved all 13 ledger entries verbatim and called that
+   success, shipping a slide whose pinned bar-row container sat at `top: -55px`
+   over the slide title with the dragged row 46px out of line with its six
+   siblings. Because every box was where the pins had put it, geometry measured
+   clean. De-pinning is now imperative for `mechanical: true` entries — delete
+   them, restore the layout the stylesheet describes — and the clause names the
+   consequence: carrying pins forward ships a broken layout. Absorbing
+   intentional inline styles into a stylesheet rule stays a strong
+   recommendation ("absorb", not "you may absorb").
+2. **A `mechanical: false` position inside a pinned coordinate system.** The
+   dragged element's own `left`/`top` is genuinely the user's choice, so the
+   agent treated it as protected intent — but it only means anything inside the
+   absolute system the pins created. The guidance now says a position that only
+   means anything inside that system does not survive the reversal: drop it even
+   when `mechanical: false`, and record the drop in the results note. Only edits
+   that outlive the re-expressed layout (font sizes, colours, text content,
+   explicit sizes) carry forward; a deliberate out-of-flow element arrives as an
+   annotation.
+3. **Nothing routed the agent to a real verification process.** The contract is
+   deliberately document-type-agnostic, so the agent ran a bare lint and skipped
+   the geometry pass entirely. Added one conditional sentence: a slide deck built
+   by the Avent "slides" skill (a 1920×1080 `.deck` canvas of `section.slide`
+   children) also follows that skill's "Edit mode" section at
+   `~/.claude/skills/slides/SKILL.md` for verification and reporting. Plain HTML
+   documents with no owning skill read one extra sentence and lose nothing.
+
+Text-only change in `src/editor/95-export.js` — no import/export/reconciliation
+behaviour touched. The string stays ~300 words and keeps the literals the specs
+pin. `tests/v2-14-handoff-ground-truth.spec.js` gained assertions for the
+imperative de-pinning clause, the coordinate-system drop, the skill route, and
+the absence of the old permissive phrasing. Coverage:
+`tests/v2-agent-annotations.spec.js`, `tests/v2-13-live-roundtrip.spec.js`,
+`tests/v2-14-handoff-ground-truth.spec.js` (29/29 green).
+REQUIREMENTS/DESIGN/ROADMAP paraphrases updated to match.
+
 ### Handoff guidance underspecified the agent contract — agents skipped the results block
 
 - **Status:** fixed 2026-07-29 (commit `f6aeb8b`)

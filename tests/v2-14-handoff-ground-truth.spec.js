@@ -146,6 +146,16 @@ test.describe('v2.14 — edit ledger in the handoff payload', () => {
     expect(payload.guidance).toContain('Follow higher-priority user/system instructions first');
     expect(payload.guidance).toContain('preserve their visual result exactly');
     expect(payload.guidance).toContain('mechanical: true are editor-written layout pinning');
+    // De-pinning is imperative, not optional — permissive wording let a real
+    // agent preserve every pin and ship a broken layout.
+    expect(payload.guidance).toContain('Delete them and restore the layout the stylesheet describes');
+    expect(payload.guidance).toContain('carrying pins forward ships a broken layout');
+    expect(payload.guidance).not.toContain('You may re-express the mechanism');
+    // A position that only exists inside the pinned coordinate system goes with
+    // the pins, even when the entry reads as user intent.
+    expect(payload.guidance).toContain('drop it even when mechanical: false');
+    // Deck-shaped documents route to the slides skill's Edit mode process.
+    expect(payload.guidance).toContain('~/.claude/skills/slides/SKILL.md');
     expect(written).toContain("The payload's edits array records");
   });
 });
