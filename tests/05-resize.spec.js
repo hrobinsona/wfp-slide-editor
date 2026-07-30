@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
@@ -10,11 +10,7 @@ async function setDeckScale(page, scale) {
 }
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   // click without movement to select
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
@@ -55,9 +51,10 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const handles = await page.evaluate(() =>
       [...document.querySelectorAll('#wfp-editor-root .wfpe-handle')].map((h) => ({
@@ -85,13 +82,14 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'se', 30, 20);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     expect(after.width - before.width).toBeCloseTo(30, 0);
     expect(after.height - before.height).toBeCloseTo(20, 0);
@@ -103,13 +101,14 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 0.5);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'se', 50, 25);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     expect(after.width - before.width).toBeCloseTo(100, 0);
     expect(after.height - before.height).toBeCloseTo(50, 0);
@@ -119,13 +118,14 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'nw', -20, -15);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     // SE corner = left + width and top + height. Should be unchanged.
     expect(after.left + after.width).toBeCloseTo(before.left + before.width, 0);
@@ -142,13 +142,14 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'n', 0, -10);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     expect(after.width).toBeCloseTo(before.width, 0);
     expect(after.left).toBeCloseTo(before.left, 0);
@@ -158,13 +159,14 @@ test.describe('Phase 5 — Resize', () => {
 
   test('E edge handle changes only width', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'e', 25, 0);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     expect(after.width).toBeCloseTo(before.width + 25, 0);
     expect(after.height).toBeCloseTo(before.height, 0);
@@ -176,20 +178,22 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     await dragHandle(page, 'e', -1000, 0); // way past 8px
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
     expect(after.width).toBeCloseTo(8, 0);
   });
 
   test('handles disappear when selection is cleared', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const visibleBefore = await page.evaluate(
       () =>
@@ -215,13 +219,14 @@ test.describe('Phase 5 — Resize', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
     await dragHandle(page, 'se', 20, 20);
-    const after = await readBox(page, '.slide.active .wfp-badge');
+    const after = await readBox(page, target);
 
     // Position must NOT change; only width/height.
     expect(after.left).toBeCloseTo(before.left, 0);

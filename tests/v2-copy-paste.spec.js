@@ -2,25 +2,56 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
+const HEADING_SEL = '[data-test-heading="yes"]';
+
+// Returns the discovered target instead of stashing it in module scope:
+// specs run fully parallel, so per-test state cannot be shared.
 async function loadReady(page) {
   await loadFixtureWithEditor(page, 'Townhall-1.html');
+  const target = await requireAbsoluteTarget(page);
   await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
   await page.keyboard.press('e');
+  return target;
+}
+
+// Real dblclick at a point that hit-tests to the element itself — locator
+// .dblclick() aims at the geometric centre, which in the current decks is
+// often covered by an accent span inside the headline.
+async function dblclickElement(page, selector) {
+  const c = await hitPointFor(page, selector);
+  await page.mouse.dblclick(c.x, c.y);
+}
+
+// A text-bearing element on the active slide, identified the way the deck
+// itself would be navigated rather than by a class this deck happens to use.
+async function headingSelector(page) {
+  const sel = await page.evaluate(() => {
+    const slide = document.querySelector('.slide.active');
+    const el = [...slide.querySelectorAll('h1, h2, h3, p')].find((n) => {
+      const r = n.getBoundingClientRect();
+      return (
+        r.width > 40 &&
+        r.height > 16 &&
+        [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())
+      );
+    });
+    if (!el) return null;
+    el.dataset.testHeading = 'yes';
+    return '[data-test-heading="yes"]';
+  });
+  test.skip(!sel, 'no text-bearing heading on this fixture\'s active slide');
+  return sel;
 }
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();
@@ -34,21 +65,22 @@ async function pasteClipboard(page) {
   await page.keyboard.press('ControlOrMeta+v');
 }
 
-async function readBadgeSnapshot(page) {
-  return page.evaluate(() => {
-    const badges = [...document.querySelectorAll('.slide.active .wfp-badge')];
+async function readBadgeSnapshot(page, target) {
+  return page.evaluate((sel) => {
+    const badges = [...document.querySelectorAll(sel)];
     const last = badges.at(-1);
+    const rect = last?.getBoundingClientRect();
     return {
       count: badges.length,
-      lastLeft: last?.offsetLeft ?? null,
-      lastTop: last?.offsetTop ?? null,
+      lastLeft: rect ? Math.round(rect.left) : null,
+      lastTop: rect ? Math.round(rect.top) : null,
       lastStyle: last?.getAttribute('style') ?? '',
       selectedIsLast:
         !!last &&
         document.querySelector('#wfp-editor-root .wfpe-selection-ring').style.display === 'block' &&
         Math.abs(last.getBoundingClientRect().left - parseFloat(document.querySelector('#wfp-editor-root .wfpe-selection-ring').style.left)) <= 1,
     };
-  });
+  }, target);
 }
 
 async function triggerExport(page) {
@@ -66,18 +98,22 @@ async function readDownloadAsString(download) {
 
 test.describe('v2 copy/paste/duplicate', () => {
   test('copying an element and pasting on the same slide inserts an offset selected clone', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
-      return { count: document.querySelectorAll('.slide.active .wfp-badge').length, left: el.offsetLeft, top: el.offsetTop };
-    });
+    await selectByMouse(page, target);
+    const before = await page.evaluate((sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return {
+        count: document.querySelectorAll(sel).length,
+        left: Math.round(r.left),
+        top: Math.round(r.top),
+      };
+    }, target);
 
     await copySelected(page);
     await pasteClipboard(page);
 
-    const after = await readBadgeSnapshot(page);
+    const after = await readBadgeSnapshot(page, target);
     expect(after.count).toBe(before.count + 1);
     expect(after.lastLeft).toBeCloseTo(before.left + 20, 0);
     expect(after.lastTop).toBeCloseTo(before.top + 20, 0);
@@ -85,13 +121,13 @@ test.describe('v2 copy/paste/duplicate', () => {
   });
 
   test('copied element can be pasted onto another active slide', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const source = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
-      return { left: el.offsetLeft, top: el.offsetTop };
-    });
+    await selectByMouse(page, target);
+    const source = await page.evaluate((sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return { left: Math.round(r.left), top: Math.round(r.top) };
+    }, target);
     await copySelected(page);
 
     await page.evaluate(() => {
@@ -101,30 +137,38 @@ test.describe('v2 copy/paste/duplicate', () => {
     });
     await pasteClipboard(page);
 
-    const dest = await page.evaluate(() => {
+    const dest = await page.evaluate((sel) => {
       const slide = document.querySelector('.slide.active');
-      const badges = [...slide.querySelectorAll('.wfp-badge')];
+      const badges = [...slide.querySelectorAll(sel.replace('.slide.active ', ''))];
       const last = badges.at(-1);
-      return { activeId: slide.id, count: badges.length, left: last.offsetLeft, top: last.offsetTop };
-    });
-    expect(dest.activeId).toBe('s2');
-    expect(dest.count).toBe(2);
+      // Slide ids are a per-deck authoring choice; assert on position in the
+      // deck, which every deck has.
+      const index = [...document.querySelectorAll('.deck > .slide')].indexOf(slide);
+      const r = last.getBoundingClientRect();
+      return { index, count: badges.length, left: Math.round(r.left), top: Math.round(r.top) };
+    }, target);
+    expect(dest.index).toBe(2);
+    expect(dest.count).toBe(1);
     expect(dest.left).toBeCloseTo(source.left + 20, 0);
     expect(dest.top).toBeCloseTo(source.top + 20, 0);
   });
 
   test('inspector Duplicate button creates the same offset clone', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
-      return { count: document.querySelectorAll('.slide.active .wfp-badge').length, left: el.offsetLeft, top: el.offsetTop };
-    });
+    await selectByMouse(page, target);
+    const before = await page.evaluate((sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return {
+        count: document.querySelectorAll(sel).length,
+        left: Math.round(r.left),
+        top: Math.round(r.top),
+      };
+    }, target);
 
     await page.locator('#wfp-editor-root .wfpe-duplicate-btn').click();
 
-    const after = await readBadgeSnapshot(page);
+    const after = await readBadgeSnapshot(page, target);
     expect(after.count).toBe(before.count + 1);
     expect(after.lastLeft).toBeCloseTo(before.left + 20, 0);
     expect(after.lastTop).toBeCloseTo(before.top + 20, 0);
@@ -132,7 +176,7 @@ test.describe('v2 copy/paste/duplicate', () => {
   });
 
   test('duplicating a content-box element with padding preserves rendered size', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
     await page.evaluate(() => {
       const card = document.createElement('div');
@@ -173,55 +217,56 @@ test.describe('v2 copy/paste/duplicate', () => {
   });
 
   test('Backspace deletes the selected element and undo restores it selected', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await page.keyboard.press('Backspace');
 
-    await expect(page.locator('.slide.active .wfp-badge')).toHaveCount(0);
+    await expect(page.locator(target)).toHaveCount(0);
     await expect(page.locator('#wfp-editor-root .wfpe-selection-ring')).toBeHidden();
 
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.locator('.slide.active .wfp-badge')).toHaveCount(1);
-    const restoredSelected = await page.evaluate(() => {
-      const badge = document.querySelector('.slide.active .wfp-badge');
+    await expect(page.locator(target)).toHaveCount(1);
+    const restoredSelected = await page.evaluate((sel) => {
+      const badge = document.querySelector(sel);
       const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
       return (
         ring.style.display === 'block' &&
         Math.abs(badge.getBoundingClientRect().left - parseFloat(ring.style.left)) <= 1
       );
-    });
+    }, target);
     expect(restoredSelected).toBe(true);
   });
 
   test('inspector Delete button removes the selected element as one undoable action', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await page.locator('#wfp-editor-root .wfpe-delete-btn').click();
-    await expect(page.locator('.slide.active .wfp-badge')).toHaveCount(0);
+    await expect(page.locator(target)).toHaveCount(0);
 
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.locator('.slide.active .wfp-badge')).toHaveCount(1);
+    await expect(page.locator(target)).toHaveCount(1);
 
     await page.keyboard.press('ControlOrMeta+Shift+z');
-    await expect(page.locator('.slide.active .wfp-badge')).toHaveCount(0);
+    await expect(page.locator(target)).toHaveCount(0);
   });
 
   test('inspector Duplicate commits an open text edit before cloning with undo order intact', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
+    const heading = await headingSelector(page);
 
-    await selectByMouse(page, '.slide.active h1');
-    const beforeHtml = await page.evaluate(() => document.querySelector('.slide.active h1').innerHTML);
-    await page.locator('.slide.active h1').dblclick();
+    await selectByMouse(page, heading);
+    const beforeHtml = await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML);
+    await dblclickElement(page, heading);
     await page.evaluate(() => {
-      document.querySelector('.slide.active h1').appendChild(document.createTextNode(' DUPLICATED'));
+      document.querySelector(HEADING_SEL).appendChild(document.createTextNode(' DUPLICATED'));
     });
 
     await page.locator('#wfp-editor-root .wfpe-duplicate-btn').click();
 
     const duplicated = await page.evaluate(() => {
-      const headings = [...document.querySelectorAll('.slide.active h1')];
+      const headings = [...document.querySelectorAll(HEADING_SEL)];
       return {
         count: headings.length,
         firstEditable: headings[0].getAttribute('contenteditable'),
@@ -237,52 +282,57 @@ test.describe('v2 copy/paste/duplicate', () => {
     expect(duplicated.lastHtml).toContain('DUPLICATED');
 
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.locator('.slide.active h1')).toHaveCount(1);
-    await expect(page.locator('.slide.active h1')).toContainText('DUPLICATED');
+    await expect(page.locator(heading)).toHaveCount(1);
+    await expect(page.locator(heading)).toContainText('DUPLICATED');
 
     await page.keyboard.press('ControlOrMeta+z');
-    expect(await page.evaluate(() => document.querySelector('.slide.active h1').innerHTML)).toBe(beforeHtml);
+    expect(await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML)).toBe(beforeHtml);
   });
 
   test('inspector Delete commits an open text edit before removing with undo order intact', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
+    const heading = await headingSelector(page);
 
-    await selectByMouse(page, '.slide.active h1');
-    const beforeHtml = await page.evaluate(() => document.querySelector('.slide.active h1').innerHTML);
-    await page.locator('.slide.active h1').dblclick();
+    await selectByMouse(page, heading);
+    const beforeHtml = await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML);
+    await dblclickElement(page, heading);
     await page.evaluate(() => {
-      document.querySelector('.slide.active h1').appendChild(document.createTextNode(' DELETED'));
+      document.querySelector(HEADING_SEL).appendChild(document.createTextNode(' DELETED'));
     });
 
     await page.locator('#wfp-editor-root .wfpe-delete-btn').click();
-    await expect(page.locator('.slide.active h1')).toHaveCount(0);
+    await expect(page.locator(heading)).toHaveCount(0);
 
     await page.keyboard.press('ControlOrMeta+z');
-    await expect(page.locator('.slide.active h1')).toHaveCount(1);
-    await expect(page.locator('.slide.active h1')).toContainText('DELETED');
+    await expect(page.locator(heading)).toHaveCount(1);
+    await expect(page.locator(heading)).toContainText('DELETED');
     expect(
-      await page.evaluate(() => document.querySelector('.slide.active h1').getAttribute('contenteditable'))
+      await page.evaluate(() => document.querySelector(HEADING_SEL).getAttribute('contenteditable'))
     ).toBe(null);
 
     await page.keyboard.press('ControlOrMeta+z');
-    expect(await page.evaluate(() => document.querySelector('.slide.active h1').innerHTML)).toBe(beforeHtml);
+    expect(await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML)).toBe(beforeHtml);
   });
 
   test('undo removes the pasted element and reselects the original; redo restores the clone', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
-      return { count: document.querySelectorAll('.slide.active .wfp-badge').length, left: el.offsetLeft, top: el.offsetTop };
-    });
+    await selectByMouse(page, target);
+    const before = await page.evaluate((sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return {
+        count: document.querySelectorAll(sel).length,
+        left: Math.round(r.left),
+        top: Math.round(r.top),
+      };
+    }, target);
     await copySelected(page);
     await pasteClipboard(page);
-    const pasted = await readBadgeSnapshot(page);
+    const pasted = await readBadgeSnapshot(page, target);
 
     await page.keyboard.press('ControlOrMeta+z');
-    const undone = await page.evaluate(() => {
-      const badges = [...document.querySelectorAll('.slide.active .wfp-badge')];
+    const undone = await page.evaluate((sel) => {
+      const badges = [...document.querySelectorAll(sel)];
       const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
       const first = badges[0];
       return {
@@ -291,23 +341,24 @@ test.describe('v2 copy/paste/duplicate', () => {
           ring.style.display === 'block' &&
           Math.abs(first.getBoundingClientRect().left - parseFloat(ring.style.left)) <= 1,
       };
-    });
+    }, target);
     expect(undone.count).toBe(before.count);
     expect(undone.selectedOriginal).toBe(true);
 
     await page.keyboard.press('ControlOrMeta+Shift+z');
-    const redone = await readBadgeSnapshot(page);
+    const redone = await readBadgeSnapshot(page, target);
     expect(redone.count).toBe(before.count + 1);
     expect(redone.lastLeft).toBeCloseTo(pasted.lastLeft, 0);
     expect(redone.lastTop).toBeCloseTo(pasted.lastTop, 0);
   });
 
   test('Cmd/Ctrl+C inside a contenteditable text edit falls through to browser copy', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
+    const heading = await headingSelector(page);
 
-    await page.locator('.slide.active h1').dblclick();
+    await dblclickElement(page, heading);
     await page.evaluate(() => {
-      const el = document.querySelector('.slide.active h1');
+      const el = document.querySelector(HEADING_SEL);
       const textNode = [...el.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
       const range = document.createRange();
       range.selectNodeContents(textNode || el);
@@ -325,27 +376,34 @@ test.describe('v2 copy/paste/duplicate', () => {
     await page.keyboard.press('ControlOrMeta+c');
     const copyEvent = await page.evaluate(() => window.__wfpeCopyEvent);
     expect(copyEvent.defaultPrevented).toBe(false);
-    expect(copyEvent.selection).toContain('From research curiosity');
+    // Derived from the fixture: assert the browser copied the heading's own
+    // text, not a phrase only the retired deck happened to contain.
+    const headingWords = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      const node = [...el.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim());
+      return (node || el).textContent.trim().split(/\s+/).slice(0, 3).join(' ');
+    }, HEADING_SEL);
+    expect(copyEvent.selection).toContain(headingWords);
 
     await page.keyboard.press('Escape');
     await pasteClipboard(page);
 
-    const h1Count = await page.locator('.slide.active h1').count();
+    const h1Count = await page.locator(heading).count();
     expect(h1Count).toBe(1);
   });
 
   test('Cmd/Ctrl+V while overview is active is a no-op for element paste', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await copySelected(page);
-    const before = await page.locator('.slide.active .wfp-badge').count();
+    const before = await page.locator(target).count();
 
     await page.keyboard.press('o');
     await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
     await pasteClipboard(page);
 
-    const after = await page.locator('.slide.active .wfp-badge').count();
+    const after = await page.locator(target).count();
     expect(after).toBe(before);
   });
 
@@ -354,32 +412,44 @@ test.describe('v2 copy/paste/duplicate', () => {
     // prefer the save-in-place engine on real headless Chromium (file://
     // and http://localhost both expose showSaveFilePicker).
     await disableFsa(page);
-    await loadReady(page);
+    const target = await loadReady(page);
 
-    await page.evaluate(() => {
-      document.querySelector('.slide.active .wfp-badge').dataset.wfpEditFrozen = 'true';
-    });
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await page.evaluate((sel) => {
+      document.querySelector(sel).dataset.wfpEditFrozen = 'true';
+    }, target);
+    const beforeCount = await page.locator(`.deck ${target.split('.').pop().replace(/^/, '.')}`).count();
+    await selectByMouse(page, target);
     await copySelected(page);
     await pasteClipboard(page);
 
     const download = await triggerExport(page);
     const content = await readDownloadAsString(download);
 
-    expect(content.match(/class="[^"]*\bwfp-badge\b/g)?.length ?? 0).toBe(10);
+    // Derived from the fixture rather than pinned to one deck's element
+    // count: whatever the target class was before the paste, the export must
+    // carry exactly one more.
+    const cls = target.split('.').pop();
+    const occurrences = content.match(new RegExp(`class="[^"]*\\b${cls}\\b`, 'g'))?.length ?? 0;
+    expect(occurrences).toBe(beforeCount + 1);
     expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
     expect(content).not.toContain('contenteditable=');
   });
 
   test('pasted element keeps the source inline style while gaining paste positioning', async ({ page }) => {
-    await loadReady(page);
+    const target = await loadReady(page);
+    const heading = await headingSelector(page);
 
-    await selectByMouse(page, '.slide.active h1');
+    // Seed a known unrelated inline style rather than assuming the deck
+    // authored one (the retired fixture happened to carry animation-delay).
+    await page.evaluate((sel) => {
+      document.querySelector(sel).style.animationDelay = '200ms';
+    }, HEADING_SEL);
+    await selectByMouse(page, heading);
     await copySelected(page);
     await pasteClipboard(page);
 
     const style = await page.evaluate(() => {
-      const headings = [...document.querySelectorAll('.slide.active h1')];
+      const headings = [...document.querySelectorAll(HEADING_SEL)];
       return headings.at(-1).getAttribute('style') || '';
     });
     expect(style).toContain('animation-delay');

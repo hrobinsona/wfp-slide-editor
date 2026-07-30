@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -70,11 +70,7 @@ async function readDownloadAsString(download) {
 }
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();
@@ -190,7 +186,7 @@ test.describe('v2 overview add slide', () => {
   test('copied element can be pasted onto a newly inserted blank slide', async ({ page }) => {
     await loadEditReady(page);
 
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await page.keyboard.press('ControlOrMeta+c');
     await page.keyboard.press('o');
     await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0);

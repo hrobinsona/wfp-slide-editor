@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 // Use a large viewport so the 1920x1080 deck fits at scale=1.
 test.use({ viewport: { width: 2000, height: 1200 } });
@@ -26,11 +26,7 @@ async function readPosition(page, selector) {
 }
 
 async function viewportCenterOf(page, selector) {
-  return page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  return hitPointFor(page, selector);
 }
 
 async function dragByViewportPx(page, fromSelector, dxViewport, dyViewport) {
@@ -45,12 +41,13 @@ async function dragByViewportPx(page, fromSelector, dxViewport, dyViewport) {
 test.describe('Phase 4 — Drag', () => {
   test('drags an absolute element by exact viewport delta when scale=1', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 100, 50);
-    const after = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const before = await readAbsoluteOffset(page, target);
+    await dragByViewportPx(page, target, 100, 50);
+    const after = await readAbsoluteOffset(page, target);
 
     expect(after.left - before.left).toBeCloseTo(100, 0);
     expect(after.top - before.top).toBeCloseTo(50, 0);
@@ -60,12 +57,13 @@ test.describe('Phase 4 — Drag', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 0.5);
     await page.keyboard.press('e');
 
-    const before = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 100, 0);
-    const after = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const before = await readAbsoluteOffset(page, target);
+    await dragByViewportPx(page, target, 100, 0);
+    const after = await readAbsoluteOffset(page, target);
 
     expect(after.left - before.left).toBeCloseTo(200, 0);
   });
@@ -74,18 +72,19 @@ test.describe('Phase 4 — Drag', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const before = await readAbsoluteOffset(page, target);
 
-    const { x, y } = await viewportCenterOf(page, '.slide.active .wfp-badge');
+    const { x, y } = await viewportCenterOf(page, target);
     await page.mouse.move(x, y);
     await page.mouse.down();
     await page.mouse.move(x + 2, y + 1, { steps: 2 }); // under deadzone
     await page.mouse.up();
 
-    const after = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const after = await readAbsoluteOffset(page, target);
     expect(after.left).toBeCloseTo(before.left, 0);
     expect(after.top).toBeCloseTo(before.top, 0);
   });
@@ -134,19 +133,20 @@ test.describe('Phase 4 — Drag', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    // Pin a known inline style on the WFP badge.
-    await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
-      el.style.animationDelay = '200ms';
-    });
+    // Pin a known inline style on the discovered target.
+    await page.evaluate((sel) => {
+      document.querySelector(sel).style.animationDelay = '200ms';
+    }, target);
 
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 25, 0);
+    await dragByViewportPx(page, target, 25, 0);
 
     const animationDelay = await page.evaluate(
-      () => document.querySelector('.slide.active .wfp-badge').style.animationDelay,
+      (sel) => document.querySelector(sel).style.animationDelay,
+      target,
     );
     expect(animationDelay).toBe('200ms');
   });
@@ -155,10 +155,11 @@ test.describe('Phase 4 — Drag', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const before = await readAbsoluteOffset(page, target);
 
     // Mousedown on the slide itself (not a descendant); move; mouseup. Should not
     // drag any element.
@@ -171,7 +172,7 @@ test.describe('Phase 4 — Drag', () => {
     await page.mouse.move(slideRect.x + 50, slideRect.y, { steps: 4 });
     await page.mouse.up();
 
-    const after = await readAbsoluteOffset(page, '.slide.active .wfp-badge');
+    const after = await readAbsoluteOffset(page, target);
     expect(after.left).toBeCloseTo(before.left, 0);
   });
 });

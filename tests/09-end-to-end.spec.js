@@ -6,7 +6,10 @@ import {
   loadFixtureWithEditor,
   pickRandomRotationFixture,
   PINNED_PRIMARIES,
+  ROTATION_MISSING_REASON,
   disableFsa,
+  hitPointFor,
+  requireAbsoluteTarget,
 } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,12 +17,19 @@ const OUTPUT_DIR = path.join(__dirname, 'output');
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
-const FIXTURES_TO_TEST = [
-  ...PINNED_PRIMARIES,
-  pickRandomRotationFixture(),
-];
+// Rotation coverage is optional — the pool is empty on any checkout without
+// the private decks. Absent rotation must read as a skip in the report, not
+// as a missing suite (and never as a collection-time crash).
+const ROTATION = pickRandomRotationFixture();
+const FIXTURES_TO_TEST = [...PINNED_PRIMARIES, ...(ROTATION ? [ROTATION] : [])];
 
 console.log(`[09-end-to-end] running across fixtures:`, FIXTURES_TO_TEST);
+
+if (!ROTATION) {
+  test('v1 end-to-end on a rotation fixture', () => {
+    test.skip(true, ROTATION_MISSING_REASON);
+  });
+}
 
 async function setDeckScale(page, scale) {
   await page.evaluate((s) => {
@@ -44,11 +54,7 @@ async function clickToSelect(page, selector) {
 }
 
 async function dragByViewportPx(page, selector, dx, dy) {
-  const c = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const c = await hitPointFor(page, selector);
   await page.mouse.move(c.x, c.y);
   await page.mouse.down();
   await page.mouse.move(c.x + dx / 2, c.y + dy / 2, { steps: 5 });
@@ -130,32 +136,11 @@ for (const fixture of FIXTURES_TO_TEST) {
       page,
     }) => {
       await loadFixtureWithEditor(page, fixture);
+      // Discovered from the loaded deck, not named: decks differ in which
+      // element (if any) is absolutely positioned and clickable.
+      const sel = await requireAbsoluteTarget(page);
       await setDeckScale(page, 0.5);
       await page.keyboard.press('e');
-      // Find an absolute-positioned element with a stable rect.
-      const sel = await page.evaluate(() => {
-        const slide = document.querySelector('.slide.active');
-        // Prefer a known-foreground absolute element (the WFP corner badge,
-        // the Philips footer, or the first absolutely-positioned element
-        // whose pointer-events allow clicks).
-        const preferred =
-          slide.querySelector('.wfp-badge') ||
-          slide.querySelector('.philips') ||
-          [...slide.querySelectorAll('*')].find((el) => {
-            const cs = getComputedStyle(el);
-            if (cs.position !== 'absolute') return false;
-            if (cs.pointerEvents === 'none') return false;
-            const r = el.getBoundingClientRect();
-            return r.width > 20 && r.height > 20 && r.width < 400 && r.height < 400;
-          });
-        if (!preferred) return null;
-        preferred.dataset.testAbsolute = 'yes';
-        return '[data-test-absolute="yes"]';
-      });
-      if (!sel) {
-        test.skip(true, 'no absolutely-positioned target in this fixture');
-        return;
-      }
       const before = await page.evaluate(
         (s) => document.querySelector(s).offsetLeft,
         sel,
@@ -168,31 +153,9 @@ for (const fixture of FIXTURES_TO_TEST) {
 
     test('6. Cmd+Z restores position after a drag', async ({ page }) => {
       await loadFixtureWithEditor(page, fixture);
+      const sel = await requireAbsoluteTarget(page);
       await setDeckScale(page, 1);
       await page.keyboard.press('e');
-      const sel = await page.evaluate(() => {
-        const slide = document.querySelector('.slide.active');
-        // Prefer a known-foreground absolute element (the WFP corner badge,
-        // the Philips footer, or the first absolutely-positioned element
-        // whose pointer-events allow clicks).
-        const preferred =
-          slide.querySelector('.wfp-badge') ||
-          slide.querySelector('.philips') ||
-          [...slide.querySelectorAll('*')].find((el) => {
-            const cs = getComputedStyle(el);
-            if (cs.position !== 'absolute') return false;
-            if (cs.pointerEvents === 'none') return false;
-            const r = el.getBoundingClientRect();
-            return r.width > 20 && r.height > 20 && r.width < 400 && r.height < 400;
-          });
-        if (!preferred) return null;
-        preferred.dataset.testAbsolute = 'yes';
-        return '[data-test-absolute="yes"]';
-      });
-      if (!sel) {
-        test.skip(true, 'no absolutely-positioned target');
-        return;
-      }
       const before = await page.evaluate((s) => document.querySelector(s).offsetLeft, sel);
       await dragByViewportPx(page, sel, 50, 0);
       const dragged = await page.evaluate((s) => document.querySelector(s).offsetLeft, sel);

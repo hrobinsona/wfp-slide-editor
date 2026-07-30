@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget } from './_helpers.js';
 
 async function clickElement(page, selector) {
   return page.evaluate((sel) => {
@@ -139,14 +139,15 @@ test.describe('Phase 2 — Selection', () => {
 
   test('selecting another element moves the ring', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.keyboard.press('e');
 
     await clickElement(page, '.slide.active h1');
     const first = await ringState(page);
 
-    await clickElement(page, '.slide.active .wfp-badge');
+    await clickElement(page, target);
     const second = await ringState(page);
-    const second_target = await rectOf(page, '.slide.active .wfp-badge');
+    const second_target = await rectOf(page, target);
 
     expect(second.display).toBe('block');
     expect(second.left).toBeCloseTo(second_target.left, 0);

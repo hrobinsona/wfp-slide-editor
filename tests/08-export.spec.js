@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { EDITOR_PATH, loadFixtureWithEditor, disableFsa, requireAbsoluteTarget } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -181,12 +181,13 @@ test.describe('Phase 8 — Export', () => {
 
   test('exported HTML preserves a drag position change', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
     // Drag the WFP badge 60px right.
     const center = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
+      const el = document.querySelector(target);
       const r = el.getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     });
@@ -197,7 +198,7 @@ test.describe('Phase 8 — Export', () => {
     await page.mouse.up();
 
     const newLeft = await page.evaluate(
-      () => document.querySelector('.slide.active .wfp-badge').style.left,
+      () => document.querySelector(target).style.left,
     );
     expect(newLeft).not.toBe('');
 

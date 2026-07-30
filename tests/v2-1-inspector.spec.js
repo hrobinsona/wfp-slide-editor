@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 // v2.1 — inspector scaffold + minimise. The body is intentionally empty
 // in this phase; subsequent phases populate font / colour / position /
@@ -18,11 +18,7 @@ async function freezeMotion(page) {
 }
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();
@@ -50,9 +46,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector appears when an element is selected and hides when selection clears', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     await freezeMotion(page);
     const onSelect = await page.evaluate(() => ({
@@ -82,9 +79,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector hides when edit mode is toggled off', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     expect(
       await page.evaluate(() => document.querySelector('.wfpe-inspector').dataset.visible)
     ).toBe('true');
@@ -97,9 +95,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector header has a minimise control with chevron-up icon when expanded', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const header = await page.evaluate(() => {
       const h = document.querySelector('.wfpe-inspector-header');
@@ -122,9 +121,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('clicking minimise folds the body, rotates the chevron via CSS, and updates the affordance label', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await freezeMotion(page);
 
     await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
@@ -157,9 +157,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('minimised preference persists across selection changes within the session', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
     expect(
       await page.evaluate(() => document.querySelector('.wfpe-inspector').dataset.state)
@@ -178,9 +179,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector clicks do not steal selection (inspector is treated as editor-internal)', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const ringBefore = await page.evaluate(() => {
       const r = document.querySelector('.wfpe-selection-ring');
@@ -200,10 +202,11 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector applies the same ink-glass recipe as the toolbar, minus the outer drop shadow', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.emulateMedia({ colorScheme: 'light' });
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const recipe = await page.evaluate(() => {
       const cs = getComputedStyle(document.querySelector('.wfpe-inspector'));
@@ -232,10 +235,11 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('ink glass is scheme-invariant: identical surface under prefers-color-scheme: dark', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
 
     const recipe = await page.evaluate(() => {
       const cs = getComputedStyle(document.querySelector('.wfpe-inspector'));
@@ -249,9 +253,10 @@ test.describe('v2.1 — inspector scaffold + minimise', () => {
 
   test('inspector hides when slide changes (selection clears with the slide)', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     expect(
       await page.evaluate(() => document.querySelector('.wfpe-inspector').dataset.visible)
     ).toBe('true');

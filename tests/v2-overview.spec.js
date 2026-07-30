@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, disableFsa, EDITOR_PATH } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, skipIfFixtureMissing, EDITOR_PATH } from './_helpers.js';
 
 // v2.1.0 — Activation + toolbar Overview button.
 // - Hotkey `O` toggles overview from any state (edit on or off).
@@ -1322,6 +1322,9 @@ test.describe('v2.1.1 — Overview grid layout (no-editor baseline)', () => {
     // renders in normal stack-of-slides mode (not grid) — guard against
     // an overview style accidentally leaking into the fixture's own CSS
     // payload.
+    // Loads the fixture directly rather than through loadFixtureWithEditor,
+    // so the missing-fixture guard has to be applied by hand here.
+    skipIfFixtureMissing('Townhall-1.html');
     await page.goto('/fixtures/Townhall-1.html');
     await page.locator('.deck').first().waitFor({ state: 'attached' });
 

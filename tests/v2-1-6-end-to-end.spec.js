@@ -2,7 +2,13 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, pickRandomRotationFixture, PINNED_PRIMARIES, disableFsa } from './_helpers.js';
+import {
+  loadFixtureWithEditor,
+  pickRandomRotationFixture,
+  PINNED_PRIMARIES,
+  ROTATION_MISSING_REASON,
+  disableFsa,
+} from './_helpers.js';
 
 // v2.1.6 — End-to-end pass for the v2.1 Overview release.
 //
@@ -19,10 +25,19 @@ import { loadFixtureWithEditor, pickRandomRotationFixture, PINNED_PRIMARIES, dis
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
 
+// Rotation coverage is optional — see the note in tests/_helpers.js. A
+// checkout without the private decks records an explicit skip here rather
+// than aborting collection for the whole file.
 const ROTATION = pickRandomRotationFixture();
-const FIXTURES = [...PINNED_PRIMARIES, ROTATION];
+const FIXTURES = [...PINNED_PRIMARIES, ...(ROTATION ? [ROTATION] : [])];
 
-console.log(`[v2.1.6] rotation fixture this run: ${ROTATION}`);
+console.log(`[v2.1.6] rotation fixture this run: ${ROTATION ?? 'none installed'}`);
+
+if (!ROTATION) {
+  test('v2.1 Overview end-to-end on a rotation fixture', () => {
+    test.skip(true, ROTATION_MISSING_REASON);
+  });
+}
 
 async function triggerExport(page) {
   const dl = page.waitForEvent('download', { timeout: 8_000 });

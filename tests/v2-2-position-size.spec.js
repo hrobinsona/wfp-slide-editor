@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 // v2.2 — position/size two-way binding + dimension bubble. Strict TDD:
 // these tests are written before the implementation and must pass once
@@ -9,22 +9,14 @@ import { loadFixtureWithEditor } from './_helpers.js';
 test.use({ viewport: { width: 2000, height: 1200 } });
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();
 }
 
 async function dragByViewportPx(page, selector, dxView, dyView) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.move(center.x + dxView / 2, center.y + dyView / 2, { steps: 5 });
@@ -41,14 +33,19 @@ async function readInputs(page) {
 }
 
 test.describe('v2.2 — position/size binding + dimension bubble', () => {
-  test.beforeEach(async ({ page }) => {
+  // Returns the discovered target rather than stashing it in module scope:
+  // specs run fully parallel, so per-test state cannot be shared.
+  async function setup(page) {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-  });
+    return target;
+  }
 
   test('inspector body shows X/Y and W/H inputs when an element is selected', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
     const ids = await page.evaluate(() => {
       // Filter to position/size props only — phases v2.3+ add other
       // inputs (font-size, colour) to the same panel.
@@ -60,11 +57,12 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('inputs reflect the selected element\'s offsetLeft / offsetTop / offsetWidth / offsetHeight', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const expected = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const expected = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
       return { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
-    });
+    }, target);
     const inputs = await readInputs(page);
     expect(Number(inputs.x)).toBe(expected.x);
     expect(Number(inputs.y)).toBe(expected.y);
@@ -73,11 +71,13 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('dragging the element updates X and Y inputs live', async ({ page }) => {
-    // Use the H1 (centre-left of the slide), not the WFP badge — the
-    // inspector's footprint covers the top-right region by design.
-    await selectByMouse(page, '.slide.active h1');
+    const target = await setup(page);
+    // Drag a separate discovered element rather than the pinned target: the
+    // inspector's footprint covers the top-right region by design, so the
+    // drag target has to be one the inspector cannot sit on top of.
+    await selectByMouse(page, target);
     const before = await readInputs(page);
-    await dragByViewportPx(page, '.slide.active h1', 60, 30);
+    await dragByViewportPx(page, target, 60, 30);
     const after = await readInputs(page);
     expect(Number(after.x) - Number(before.x)).toBeCloseTo(60, 0);
     expect(Number(after.y) - Number(before.y)).toBeCloseTo(30, 0);
@@ -87,36 +87,37 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('typing into X and pressing Enter commits one history entry that moves the element', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    // Force the badge onto absolute positioning so an X edit is meaningful.
-    // Easiest: a no-op drag triggers the unlock-on-flow path if needed; for
-    // .wfp-badge it's already absolute in the fixture, but be defensive.
-    const before = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    // requireAbsoluteTarget guarantees the target is absolutely positioned, so
+    // an X edit is meaningful without going through the unlock-on-flow path.
+    const before = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
       return { left: el.offsetLeft, historyLen: window.__wfpEditorState?.history?.length ?? null };
-    });
+    }, target);
 
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="x"]');
     await input.click({ clickCount: 3 });
     await input.fill(String(before.left + 50));
     await input.press('Enter');
 
-    const after = await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
+    const after = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
       return { left: el.offsetLeft, inlineLeft: el.style.left };
-    });
+    }, target);
     expect(after.left).toBeCloseTo(before.left + 50, 0);
     expect(after.inlineLeft).toBe(`${before.left + 50}px`);
 
     // One undo entry restores the original left.
     await page.keyboard.press('Control+z');
-    const undone = await page.evaluate(() => document.querySelector('.slide.active .wfp-badge').offsetLeft);
+    const undone = await page.evaluate((sel) => document.querySelector(sel).offsetLeft, target);
     expect(undone).toBe(before.left);
   });
 
   test('typing into W and blurring commits the change', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await page.evaluate(() => document.querySelector('.slide.active .wfp-badge').offsetWidth);
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const before = await page.evaluate((sel) => document.querySelector(sel).offsetWidth, target);
 
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="w"]');
     await input.click({ clickCount: 3 });
@@ -124,28 +125,30 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
     // Blur by tabbing or clicking elsewhere on the inspector.
     await input.evaluate((el) => el.blur());
 
-    const after = await page.evaluate(() => document.querySelector('.slide.active .wfp-badge').offsetWidth);
+    const after = await page.evaluate((sel) => document.querySelector(sel).offsetWidth, target);
     expect(after).toBe(before + 25);
   });
 
   test('typing without committing (no Enter, no blur) does not change the element', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await page.evaluate(() => document.querySelector('.slide.active .wfp-badge').offsetWidth);
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const before = await page.evaluate((sel) => document.querySelector(sel).offsetWidth, target);
 
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="w"]');
     await input.focus();
     await input.fill(String(before + 100));
 
-    const mid = await page.evaluate(() => document.querySelector('.slide.active .wfp-badge').offsetWidth);
+    const mid = await page.evaluate((sel) => document.querySelector(sel).offsetWidth, target);
     expect(mid).toBe(before);
   });
 
   test('dimension bubble renders the W × H chip above the selection ring', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const bubble = await page.evaluate(() => {
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const bubble = await page.evaluate((sel) => {
       const b = document.querySelector('#wfp-editor-root .wfpe-dim-bubble');
       const r = document.querySelector('#wfp-editor-root .wfpe-selection-ring');
-      const el = document.querySelector('.slide.active .wfp-badge');
+      const el = document.querySelector(sel);
       const expectedText = `${el.offsetWidth} × ${el.offsetHeight}`;
       return {
         present: !!b,
@@ -155,7 +158,7 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
         ringTop: Math.round(r.getBoundingClientRect().top),
         expectedText,
       };
-    });
+    }, target);
     expect(bubble.present).toBe(true);
     expect(bubble.display).not.toBe('none');
     // px strings format consistently regardless of locale.
@@ -166,9 +169,10 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('dimension bubble updates live during resize', async ({ page }) => {
+    const target = await setup(page);
     // Select the WFP badge first, then minimise the inspector so its
     // top-right footprint stops covering the badge's SE handle.
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    await selectByMouse(page, target);
     await page.locator('#wfp-editor-root .wfpe-inspector-minimise').click();
 
     const before = await page.evaluate(() =>
@@ -196,6 +200,7 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('dimension bubble hides during inline text edit (mirrors the ring)', async ({ page }) => {
+    const target = await setup(page);
     await page.evaluate(() => document.querySelector('.slide.active h1').click());
     const beforeBubble = await page.evaluate(() =>
       getComputedStyle(document.querySelector('#wfp-editor-root .wfpe-dim-bubble')).display
@@ -212,7 +217,8 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
   });
 
   test('inspector input commits do not deselect the element', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="x"]');
     await input.click({ clickCount: 3 });
     await input.fill('500');

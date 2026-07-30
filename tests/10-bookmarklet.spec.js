@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { skipIfFixtureMissing } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -66,6 +67,10 @@ test.describe('Phase 10 — Bookmarklet generator', () => {
     expect(javascriptUrl.startsWith('javascript:')).toBe(true);
     const body = javascriptUrl.slice('javascript:'.length);
 
+    // Loads the fixture directly rather than through loadFixtureWithEditor
+    // (the point of this spec is the bookmarklet's own injection path), so
+    // the missing-fixture guard has to be applied by hand here.
+    skipIfFixtureMissing('Townhall-1.html');
     await page.goto('/fixtures/Townhall-1.html');
     await page.locator('.deck').first().waitFor({ state: 'attached', timeout: 20_000 });
 

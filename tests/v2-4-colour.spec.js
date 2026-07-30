@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, hitPointFor } from './_helpers.js';
 
 // v2.4 — colour controls (text + background). Strict TDD for logic;
 // the UI shell (swatch sitting in front of native <input type="color">,
@@ -13,11 +13,7 @@ import { loadFixtureWithEditor } from './_helpers.js';
 test.use({ viewport: { width: 2000, height: 1200 } });
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();

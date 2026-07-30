@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, PINNED_PRIMARIES, pickRandomRotationFixture, disableFsa } from './_helpers.js';
+import {
+  loadFixtureWithEditor,
+  PINNED_PRIMARIES,
+  pickRandomRotationFixture,
+  ROTATION_MISSING_REASON,
+  disableFsa,
+  hitPointFor,
+} from './_helpers.js';
 
 // v2.8 — end-to-end gate. Walk a representative v2 user journey
 // against both pinned primary fixtures and a randomly chosen rotation
@@ -9,15 +16,21 @@ import { loadFixtureWithEditor, PINNED_PRIMARIES, pickRandomRotationFixture, dis
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
-const FIXTURES_TO_RUN = [...PINNED_PRIMARIES, pickRandomRotationFixture()];
+// Rotation coverage is optional — see the note in tests/_helpers.js. When no
+// rotation deck is installed the suite still reports; it just records an
+// explicit skip in place of the rotation pass.
+const ROTATION = pickRandomRotationFixture();
+const FIXTURES_TO_RUN = [...PINNED_PRIMARIES, ...(ROTATION ? [ROTATION] : [])];
 console.log(`v2.8 end-to-end fixtures: ${FIXTURES_TO_RUN.join(', ')}`);
 
+if (!ROTATION) {
+  test('v2.8 end-to-end on a rotation fixture', () => {
+    test.skip(true, ROTATION_MISSING_REASON);
+  });
+}
+
 async function selectByMouse(page, selector) {
-  const c = await page.evaluate((s) => {
-    const el = document.querySelector(s);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const c = await hitPointFor(page, selector);
   await page.mouse.move(c.x, c.y);
   await page.mouse.down();
   await page.mouse.up();

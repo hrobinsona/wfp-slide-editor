@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, hitPointFor } from './_helpers.js';
 
 // v2.3 — font-size control (px input + −/+ stepper buttons) bound to the
 // same value. Strict TDD. Restyled by v2.10 "Ink Glass" (design 3b),
@@ -11,11 +11,7 @@ import { loadFixtureWithEditor } from './_helpers.js';
 test.use({ viewport: { width: 2000, height: 1200 } });
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();

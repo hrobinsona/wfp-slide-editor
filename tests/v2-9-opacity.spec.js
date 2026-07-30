@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, waitForSlideSettled, hitPointFor } from './_helpers.js';
 
 // v2.9 — opacity row. Input + slider, both bound to the selected
 // element's opacity (stored as 0..1 in CSS, surfaced as 0..100 % in
@@ -10,17 +10,16 @@ import { loadFixtureWithEditor } from './_helpers.js';
 test.use({ viewport: { width: 2000, height: 1200 } });
 
 async function selectByMouse(page, selector) {
-  const center = await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  const center = await hitPointFor(page, selector);
   await page.mouse.move(center.x, center.y);
   await page.mouse.down();
   await page.mouse.up();
 }
 
+// Decks transition opacity on their entrance elements, so a computed read
+// straight after a write lands mid-transition. Settle first, then read.
 async function readOpacity(page, selector) {
+  await waitForSlideSettled(page);
   return page.evaluate(
     (sel) => parseFloat(getComputedStyle(document.querySelector(sel)).opacity),
     selector,
@@ -38,15 +37,20 @@ async function readOpacityControls(page) {
 }
 
 test.describe('v2.9 — opacity', () => {
-  test.beforeEach(async ({ page }) => {
+  // Returns the discovered target rather than stashing it in module scope:
+  // specs run fully parallel, so per-test state cannot be shared.
+  async function setup(page) {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
     await page.keyboard.press('e');
-  });
+    return target;
+  }
 
   test('opacity row is present for any selection and starts at the live computed value', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const live = await readOpacity(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const live = await readOpacity(page, target);
     const controls = await readOpacityControls(page);
     const expected = Math.round(live * 100);
     expect(Number(controls.input)).toBe(expected);
@@ -54,23 +58,25 @@ test.describe('v2.9 — opacity', () => {
   });
 
   test('typing a percent into the input and pressing Enter applies as one history entry', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await readOpacity(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const before = await readOpacity(page, target);
 
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacity"]');
     await input.click({ clickCount: 3 });
     await input.fill('40');
     await input.press('Enter');
 
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBeCloseTo(0.4, 2);
+    expect(await readOpacity(page, target)).toBeCloseTo(0.4, 2);
 
     await page.keyboard.press('Control+z');
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBeCloseTo(before, 2);
+    expect(await readOpacity(page, target)).toBeCloseTo(before, 2);
   });
 
   test('slider drag from grab to release = exactly one history entry', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
-    const before = await readOpacity(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
+    const before = await readOpacity(page, target);
 
     await page.evaluate(() => {
       const slider = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
@@ -80,29 +86,31 @@ test.describe('v2.9 — opacity', () => {
       slider.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
 
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBeCloseTo(0.25, 2);
+    expect(await readOpacity(page, target)).toBeCloseTo(0.25, 2);
 
     await page.keyboard.press('Control+z');
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBeCloseTo(before, 2);
+    expect(await readOpacity(page, target)).toBeCloseTo(before, 2);
   });
 
   test('clamps to [0, 100] regardless of which control drives the change', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
     const input = page.locator('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacity"]');
 
     await input.click({ clickCount: 3 });
     await input.fill('-50');
     await input.press('Enter');
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBe(0);
+    expect(await readOpacity(page, target)).toBe(0);
 
     await input.click({ clickCount: 3 });
     await input.fill('999');
     await input.press('Enter');
-    expect(await readOpacity(page, '.slide.active .wfp-badge')).toBe(1);
+    expect(await readOpacity(page, target)).toBe(1);
   });
 
   test('changing opacity via the slider updates the input readout', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
 
     await page.evaluate(() => {
       const slider = document.querySelector('#wfp-editor-root .wfpe-inspector input[data-wfpe-prop="opacitySlider"]');
@@ -118,7 +126,8 @@ test.describe('v2.9 — opacity', () => {
   });
 
   test('opacity keystrokes inside the input do not bubble to the editor', async ({ page }) => {
-    await selectByMouse(page, '.slide.active .wfp-badge');
+    const target = await setup(page);
+    await selectByMouse(page, target);
     const before = await page.evaluate(() => document.querySelector('#wfp-editor-root .wfpe-mode-badge').dataset.mode);
     expect(before).toBe('on');
 

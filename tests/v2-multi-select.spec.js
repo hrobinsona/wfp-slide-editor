@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, hitPointFor } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -148,11 +148,7 @@ async function readOffsets(page) {
 }
 
 async function viewportCenterOf(page, selector) {
-  return page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  return hitPointFor(page, selector);
 }
 
 async function dragByViewportPx(page, selector, dxViewport, dyViewport) {

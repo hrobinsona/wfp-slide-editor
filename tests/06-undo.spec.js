@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
@@ -43,11 +43,7 @@ async function readBox(page, selector) {
 }
 
 async function viewportCenter(page, selector) {
-  return page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, selector);
+  return hitPointFor(page, selector);
 }
 
 async function dragByViewportPx(page, selector, dx, dy) {
@@ -62,54 +58,57 @@ async function dragByViewportPx(page, selector, dx, dy) {
 test.describe('Phase 6 — Undo/redo', () => {
   test('Cmd+Z restores the position after a drag', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 80, 40);
-    const dragged = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
+    await dragByViewportPx(page, target, 80, 40);
+    const dragged = await readBox(page, target);
     expect(dragged.left - before.left).toBeCloseTo(80, 0);
 
     await page.keyboard.press('ControlOrMeta+z');
-    const restored = await readBox(page, '.slide.active .wfp-badge');
+    const restored = await readBox(page, target);
     expect(restored.left).toBeCloseTo(before.left, 0);
     expect(restored.top).toBeCloseTo(before.top, 0);
   });
 
   test('Cmd+Shift+Z (redo) reapplies the dragged position', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 60, 0);
-    const dragged = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
+    await dragByViewportPx(page, target, 60, 0);
+    const dragged = await readBox(page, target);
 
     await page.keyboard.press('ControlOrMeta+z');
-    const undone = await readBox(page, '.slide.active .wfp-badge');
+    const undone = await readBox(page, target);
     expect(undone.left).toBeCloseTo(before.left, 0);
 
     await page.keyboard.press('ControlOrMeta+Shift+z');
-    const redone = await readBox(page, '.slide.active .wfp-badge');
+    const redone = await readBox(page, target);
     expect(redone.left).toBeCloseTo(dragged.left, 0);
     expect(redone.top).toBeCloseTo(dragged.top, 0);
   });
 
   test('Cmd+Y is an alias for redo', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    const target = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    const before = await readBox(page, '.slide.active .wfp-badge');
-    await dragByViewportPx(page, '.slide.active .wfp-badge', 50, 0);
-    const dragged = await readBox(page, '.slide.active .wfp-badge');
+    const before = await readBox(page, target);
+    await dragByViewportPx(page, target, 50, 0);
+    const dragged = await readBox(page, target);
     await page.keyboard.press('ControlOrMeta+z');
-    expect((await readBox(page, '.slide.active .wfp-badge')).left).toBeCloseTo(
+    expect((await readBox(page, target)).left).toBeCloseTo(
       before.left,
       0,
     );
     await page.keyboard.press('ControlOrMeta+y');
-    expect((await readBox(page, '.slide.active .wfp-badge')).left).toBeCloseTo(
+    expect((await readBox(page, target)).left).toBeCloseTo(
       dragged.left,
       0,
     );
