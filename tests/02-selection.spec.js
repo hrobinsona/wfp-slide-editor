@@ -220,8 +220,18 @@ test.describe('Phase 2 — Selection', () => {
     await clickElement(page, '.slide.active h1');
     expect((await ringState(page)).display).toBe('block');
 
-    // Advance via the fixture's own goTo() helper to mimic a real slide change.
-    await page.evaluate(() => window.goTo(1));
+    // Advance the deck the way the editor's own overview does: move `.active`
+    // to the next slide. A global goTo() was an artefact of the retired
+    // fixtures, not part of the deck contract in DESIGN.md.
+    await page.evaluate(() => {
+      const slides = [...document.querySelectorAll('.deck > .slide')];
+      const current = slides.findIndex((s) => s.classList.contains('active'));
+      const next = slides[current + 1] || slides[0];
+      slides.forEach((s) => {
+        if (s !== next) s.classList.remove('active', 'visible');
+      });
+      next.classList.add('active');
+    });
     // MutationObserver runs as a microtask; await one tick.
     await page.waitForFunction(() => {
       const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring');

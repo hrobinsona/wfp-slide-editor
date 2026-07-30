@@ -2,7 +2,15 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor, disableFsa, requireAbsoluteTarget } from './_helpers.js';
+import {
+  EDITOR_PATH,
+  loadFixtureWithEditor,
+  disableFsa,
+  requireAbsoluteTarget,
+  hitPointFor,
+  EDITOR_MARKER_ATTR_RE,
+  parseSlideTags,
+} from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -88,26 +96,13 @@ async function readDownloadAsString(download) {
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
 }
 
-function extractActiveSlideIdsFromHtml(html) {
-  const ids = [];
-  const re = /<div\s+class="([^"]*\bslide\b[^"]*)"[^>]*id="([^"]+)"/g;
-  let match;
-  while ((match = re.exec(html)) !== null) {
-    const classes = match[1].split(/\s+/);
-    if (classes.includes('active')) ids.push(match[2]);
-  }
-  return ids;
-}
-
-function extractActiveProgressIndicesFromHtml(html) {
-  const indices = [];
-  const re = /<div\s+class="([^"]*\bprogress-dot\b[^"]*)"[^>]*onclick="goTo\((\d+)\)"/g;
-  let match;
-  while ((match = re.exec(html)) !== null) {
-    const classes = match[1].split(/\s+/);
-    if (classes.includes('active')) indices.push(Number(match[2]));
-  }
-  return indices;
+// Slide POSITION, not slide id: ids and element tags are per-deck authoring
+// choices (the retired fixture used <div id="s0">, the current template uses
+// bare <section>), while "which slide carries .active" is the contract.
+function extractActiveSlideIndicesFromHtml(html) {
+  return parseSlideTags(html)
+    .map((slide, index) => (slide.classes.includes('active') ? index : null))
+    .filter((index) => index !== null);
 }
 
 function extractProgressDotCountFromHtml(html) {
@@ -150,7 +145,7 @@ test.describe('Phase 8 — Export', () => {
 
     expect(content).not.toContain('id="wfp-editor-root"');
     expect(content).not.toContain('editor.js');
-    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    expect(content).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(content).not.toContain('contenteditable=');
   });
 
@@ -185,12 +180,8 @@ test.describe('Phase 8 — Export', () => {
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
-    // Drag the WFP badge 60px right.
-    const center = await page.evaluate(() => {
-      const el = document.querySelector(target);
-      const r = el.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    });
+    // Drag the discovered target 60px right.
+    const center = await hitPointFor(page, target);
     await page.mouse.move(center.x, center.y);
     await page.mouse.down();
     await page.mouse.move(center.x + 30, center.y, { steps: 4 });
@@ -198,7 +189,8 @@ test.describe('Phase 8 — Export', () => {
     await page.mouse.up();
 
     const newLeft = await page.evaluate(
-      () => document.querySelector(target).style.left,
+      (sel) => document.querySelector(sel).style.left,
+      target,
     );
     expect(newLeft).not.toBe('');
 
@@ -260,7 +252,7 @@ test.describe('Phase 8 — Export', () => {
 
     expect(content).toContain('<span style="color: rgb(34, 85, 136);">Beta</span>');
     expect(content).not.toContain('contenteditable=');
-    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    expect(content).not.toMatch(EDITOR_MARKER_ATTR_RE);
   });
 
   test('shows a "Exported to ..." toast after a successful export', async ({ page }) => {
@@ -297,11 +289,11 @@ test.describe('Phase 8 — Export', () => {
 
     // Slide deck should render and the active slide visible.
     await fresh.locator('.deck').waitFor({ state: 'attached', timeout: 5_000 });
-    const activeSlideId = await fresh.evaluate(() => {
-      const s = document.querySelector('.slide.active');
-      return s ? s.id : null;
-    });
-    expect(activeSlideId).toBeTruthy();
+    // Position, not id — see extractActiveSlideIndicesFromHtml.
+    const activeSlideCount = await fresh.evaluate(
+      () => document.querySelectorAll('.deck > .slide.active').length,
+    );
+    expect(activeSlideCount).toBe(1);
 
     // Editor UI must be absent.
     const hasRoot = await fresh.evaluate(
@@ -319,38 +311,41 @@ test.describe('Phase 8 — Export', () => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await setDeckScale(page, 1);
 
-    for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight');
+    const lastIndex = await page.evaluate(
+      () => document.querySelectorAll('.deck > .slide').length - 1,
+    );
+    for (let i = 0; i < lastIndex; i++) await page.keyboard.press('ArrowRight');
     await expect
-      .poll(() => page.evaluate(() => document.querySelector('.slide.active')?.id))
-      .toBe('s8');
+      .poll(() => page.evaluate(() =>
+        [...document.querySelectorAll('.deck > .slide')].findIndex((s) => s.classList.contains('active')),
+      ))
+      .toBe(lastIndex);
 
     await page.keyboard.press('e');
     const download = await triggerExport(page);
     const { path: outPath, content } = await readDownloadAsString(download);
 
-    expect(extractActiveSlideIdsFromHtml(content)).toEqual(['s0']);
-    expect(extractActiveProgressIndicesFromHtml(content)).toEqual([0]);
+    expect(extractActiveSlideIndicesFromHtml(content)).toEqual([0]);
 
-    const liveState = await page.evaluate(() => ({
-      activeSlideIds: [...document.querySelectorAll('.slide.active')].map((s) => s.id),
-      activeDotIndices: [...document.querySelectorAll('.progress-dot')]
-        .map((dot, index) => (dot.classList.contains('active') ? index : null))
+    // The live page must be untouched by the export: still on the last slide.
+    const liveActiveIndices = await page.evaluate(() =>
+      [...document.querySelectorAll('.deck > .slide')]
+        .map((s, index) => (s.classList.contains('active') ? index : null))
         .filter((index) => index !== null),
-    }));
-    expect(liveState).toEqual({
-      activeSlideIds: ['s8'],
-      activeDotIndices: [8],
-    });
+    );
+    expect(liveActiveIndices).toEqual([lastIndex]);
 
     const fresh = await context.newPage();
     await fresh.goto(`file://${outPath}`);
     await fresh.locator('.deck').waitFor({ state: 'attached', timeout: 5_000 });
     await fresh.keyboard.press('ArrowRight');
 
-    const activeSlideIds = await fresh.evaluate(() =>
-      [...document.querySelectorAll('.slide.active')].map((s) => s.id),
+    const activeIndices = await fresh.evaluate(() =>
+      [...document.querySelectorAll('.deck > .slide')]
+        .map((s, index) => (s.classList.contains('active') ? index : null))
+        .filter((index) => index !== null),
     );
-    expect(activeSlideIds).toEqual(['s1']);
+    expect(activeIndices).toEqual([1]);
 
     await fresh.close();
   });

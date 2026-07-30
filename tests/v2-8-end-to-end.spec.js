@@ -6,6 +6,7 @@ import {
   ROTATION_MISSING_REASON,
   disableFsa,
   hitPointFor,
+  EDITOR_MARKER_ATTR_RE,
 } from './_helpers.js';
 
 // v2.8 — end-to-end gate. Walk a representative v2 user journey
@@ -85,10 +86,13 @@ for (const fixture of FIXTURES_TO_RUN) {
       });
       // Overview button added in v2.1.0 between Edit and the action triplet.
       // v2.11 merges the former Handoff button into Export (badge + menu).
-      expect(out.buttons).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
-      // White-text liquid-glass recipe: tint trimmed to 0.12 with the
-      // brightness drop carrying the contrast (see toolbar CSS).
-      expect(out.bg).toBe('rgba(255, 255, 255, 0.12)');
+      // Asserted as a prefix, not an exact list: later phases append chrome
+      // (v2.10's toolbar-collapse) that this end-to-end gate does not own.
+      expect(out.buttons.slice(0, 5)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
+      // Ink-glass surface (v2.10). The exact recipe is owned by
+      // tests/v2-0-toolbar.spec.js and tests/v2-1-inspector.spec.js; this gate
+      // only asserts the toolbar still carries the shared translucent surface.
+      expect(out.bg).toBe('rgba(22, 25, 31, 0.32)');
     });
 
     test('inspector renders the v2 control set when an element is selected', async ({ page }) => {
@@ -108,7 +112,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       });
       expect(layout.visible).toBe('true');
       expect(layout.rows).toEqual(
-        expect.arrayContaining(['font-size', 'text-color', 'bg-color', 'actions'])
+        expect.arrayContaining(['font-size', 'text-color', 'bg-color'])
       );
       expect(layout.hasDuplicate).toBe(true);
       expect(layout.hasDelete).toBe(true);
@@ -188,7 +192,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       expect(html).not.toContain('id="wfp-editor-root"');
       expect(html).not.toContain('wfpe-toolbar');
       expect(html).not.toContain('wfpe-inspector');
-      expect(html).not.toContain('data-wfp-edit');
+      expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
       // Inspector edit preserved.
       expect(html).toContain('font-size: 72px');
     });

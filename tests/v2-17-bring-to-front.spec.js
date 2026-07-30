@@ -9,7 +9,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, disableFsa } from './_helpers.js';
+import { EDITOR_PATH, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -218,7 +218,7 @@ test.describe('v2.17 — Front (bring to front)', () => {
     await download.saveAs(outPath);
     const html = fs.readFileSync(outPath, 'utf-8');
 
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(html).not.toContain('contenteditable');
     expect(html).not.toContain('id="wfp-editor-root"');
 
@@ -795,7 +795,7 @@ test.describe('v2.17.1 — cross-container stacking', () => {
     await download.saveAs(outPath);
     const html = fs.readFileSync(outPath, 'utf-8');
 
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(html).not.toContain('contenteditable');
     expect(html).not.toContain('id="wfp-editor-root"');
 

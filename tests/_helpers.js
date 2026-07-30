@@ -39,6 +39,33 @@ export function skipIfFixtureMissing(name) {
   test.skip(!fixtureExists(name), missingFixtureReason(name));
 }
 
+// Editor markers must not survive export. Scoped to ATTRIBUTE position inside
+// a tag: the current Avent deck template legitimately mentions
+// `body[data-wfp-edit-overview="on"]` in its own stylesheet (that rule disables
+// entrance reveals while the editor's overview is on), so a bare substring check
+// fails on any deck that co-operates with the editor.
+export const EDITOR_MARKER_ATTR_RE = /<[^>]*\sdata-wfp-edit[-a-zA-Z]*\s*=/;
+
+// Parses exported HTML for slide elements, in document order.
+//
+// Both the element tag and the id are per-deck authoring choices — the retired
+// fixtures emitted `<div class="slide" id="s0">`, the current template emits a
+// bare `<section class="slide">` — so neither is assumed. `slide` must appear as
+// a whole class token, otherwise `slide-head` / `slide-body` wrappers inflate
+// the count.
+export function parseSlideTags(html) {
+  const out = [];
+  const re = /<(?:div|section|article)\s+([^>]*)>/g;
+  let match;
+  while ((match = re.exec(html)) !== null) {
+    const attrs = match[1];
+    const classes = (attrs.match(/\bclass="([^"]*)"/)?.[1] ?? '').split(/\s+/).filter(Boolean);
+    if (!classes.includes('slide')) continue;
+    out.push({ id: attrs.match(/\bid="([^"]+)"/)?.[1] ?? null, classes });
+  }
+  return out;
+}
+
 export const ROTATION_MISSING_REASON =
   'No rotation fixtures installed. The rotation pool is every .html in ' +
   'fixtures/ that contains a .deck wrapper and is not a pinned primary; deck ' +
@@ -55,7 +82,25 @@ export async function loadFixtureWithEditor(page, fixtureName) {
   await page.locator('.deck').first().waitFor({ state: 'attached', timeout: 20_000 });
   await page.addScriptTag({ path: EDITOR_PATH });
   await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
+  await stampSlideIds(page);
   await waitForSlideSettled(page);
+}
+
+// Gives every top-level slide a stable id when the deck doesn't author one.
+//
+// Overview coverage (reorder, delete, undo, export round-trip) has to name
+// slides to assert that identity survives a mutation. The retired fixtures
+// happened to author id="s0".."s8"; the current template emits bare <section
+// class="slide">, which left every one of those assertions comparing empty
+// strings — passing vacuously in some places and failing in others. Stamping
+// makes the identity explicit and deck-independent. Authored ids are never
+// overwritten.
+export async function stampSlideIds(page) {
+  await page.evaluate(() => {
+    document.querySelectorAll('.deck > .slide').forEach((slide, index) => {
+      if (!slide.id) slide.id = `s${index}`;
+    });
+  });
 }
 
 // Waits until nothing on the active slide is still animating.

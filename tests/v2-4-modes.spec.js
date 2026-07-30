@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor, disableFsa } from './_helpers.js';
+import { EDITOR_PATH, loadFixtureWithEditor, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -79,15 +79,23 @@ test.describe('v2.4.0 — Deck-root resolver', () => {
       };
     });
 
+    // Slide count comes from the loaded fixture — the resolver's contract is
+    // "don't change the slide list", not "there are nine slides".
+    const authoredSlides = await page.locator('.deck > .slide').count();
+    expect(authoredSlides).toBeGreaterThan(0);
     expect(mode).toEqual({
       hasDeckRootMarker: true,
       hasFlatRootMarker: false,
-      directSlides: 9,
+      directSlides: authoredSlides,
       activeSlides: 1,
     });
   });
 
   test('native deck root markers are scrubbed from export', async ({ page }) => {
+    // v2.11 — Cmd+S prefers the save-in-place engine wherever the File System
+    // Access API exists (headless Chromium has it on http://localhost). This
+    // assertion is about the downloaded file, so force the legacy path.
+    await disableFsa(page);
     await loadFixtureWithEditor(page, 'Townhall-1.html');
 
     const liveHasMarker = await page.evaluate(() =>
@@ -785,6 +793,8 @@ test.describe('v2.4.3 — Flat document mode', () => {
 
 test.describe('v2.4.4 — Cross-mode export round-trip', () => {
   test('native deck export has no adaptive residue and reloads as a clean native deck', async ({ page, context }) => {
+    // See the note in v2.4.0 — this assertion needs the legacy download path.
+    await disableFsa(page);
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('o');
     await page.waitForFunction(() => document.body.dataset.wfpEditOverview === 'on');
@@ -793,9 +803,9 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
     const exported = await saveExportedHtml(download);
 
     expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(exported.html).not.toContain('id="wfp-editor-root"');
-    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toMatch(/class="[^"]*\bwfpe-overview/);
     expect(exported.html).not.toContain('contenteditable=');
 
     const exportedPage = await context.newPage();
@@ -821,9 +831,9 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
     const exported = await saveExportedHtml(download);
 
     expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(exported.html).not.toContain('id="wfp-editor-root"');
-    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toMatch(/class="[^"]*\bwfpe-overview/);
     expect(exported.html).not.toContain('--wfpe-cell-w');
     expect(exported.html).not.toContain('contenteditable=');
 
@@ -864,9 +874,9 @@ test.describe('v2.4.4 — Cross-mode export round-trip', () => {
     const exported = await saveExportedHtml(download);
 
     expect(exported.html.startsWith('<!DOCTYPE html>')).toBe(true);
-    expect(exported.html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(exported.html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(exported.html).not.toContain('id="wfp-editor-root"');
-    expect(exported.html).not.toContain('wfpe-overview');
+    expect(exported.html).not.toMatch(/class="[^"]*\bwfpe-overview/);
     expect(exported.html).not.toContain('contenteditable=');
 
     const exportedPage = await context.newPage();

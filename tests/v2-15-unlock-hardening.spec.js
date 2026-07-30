@@ -24,7 +24,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, disableFsa } from './_helpers.js';
+import { EDITOR_PATH, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -571,7 +571,7 @@ test.describe('v2.15 — flat-root height survives direct-child pinning', () => 
     // Editor residue is fully scrubbed; the held height became inline on the
     // exported root (the only element allowed to gain inline style at
     // export time, precisely because the live DOM never carries it).
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(html).not.toContain('id="wfp-editor-root"');
 
     const exportedPage = await context.newPage();
@@ -651,7 +651,7 @@ test.describe('v2.15 — a padding-less flat root holds following content in pla
     await dragBySelector(page, '[data-testid="doc-block-0"]', 40, 20);
 
     const { outPath, html } = await saveExportedHtml(page);
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
 
     const exportedPage = await context.newPage();
     await exportedPage.goto(`file://${outPath}`);
@@ -1040,7 +1040,7 @@ test.describe('v2.15 — the flat-root hold is re-derived when the pinned set ch
     );
 
     const { outPath, html } = await saveExportedHtml(page);
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
 
     const exportedPage = await context.newPage();
     await exportedPage.goto(`file://${outPath}`);
@@ -1195,7 +1195,7 @@ test.describe('v2.15 — deleting pinned children releases the flat-root hold', 
 
     // …and the export agrees with the live document.
     const { outPath, html } = await saveExportedHtml(page);
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     const exportedPage = await context.newPage();
     await exportedPage.goto(`file://${outPath}`);
     const exported = await exportedPage.evaluate(() => ({
@@ -1314,7 +1314,7 @@ test.describe('v2.15 — a live refresh carries no hold residue into the new gen
     // The saved file carries the geometry as inline height (the documented
     // export persistence) and no editor markers.
     const saved = await saveInPlace(page, 1);
-    expect(saved).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(saved).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(saved).toMatch(/<main id="flat-article"[^>]*style="[^"]*height:/);
 
     // An "agent" rewrites the same file; the editor swaps it in place.
@@ -1350,7 +1350,7 @@ test.describe('v2.15 — a live refresh carries no hold residue into the new gen
 
     // Saving the refreshed document is still clean.
     const resaved = await saveInPlace(page, 2);
-    expect(resaved).not.toMatch(/data-wfp-edit[-a-zA-Z]*=/);
+    expect(resaved).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(resaved).not.toContain('id="wfp-editor-root"');
   });
 });

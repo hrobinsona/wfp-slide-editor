@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa, hitPointFor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, hitPointFor, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -334,7 +334,7 @@ test.describe('v2.x multi-select move', () => {
 
     const download = await triggerExport(page);
     const html = await readDownloadAsString(download);
-    expect(html).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(html).toContain('data-ms-flow="true"');
     expect(html).toMatch(new RegExp(`data-ms-flow="true"[^>]*left:\\s*${moved.flow.left}px`));
     expect(html).toMatch(new RegExp(`data-ms-flow="true"[^>]*top:\\s*${moved.flow.top}px`));

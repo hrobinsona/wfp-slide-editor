@@ -10,7 +10,10 @@ test.describe('Phase 1 — Editor bootstrap', () => {
 
     const badge = page.locator('#wfp-editor-root .wfpe-mode-badge');
     await expect(badge).toBeVisible();
-    await expect(badge).toHaveText(/^\s*Edit\s*$/);
+    // v2.10 ink-glass made the toggle icon-only; the label the old span
+    // provided now lives on title/aria-label (see 30-ui-inspector-controls.js).
+    await expect(badge).toHaveAttribute('aria-label', 'Toggle edit mode');
+    await expect(badge.locator('svg.wfpe-icon')).toHaveCount(1);
     await expect(badge).toHaveAttribute('data-mode', 'off');
   });
 

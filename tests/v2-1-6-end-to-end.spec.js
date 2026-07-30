@@ -8,6 +8,9 @@ import {
   PINNED_PRIMARIES,
   ROTATION_MISSING_REASON,
   disableFsa,
+  hitPointFor,
+  EDITOR_MARKER_ATTR_RE,
+  parseSlideTags,
 } from './_helpers.js';
 
 // v2.1.6 — End-to-end pass for the v2.1 Overview release.
@@ -210,11 +213,14 @@ for (const fixture of FIXTURES) {
       const html1 = await readDownloadAsString(dl1);
       // No editor chrome leaks.
       expect(html1).not.toContain('id="wfp-editor-root"');
-      expect(html1).not.toMatch(/data-wfp-edit/);
-      // No overview chrome leaks.
-      expect(html1).not.toContain('wfpe-overview');
+      expect(html1).not.toMatch(EDITOR_MARKER_ATTR_RE);
+      // No overview chrome leaks. Matched as a CLASS, not a bare substring:
+      // the current deck template declares its own
+      // --wfpe-overview-slide-display custom property so it can co-operate
+      // with the editor's overview mode.
+      expect(html1).not.toMatch(/class="[^"]*\bwfpe-overview/);
       // Slide count in exported HTML matches live (post-delete) count.
-      const exportedSlideCount = (html1.match(/<div\s+class="slide(?:\s+[^"]*)?"/g) || []).length;
+      const exportedSlideCount = parseSlideTags(html1).length;
       expect(exportedSlideCount).toBe(afterDelete.length);
 
       // Undo restores the slide.
@@ -261,7 +267,11 @@ for (const fixture of FIXTURES) {
       // Find a text-bearing element on the active slide.
       const target = page.locator('.slide.active h1, .slide.active h2, .slide.active p').first();
       const initialPx = await target.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
-      await target.click({ force: true });
+      // Click a point that hit-tests to the element itself: the geometric
+      // centre of a headline lands on the accent span the current decks nest
+      // inside it, which would select the span instead.
+      const point = await hitPointFor(page, '.slide.active h1, .slide.active h2, .slide.active p');
+      await page.mouse.click(point.x, point.y);
       await page.keyboard.press('ArrowUp');
       const nudged = await target.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
       expect(nudged).toBe(initialPx + 1);

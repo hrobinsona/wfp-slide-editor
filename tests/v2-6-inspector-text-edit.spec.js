@@ -92,17 +92,30 @@ test.describe('v2.6 — inspector during inline text edit', () => {
       await page.evaluate(() => document.querySelector('.slide.active h1').getAttribute('contenteditable'))
     ).toBe('true');
 
-    // Mousedown on a different slide element — simulate by dispatching
-    // a real event on the WFP badge (which sits outside the inspector
-    // footprint of the H1's vicinity).
-    await page.evaluate(() => {
-      const el = document.querySelector('.slide.active .wfp-badge');
+    // Mousedown on a DIFFERENT slide element. Discovered from the fixture
+    // rather than named: the element only has to be another selectable node on
+    // the active slide, outside the H1.
+    const other = await page.evaluate(() => {
+      const slide = document.querySelector('.slide.active');
+      const h1 = slide.querySelector('h1');
+      const el = [...slide.querySelectorAll('*')].find((n) => {
+        if (h1 && (n === h1 || h1.contains(n) || n.contains(h1))) return false;
+        const r = n.getBoundingClientRect();
+        return r.width > 20 && r.height > 12;
+      });
+      if (!el) return null;
+      el.dataset.testOther = 'yes';
+      return '[data-test-other="yes"]';
+    });
+    test.skip(!other, 'no second selectable element on this fixture\'s active slide');
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
       const r = el.getBoundingClientRect();
       el.dispatchEvent(new MouseEvent('mousedown', {
         bubbles: true, cancelable: true,
         clientX: r.left + 1, clientY: r.top + 1, button: 0,
       }));
-    });
+    }, other);
 
     const editingAfter = await page.evaluate(() =>
       document.querySelector('.slide.active h1').getAttribute('contenteditable')

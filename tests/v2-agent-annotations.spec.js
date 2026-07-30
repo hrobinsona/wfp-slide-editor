@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, disableFsa } from './_helpers.js';
+import { EDITOR_PATH, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -598,7 +598,7 @@ test.describe('v2.5 — agent handoff annotations', () => {
     expect(content).not.toContain('id="wfp-editor-root"');
     expect(content).not.toContain('editor.js');
     expect(content).not.toContain('contenteditable=');
-    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    expect(content).not.toMatch(EDITOR_MARKER_ATTR_RE);
 
     expect(payload).toMatchObject({
       version: 1,

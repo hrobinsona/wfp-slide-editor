@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -17,10 +17,14 @@ async function loadOverview(page) {
   await page.waitForFunction(() => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length > 0);
 }
 
+// Returns the discovered target instead of stashing it in module scope:
+// specs run fully parallel, so per-test state cannot be shared.
 async function loadEditReady(page) {
   await loadFixtureWithEditor(page, 'Townhall-1.html');
+  const target = await requireAbsoluteTarget(page);
   await page.evaluate(() => { document.querySelector('.deck').style.transform = 'scale(1)'; });
   await page.keyboard.press('e');
+  return target;
 }
 
 async function getSlideOrder(page) {
@@ -184,7 +188,7 @@ test.describe('v2 overview add slide', () => {
   });
 
   test('copied element can be pasted onto a newly inserted blank slide', async ({ page }) => {
-    await loadEditReady(page);
+    const target = await loadEditReady(page);
 
     await selectByMouse(page, target);
     await page.keyboard.press('ControlOrMeta+c');
@@ -196,14 +200,20 @@ test.describe('v2 overview add slide', () => {
     await page.locator('#wfp-editor-root .wfpe-overview-thumb').nth(count).click();
     await page.keyboard.press('ControlOrMeta+v');
 
-    const pasted = await page.evaluate(() => {
+    const pasted = await page.evaluate((sel) => {
       const active = document.querySelector('.slide.active');
-      const badge = active.querySelector('.wfp-badge');
-      return { activeId: active.id, badgeCount: active.querySelectorAll('.wfp-badge').length, badgeText: badge?.textContent };
-    });
-    expect(pasted.activeId).toBe('s9');
-    expect(pasted.badgeCount).toBe(1);
-    expect(pasted.badgeText).toBe('WFP');
+      const local = sel.replace('.slide.active ', '');
+      const clones = active.querySelectorAll(local);
+      return {
+        activeIndex: [...document.querySelectorAll('.deck > .slide')].indexOf(active),
+        cloneCount: clones.length,
+        cloneText: clones[0]?.textContent,
+      };
+    }, target);
+    // The blank slide was appended, so it is last.
+    expect(pasted.activeIndex).toBe(count);
+    expect(pasted.cloneCount).toBe(1);
+    expect(pasted.cloneText).not.toBe(undefined);
   });
 
   test('export includes the inserted blank slide without editor markers', async ({ page }) => {
@@ -217,8 +227,11 @@ test.describe('v2 overview add slide', () => {
     const download = await triggerExport(page);
     const content = await readDownloadAsString(download);
 
-    expect(content).toContain('<div class="slide" id="s9"></div>');
-    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    // The inserted blank slide is empty and carries only the `slide` class;
+    // the element tag is the editor's choice, and the id comes from
+    // stampSlideIds, so match on shape rather than an exact string.
+    expect(content).toMatch(/<(?:div|section|article)\s+class="slide"[^>]*>\s*<\/(?:div|section|article)>/);
+    expect(content).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(content).not.toContain('id="wfp-editor-root"');
   });
 });

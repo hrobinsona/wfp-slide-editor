@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, disableFsa, skipIfFixtureMissing, EDITOR_PATH } from './_helpers.js';
+import {
+  loadFixtureWithEditor,
+  disableFsa,
+  skipIfFixtureMissing,
+  hitPointFor,
+  EDITOR_MARKER_ATTR_RE,
+  EDITOR_PATH,
+  parseSlideTags,
+} from './_helpers.js';
 
 // v2.1.0 — Activation + toolbar Overview button.
 // - Hotkey `O` toggles overview from any state (edit on or off).
@@ -34,10 +42,15 @@ test.describe('v2.1.0 — Overview activation', () => {
       }));
     });
 
-    expect(buttons.map((b) => b.action)).toEqual(['edit', 'overview', 'export', 'handoff', 'undo', 'redo']);
+    // v2.11 merged Handoff into Export (badge + menu); v2.10 appended the
+    // toolbar-collapse control. Asserted as a prefix so this spec stays about
+    // Overview's position rather than the full toolbar inventory.
+    expect(buttons.map((b) => b.action).slice(0, 5)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
     const overview = buttons.find((b) => b.action === 'overview');
     expect(overview.hasIcon).toBe(true);
-    expect(overview.text).toBe('Overview');
+    // v2.10 ink-glass made the toolbar icon-only; the label moved to
+    // title/aria-label.
+    expect(overview.text).toBe('');
 
     await expect(page.locator(overviewBtnSel)).toHaveAttribute('data-mode', 'off');
   });
@@ -88,8 +101,9 @@ test.describe('v2.1.0 — Overview activation', () => {
     await page.keyboard.press('e');
     await expect(editBadge).toHaveAttribute('data-mode', 'on');
 
-    const target = page.locator('.slide.active h1, .slide.active h2, .slide.active p').first();
-    await target.click();
+    const targetSel = '.slide.active h1, .slide.active h2, .slide.active p';
+    const point = await hitPointFor(page, targetSel);
+    await page.mouse.click(point.x, point.y);
     await expect(page.locator(ringSel)).not.toHaveCSS('display', 'none');
 
     // Enter overview.
@@ -132,8 +146,8 @@ test.describe('v2.1.0 — Overview activation', () => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('e');
 
-    const target = page.locator('.slide.active h1, .slide.active h2, .slide.active p').first();
-    await target.dblclick();
+    const point = await hitPointFor(page, '.slide.active h1, .slide.active h2, .slide.active p');
+    await page.mouse.dblclick(point.x, point.y);
 
     const overviewBtn = page.locator(overviewBtnSel);
     await page.keyboard.type('o');
@@ -370,17 +384,20 @@ test.describe('v2.1.1 — Overview grid layout', () => {
     await page.keyboard.press('e');
 
     // Select something so the inspector is visible.
-    const target = page.locator('.slide.active h1, .slide.active h2, .slide.active p').first();
-    await target.click();
+    const targetSel = '.slide.active h1, .slide.active h2, .slide.active p';
+    const point = await hitPointFor(page, targetSel);
+    await page.mouse.click(point.x, point.y);
     const inspector = page.locator('#wfp-editor-root .wfpe-inspector');
     await expect(inspector).toHaveAttribute('data-visible', 'true');
 
     await page.keyboard.press('o');
 
-    // Selection cleared (inspector data-visible flips), and CSS rule on
-    // body[data-wfp-edit-overview="on"] also forces the panel hidden.
+    // Selection cleared (the dock's data-visible flips) and the panel is
+    // taken out of view. Since v2.10 the dock hides by collapsing its grid row
+    // to 0fr and applying visibility:hidden rather than display:none, so this
+    // asserts "not visible", not one particular mechanism.
     await expect(inspector).toHaveAttribute('data-visible', 'false');
-    await expect(inspector).toHaveCSS('display', 'none');
+    await expect(inspector).toBeHidden();
   });
 
   test('clicks inside the deck during overview do NOT select an element (v2.1.2 owns thumb clicks)', async ({ page }) => {
@@ -1147,25 +1164,21 @@ async function readExportedHtml(download) {
   return fs.readFileSync(out, 'utf-8');
 }
 
+// Pull slide ids in document order from the exported HTML. Slide ids come from
+// stampSlideIds (see tests/_helpers.js) when the deck doesn't author them, and
+// the element/attribute ORDER is a per-deck authoring choice — the retired
+// fixture emitted <div class="slide" id="s0">, the current template emits
+// <section class="slide" id="s0"> — so both are matched loosely.
 function extractSlideIdsFromHtml(html) {
-  // Pull slide ids in document order from the exported HTML. The
-  // fixtures use id="s0" through "s8" on each .slide.
-  const ids = [];
-  const re = /<div\s+class="slide(?:\s+active)?"\s+id="(s\d+)"/g;
-  let m;
-  while ((m = re.exec(html)) !== null) ids.push(m[1]);
-  return ids;
+  return parseSlideTags(html)
+    .map((s) => s.id)
+    .filter((id) => id !== null);
 }
 
 function extractActiveSlideIdsFromHtml(html) {
-  const ids = [];
-  const re = /<div\s+class="([^"]*\bslide\b[^"]*)"[^>]*id="(s\d+)"/g;
-  let m;
-  while ((m = re.exec(html)) !== null) {
-    const classes = m[1].split(/\s+/);
-    if (classes.includes('active')) ids.push(m[2]);
-  }
-  return ids;
+  return parseSlideTags(html)
+    .filter((s) => s.classes.includes('active') && s.id !== null)
+    .map((s) => s.id);
 }
 
 test.describe('v2.1.5 — Export round-trip', () => {
@@ -1232,7 +1245,7 @@ test.describe('v2.1.5 — Export round-trip', () => {
 
     // Body marker stripped.
     expect(html).not.toMatch(/<body[^>]*data-wfp-edit-overview/);
-    expect(html).not.toMatch(/data-wfp-edit-overview/);
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
     // No editor root.
     expect(html).not.toContain('id="wfp-editor-root"');
     // No overview overlay markers.
@@ -1242,8 +1255,9 @@ test.describe('v2.1.5 — Export round-trip', () => {
     expect(html).not.toContain('wfpe-overview-drag-handle');
     expect(html).not.toContain('wfpe-overview-badge');
     expect(html).not.toContain('wfpe-overview-drop-indicator');
-    // No data-wfp-edit-* anywhere.
-    expect(html).not.toMatch(/data-wfp-edit/);
+    // No data-wfp-edit-* attribute anywhere (see EDITOR_MARKER_ATTR_RE — the
+    // deck's own stylesheet legitimately names the overview attribute).
+    expect(html).not.toMatch(EDITOR_MARKER_ATTR_RE);
   });
 
   test('exported HTML preserves the original .deck rendering (no overview override leaks)', async ({ page }) => {

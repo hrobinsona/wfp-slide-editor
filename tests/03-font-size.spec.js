@@ -114,28 +114,27 @@ test.describe('Phase 3 — Font-size keyboard nudge', () => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     await page.keyboard.press('e');
 
-    const slidesBefore = await page.evaluate(
-      () => [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains('active')),
-    );
+    // Snapshot the WHOLE deck, not just `.slide.active *`: with nothing
+    // selected the arrows still belong to the deck (see
+    // tests/v2-edit-mode-nav.spec.js), and how a deck maps ArrowUp/ArrowDown is
+    // its own choice — the current template treats them as prev/next, the
+    // retired fixture only bound left/right. Comparing the active slide's
+    // children before and after therefore compared two different slides.
     const beforeAll = await page.evaluate(() =>
-      [...document.querySelectorAll('.slide.active *')].map((el) => el.style.fontSize),
+      [...document.querySelectorAll('.deck *')].map((el) => el.style.fontSize),
     );
 
     await page.keyboard.press('ArrowUp');
     await page.keyboard.press('ArrowDown');
 
     const afterAll = await page.evaluate(() =>
-      [...document.querySelectorAll('.slide.active *')].map((el) => el.style.fontSize),
-    );
-    const slidesAfter = await page.evaluate(
-      () => [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains('active')),
+      [...document.querySelectorAll('.deck *')].map((el) => el.style.fontSize),
     );
 
-    // No element changed inline font-size, and the active slide didn't move
-    // (capture-phase suppression keeps fixture nav from firing on ArrowUp/Down,
-    // but Phase 3's spec only cares that font-sizes don't change).
+    // Phase 3's contract: with no selection, an arrow press never writes an
+    // inline font-size anywhere. Slide navigation is owned by
+    // tests/v2-edit-mode-nav.spec.js.
     expect(afterAll).toEqual(beforeAll);
-    expect(slidesAfter).toBe(slidesBefore);
   });
 
   test('arrows do nothing when edit mode is OFF', async ({ page }) => {

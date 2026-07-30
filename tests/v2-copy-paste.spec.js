@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
+import { loadFixtureWithEditor, disableFsa, requireAbsoluteTarget, hitPointFor, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -257,16 +257,16 @@ test.describe('v2 copy/paste/duplicate', () => {
     const heading = await headingSelector(page);
 
     await selectByMouse(page, heading);
-    const beforeHtml = await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML);
+    const beforeHtml = await page.evaluate(() => document.querySelector('[data-test-heading="yes"]').innerHTML);
     await dblclickElement(page, heading);
     await page.evaluate(() => {
-      document.querySelector(HEADING_SEL).appendChild(document.createTextNode(' DUPLICATED'));
+      document.querySelector('[data-test-heading="yes"]').appendChild(document.createTextNode(' DUPLICATED'));
     });
 
     await page.locator('#wfp-editor-root .wfpe-duplicate-btn').click();
 
     const duplicated = await page.evaluate(() => {
-      const headings = [...document.querySelectorAll(HEADING_SEL)];
+      const headings = [...document.querySelectorAll('[data-test-heading="yes"]')];
       return {
         count: headings.length,
         firstEditable: headings[0].getAttribute('contenteditable'),
@@ -286,7 +286,7 @@ test.describe('v2 copy/paste/duplicate', () => {
     await expect(page.locator(heading)).toContainText('DUPLICATED');
 
     await page.keyboard.press('ControlOrMeta+z');
-    expect(await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML)).toBe(beforeHtml);
+    expect(await page.evaluate(() => document.querySelector('[data-test-heading="yes"]').innerHTML)).toBe(beforeHtml);
   });
 
   test('inspector Delete commits an open text edit before removing with undo order intact', async ({ page }) => {
@@ -294,10 +294,10 @@ test.describe('v2 copy/paste/duplicate', () => {
     const heading = await headingSelector(page);
 
     await selectByMouse(page, heading);
-    const beforeHtml = await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML);
+    const beforeHtml = await page.evaluate(() => document.querySelector('[data-test-heading="yes"]').innerHTML);
     await dblclickElement(page, heading);
     await page.evaluate(() => {
-      document.querySelector(HEADING_SEL).appendChild(document.createTextNode(' DELETED'));
+      document.querySelector('[data-test-heading="yes"]').appendChild(document.createTextNode(' DELETED'));
     });
 
     await page.locator('#wfp-editor-root .wfpe-delete-btn').click();
@@ -307,11 +307,11 @@ test.describe('v2 copy/paste/duplicate', () => {
     await expect(page.locator(heading)).toHaveCount(1);
     await expect(page.locator(heading)).toContainText('DELETED');
     expect(
-      await page.evaluate(() => document.querySelector(HEADING_SEL).getAttribute('contenteditable'))
+      await page.evaluate(() => document.querySelector('[data-test-heading="yes"]').getAttribute('contenteditable'))
     ).toBe(null);
 
     await page.keyboard.press('ControlOrMeta+z');
-    expect(await page.evaluate(() => document.querySelector(HEADING_SEL).innerHTML)).toBe(beforeHtml);
+    expect(await page.evaluate(() => document.querySelector('[data-test-heading="yes"]').innerHTML)).toBe(beforeHtml);
   });
 
   test('undo removes the pasted element and reselects the original; redo restores the clone', async ({ page }) => {
@@ -358,7 +358,7 @@ test.describe('v2 copy/paste/duplicate', () => {
 
     await dblclickElement(page, heading);
     await page.evaluate(() => {
-      const el = document.querySelector(HEADING_SEL);
+      const el = document.querySelector('[data-test-heading="yes"]');
       const textNode = [...el.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
       const range = document.createRange();
       range.selectNodeContents(textNode || el);
@@ -431,7 +431,7 @@ test.describe('v2 copy/paste/duplicate', () => {
     const cls = target.split('.').pop();
     const occurrences = content.match(new RegExp(`class="[^"]*\\b${cls}\\b`, 'g'))?.length ?? 0;
     expect(occurrences).toBe(beforeCount + 1);
-    expect(content).not.toMatch(/data-wfp-edit[-a-zA-Z]*\s*=/);
+    expect(content).not.toMatch(EDITOR_MARKER_ATTR_RE);
     expect(content).not.toContain('contenteditable=');
   });
 
@@ -449,7 +449,7 @@ test.describe('v2 copy/paste/duplicate', () => {
     await pasteClipboard(page);
 
     const style = await page.evaluate(() => {
-      const headings = [...document.querySelectorAll(HEADING_SEL)];
+      const headings = [...document.querySelectorAll('[data-test-heading="yes"]')];
       return headings.at(-1).getAttribute('style') || '';
     });
     expect(style).toContain('animation-delay');

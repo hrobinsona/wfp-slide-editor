@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor } from './_helpers.js';
+import { loadFixtureWithEditor, requireAbsoluteTarget } from './_helpers.js';
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
@@ -269,6 +269,8 @@ test.describe('Phase 7 — Inline text edit', () => {
     page,
   }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
+    // A second, discovered element to click after the text edit closes.
+    const other = await requireAbsoluteTarget(page);
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
@@ -276,8 +278,8 @@ test.describe('Phase 7 — Inline text edit', () => {
     await page.keyboard.press('Escape');
 
     // After exiting, selecting another element should re-show the ring.
-    await page.evaluate(() => {
-      const target = document.querySelector('.slide.active .wfp-badge');
+    await page.evaluate((sel) => {
+      const target = document.querySelector(sel);
       const r = target.getBoundingClientRect();
       target.dispatchEvent(
         new MouseEvent('click', {
@@ -288,7 +290,7 @@ test.describe('Phase 7 — Inline text edit', () => {
           clientY: r.top + r.height / 2,
         }),
       );
-    });
+    }, other);
 
     const ringDisplay = await page.evaluate(
       () => document.querySelector('#wfp-editor-root .wfpe-selection-ring').style.display,
