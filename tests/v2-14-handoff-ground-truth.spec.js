@@ -154,6 +154,13 @@ test.describe('v2.14 — edit ledger in the handoff payload', () => {
     // A position that only exists inside the pinned coordinate system goes with
     // the pins, even when the entry reads as user intent.
     expect(payload.guidance).toContain('drop it even when mechanical: false');
+    // Absorbing a size change must carry the leading with it — a size the user
+    // picked does not imply the inherited `normal` leading it happened to get.
+    expect(payload.guidance).toContain('Carry the leading with a size change');
+    expect(payload.guidance).toContain('set an explicit line-height and note it');
+    // Absorption extends the existing rule for a selector instead of appending
+    // a second declaration for it.
+    expect(payload.guidance).toContain('Extend an existing rule for that selector rather than appending a duplicate');
     // Deck-shaped documents route to the slides skill's Edit mode process.
     expect(payload.guidance).toContain('~/.claude/skills/slides/SKILL.md');
     expect(written).toContain("The payload's edits array records");

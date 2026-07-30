@@ -140,6 +140,41 @@ together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 
+### Handoff guidance under-specified how a user-intent edit gets absorbed into CSS
+
+- **Status:** fixed 2026-07-30
+- **Raised:** 2026-07-30, live end-to-end agent pass on the imperative-de-pinning
+  contract (`cbf10e9`) — de-pinning and absorption both worked; two residual
+  defects showed up one level down, in *how* absorption was performed
+
+1. **Absorption dropped the leading.** The user bumped three parallel
+   `.statlabel` elements from 25.6px to 29.6px. The agent correctly absorbed all
+   three into one `.statlabel{font-size:1.85rem}` rule — but `.statlabel` has no
+   explicit `line-height`, so it inherits the font's `normal` (~1.79). At the
+   larger size two of the three labels wrapped, and the two lines sat ~53px
+   apart: visibly broken typography. The agent saw it and deliberately left it,
+   reasoning that changing the leading would alter the user's visual outcome.
+   Defensible under the old wording, wrong in practice — the user chose a
+   *size*, not that leading; the wrap is a side effect of the change, not a
+   decision. The guidance now says to carry the leading with a size change: when
+   the target has no explicit `line-height` and the new size wraps on inherited
+   `normal` leading, set an explicit `line-height` and note it.
+2. **Duplicate rules.** The same pass appended `.statlabel{font-size:1.85rem}`
+   twice, into a stylesheet that already had `.statlabel` rules it could have
+   extended. The guidance now says to extend an existing rule for that selector
+   rather than appending a duplicate.
+
+Text-only change in `src/editor/95-export.js` — no import/export/reconciliation
+behaviour touched. The string is 330 words (up from 303; trimmed elsewhere to
+absorb the two new clauses) and keeps every literal the specs pin, plus the
+imperative de-pinning language, the coordinate-system rule, and the
+`~/.claude/skills/slides/SKILL.md` route.
+`tests/v2-14-handoff-ground-truth.spec.js` gained assertions for both new
+clauses. Coverage: `tests/v2-agent-annotations.spec.js`,
+`tests/v2-13-live-roundtrip.spec.js`,
+`tests/v2-14-handoff-ground-truth.spec.js` (29/29 green).
+REQUIREMENTS/DESIGN/ROADMAP paraphrases updated to match.
+
 ### Handoff guidance let an agent keep every mechanical pin and ship a broken slide
 
 - **Status:** fixed 2026-07-29

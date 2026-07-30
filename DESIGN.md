@@ -526,6 +526,14 @@ Permissive wording here does not hold. The first live end-to-end pass met a guid
 
 One consequence had to be spelled out separately, because `mechanical` alone does not capture it. The dragged element's own `left`/`top` is legitimately `mechanical: false` — the user chose it — but it only means anything inside the absolute coordinate system the pins created. Restoring the layout has to take it along, so the guidance says such a position does not survive the reversal, is dropped even when `mechanical: false`, and gets that drop recorded in the results note. Only edits that outlive the re-expressed layout (font sizes, colours, text content, explicit sizes) carry forward; a deliberate out-of-flow element arrives as an annotation, not as an inferred pin.
 
+### How absorption is allowed to happen
+
+De-pinning worked on the next live pass, and the residue moved one level down — into *how* a `mechanical: false` edit gets absorbed. Two rules were added.
+
+The first is about leading. Three parallel `.statlabel` elements bumped 25.6px → 29.6px were correctly absorbed into one `.statlabel{font-size:1.85rem}` rule, but the selector carries no explicit `line-height`, so it inherits the font's `normal` (~1.79). At the larger size two of the three labels wrapped and their lines sat ~53px apart. The agent noticed and deliberately left it alone, reasoning that setting a `line-height` would alter the user's visual outcome — defensible under the old wording, wrong in practice. The user picked a *size*; the wrap is a side effect of that change, not a decision they made. The guidance now says to carry the leading with the size: set an explicit `line-height` when the resized text would otherwise wrap on inherited `normal`, and record it in the results note.
+
+The second is about where the rule lands. The same pass appended `.statlabel{font-size:1.85rem}` twice into a stylesheet that already had `.statlabel` rules. "Absorb into clean CSS" apparently does not imply "and look first", so it is now spelled out: extend the existing rule for that selector rather than appending a duplicate.
+
 ### Document-type routing in the guidance
 
 The guidance string is deliberately document-type-agnostic — it travels inside plain HTML documents that have no owning skill, and it has to be the whole contract for those. The cost showed up in the same live pass: with no pointer to a richer verification process, the agent ran a bare lint and skipped the geometry pass that would have caught the collision above. The fix is one conditional sentence, not a second process: if the document is recognisably a deck built by the Avent "slides" skill (a 1920×1080 `.deck` canvas of `section.slide` children), the agent also follows that skill's "Edit mode" section at `~/.claude/skills/slides/SKILL.md` for verification and reporting. Documents that fail the test read one extra sentence and lose nothing.
