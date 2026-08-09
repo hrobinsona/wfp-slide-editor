@@ -644,6 +644,27 @@
       min-height: 0;
       overflow: hidden;
     }
+    /* v2.22 — Markdown mode: hide every control whose only output is an
+       inline style. What survives is the agent note, which is the whole
+       point of reviewing a Markdown file. Selection handles go too — a
+       resized paragraph has no Markdown representation. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="position"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="size"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="text-color"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="bg-color"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="opacity"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="font-size"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="font-weight"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="text-align"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="align-elements"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="actions"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] .wfpe-inspector-divider {
+      display: none !important;
+    }
+    /* Handles and the W × H bubble are geometry readouts with nothing to
+       report on a Markdown block. */
+    #${ROOT_ID}[data-md="true"] .wfpe-handle,
+    #${ROOT_ID}[data-md="true"] .wfpe-dim-bubble { display: none !important; }
     #${ROOT_ID} .wfpe-inspector {
       display: flex;
       flex-direction: column;

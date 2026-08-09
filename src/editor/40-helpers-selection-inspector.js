@@ -123,6 +123,15 @@
   }
 
   function applyModeFeatureGating() {
+    // v2.22 — Markdown mode reduces the surface to what a Markdown file can
+    // actually represent: annotations and text. Every geometry control writes
+    // an inline style with no Markdown equivalent, so the rows are gated off
+    // in CSS (same mechanism as v2.18's data-multi) rather than left to write
+    // changes the writeback would silently discard.
+    if (state.markdownMode) {
+      inspectorDock.dataset.md = 'true';
+      root.dataset.md = 'true';
+    }
     if (!isFlatMode()) return;
     overviewBtn.hidden = true;
     overviewBtn.disabled = true;

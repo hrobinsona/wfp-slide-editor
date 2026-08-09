@@ -36,6 +36,11 @@
     if (state.overviewMode) return;
     if (!state.editMode) return;
     if (e.button !== 0) return;
+    // v2.22 — Markdown mode has no geometry: a dragged paragraph would write
+    // an inline style the writeback cannot represent and would silently drop.
+    // Selection, text edit, and annotation all still run (they are owned by
+    // the click/dblclick paths, not this one).
+    if (state.markdownMode) return;
 
     // While a text edit is open, mousedowns INSIDE the editing element are
     // for caret/selection — let the browser handle them natively.
