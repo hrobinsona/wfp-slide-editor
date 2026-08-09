@@ -18,12 +18,21 @@
 const DB_NAME = 'wfp-md-review';
 const STORE = 'handles';
 const HANDLE_KEY = 'last';
+const DIR_KEY = 'lastDir';
+// Walk caps. A vault can be large and this list only has to be usable, not
+// exhaustive; hidden and dependency directories are never interesting here.
+const MAX_DEPTH = 6;
+const MAX_FILES = 500;
+const SKIP_DIRS = new Set(['node_modules', '.git', '.obsidian', 'dist', 'build']);
 
 const els = {};
 let fileHandle = null;
+let dirHandle = null;
+let currentFileDir = null; // path segments from the folder root to the open file
 let sourceText = '';
 let sourceNotes = [];
 let blockIndex = new Map(); // "start-end" → scanned block (for edit detection)
+let objectUrls = []; // blob URLs minted for relative images; revoked on re-render
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -34,24 +43,24 @@ function idb() {
   });
 }
 
-async function rememberHandle(handle) {
+async function rememberHandle(handle, key = HANDLE_KEY) {
   try {
     const db = await idb();
     await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
-      tx.objectStore(STORE).put(handle, HANDLE_KEY);
+      tx.objectStore(STORE).put(handle, key);
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
   } catch (_) { /* handle persistence is a convenience, never a hard failure */ }
 }
 
-async function recallHandle() {
+async function recallHandle(key = HANDLE_KEY) {
   try {
     const db = await idb();
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
-      const req = tx.objectStore(STORE).get(HANDLE_KEY);
+      const req = tx.objectStore(STORE).get(key);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
@@ -73,6 +82,87 @@ function setStatus(message, tone = '') {
 
 function annotationId() {
   return `ann-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Folder access
+//
+// Opening the vault (or repo) root once buys two things a single-file picker
+// cannot: a list to pick notes from without re-prompting, and the ability to
+// resolve relative images, which live beside the note rather than inside it.
+// ---------------------------------------------------------------------------
+async function listMarkdownFiles(root) {
+  const found = [];
+  async function walk(dir, segments, depth) {
+    if (depth > MAX_DEPTH || found.length >= MAX_FILES) return;
+    for await (const [name, handle] of dir.entries()) {
+      if (found.length >= MAX_FILES) return;
+      if (name.startsWith('.') || SKIP_DIRS.has(name)) continue;
+      if (handle.kind === 'directory') {
+        await walk(handle, [...segments, name], depth + 1);
+      } else if (/\.(md|markdown)$/i.test(name)) {
+        found.push({ path: [...segments, name].join('/'), dir: segments, handle });
+      }
+    }
+  }
+  await walk(root, [], 0);
+  found.sort((a, b) => a.path.localeCompare(b.path));
+  return found;
+}
+
+function populateFileList(files) {
+  els.files.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.textContent = files.length ? `${files.length} notes — pick one` : 'No .md files found';
+  placeholder.value = '';
+  els.files.appendChild(placeholder);
+  files.forEach((file, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = file.path;
+    els.files.appendChild(option);
+  });
+  els.files.hidden = files.length === 0;
+  els.files.__files = files;
+}
+
+async function openDirectory(handle) {
+  const picked = handle || (await window.showDirectoryPicker({ mode: 'readwrite' }));
+  if (!(await ensurePermission(picked))) { setStatus('Folder permission denied', 'error'); return; }
+  dirHandle = picked;
+  await rememberHandle(picked, DIR_KEY);
+  setStatus(`Reading ${picked.name}…`);
+  populateFileList(await listMarkdownFiles(picked));
+  setStatus(`${picked.name} — pick a note`);
+}
+
+// Markdown references images by a path relative to the note. Nothing in the
+// page can read that path directly, so each one is fetched through the folder
+// handle and swapped for a blob URL.
+async function resolveRelativeImages() {
+  for (const url of objectUrls) URL.revokeObjectURL(url);
+  objectUrls = [];
+  if (!dirHandle || !currentFileDir) return;
+  for (const img of els.doc.querySelectorAll('img[src]')) {
+    const src = img.getAttribute('src');
+    if (!src || /^(https?:|data:|blob:)/i.test(src)) continue;
+    const segments = [...currentFileDir, ...src.split('/')].filter((s) => s && s !== '.');
+    const resolved = [];
+    for (const segment of segments) {
+      if (segment === '..') resolved.pop();
+      else resolved.push(segment);
+    }
+    try {
+      let dir = dirHandle;
+      for (const segment of resolved.slice(0, -1)) dir = await dir.getDirectoryHandle(segment);
+      const file = await (await dir.getFileHandle(resolved[resolved.length - 1])).getFile();
+      const url = URL.createObjectURL(file);
+      objectUrls.push(url);
+      img.src = url;
+    } catch (_) {
+      img.dataset.mdUnresolved = 'true'; // missing asset stays visible as a broken ref
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +196,7 @@ function renderInto(text) {
 
   if (window.__wfpMarkdownBridge) window.__wfpMarkdownBridge.refresh();
   els.doc.dataset.ready = 'true';
+  resolveRelativeImages();
 }
 
 // ---------------------------------------------------------------------------
@@ -198,13 +289,16 @@ async function save() {
   return { ok: true, message };
 }
 
-async function openFile(handle) {
+async function openFile(handle, fileDir = null) {
   const picked = handle || (await window.showOpenFilePicker({
     types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }],
     multiple: false,
   }))[0];
   if (!(await ensurePermission(picked))) { setStatus('Permission denied', 'error'); return; }
   fileHandle = picked;
+  // Only a file reached through the folder handle has a known location, and
+  // therefore resolvable relative images.
+  currentFileDir = fileDir;
   await rememberHandle(picked);
   const text = await (await picked.getFile()).text();
   renderInto(text);
@@ -254,21 +348,39 @@ function boot() {
   els.doc = document.getElementById('md-doc');
   els.status = document.getElementById('md-status');
   els.name = document.getElementById('md-name');
-  document.getElementById('md-open').addEventListener('click', () => openFile().catch((e) => setStatus(e.message, 'error')));
+  els.files = document.getElementById('md-files');
+  const guard = (fn) => () => fn().catch((e) => setStatus(e.message, 'error'));
+
+  document.getElementById('md-open').addEventListener('click', guard(() => openFile()));
+  document.getElementById('md-open-dir').addEventListener('click', guard(() => openDirectory()));
   document.getElementById('md-save').addEventListener('click', () => window.__wfpMarkdownSink());
+  els.files.addEventListener('change', guard(async () => {
+    const file = els.files.__files?.[Number(els.files.value)];
+    if (file) await openFile(file.handle, file.dir);
+  }));
 
   if (!window.showOpenFilePicker) {
     setStatus('This browser has no File System Access API — use Chrome or Edge', 'error');
     return;
   }
-  recallHandle().then(async (handle) => {
-    if (!handle) { setStatus('Open a Markdown file to begin'); return; }
+
+  // Stored handles need a fresh user gesture to re-grant after a restart, so
+  // the reopen affordances are buttons rather than anything automatic.
+  recallHandle(DIR_KEY).then((handle) => {
+    if (!handle) return;
+    const reopenDir = document.getElementById('md-reopen-dir');
+    reopenDir.hidden = false;
+    reopenDir.textContent = `Reopen ${handle.name}/`;
+    reopenDir.addEventListener('click', guard(() => openDirectory(handle)));
+  });
+  recallHandle().then((handle) => {
+    if (!handle) return;
     const reopen = document.getElementById('md-reopen');
     reopen.hidden = false;
     reopen.textContent = `Reopen ${handle.name}`;
-    reopen.addEventListener('click', () => openFile(handle).catch((e) => setStatus(e.message, 'error')));
-    setStatus('Open a Markdown file to begin');
+    reopen.addEventListener('click', guard(() => openFile(handle)));
   });
+  setStatus('Open a folder or a single .md to begin');
 }
 
 document.addEventListener('DOMContentLoaded', boot);

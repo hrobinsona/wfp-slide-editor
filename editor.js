@@ -10067,6 +10067,10 @@
   // `refresh` re-scans the freshly stamped annotations so markers and the
   // notes panel match the new file.
   if (state.markdownMode) {
+    // Unlike a deck — which you might simply be viewing — the Markdown review
+    // surface exists only to annotate, so starting in view mode is a step that
+    // never has a reason to be skipped. Enter edit mode immediately.
+    setEditMode(true);
     window.__wfpMarkdownBridge = {
       reset() {
         if (state.editingText) endTextEdit();
