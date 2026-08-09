@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
+import {
+  loadFixtureWithEditor,
+  requireAbsoluteTarget,
+  hitPointFor,
+  dragResizeHandle,
+} from './_helpers.js';
 
 // v2.2 — position/size two-way binding + dimension bubble. Strict TDD:
 // these tests are written before the implementation and must pass once
@@ -178,16 +183,9 @@ test.describe('v2.2 — position/size binding + dimension bubble', () => {
     const before = await page.evaluate(() =>
       document.querySelector('#wfp-editor-root .wfpe-dim-bubble').textContent.trim()
     );
-    // SE handle drag: 30px right, 20px down → +30 W, +20 H.
-    const seHandle = await page.evaluate(() => {
-      const h = document.querySelector('#wfp-editor-root .wfpe-handle-se');
-      const r = h.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    });
-    await page.mouse.move(seHandle.x, seHandle.y);
-    await page.mouse.down();
-    await page.mouse.move(seHandle.x + 30, seHandle.y + 20, { steps: 5 });
-    await page.mouse.up();
+    // SE handle drag: 30px right, 20px down → +30 W, +20 H. Race-free grab —
+    // see the resize-gesture note in tests/_helpers.js.
+    await dragResizeHandle(page, 'se', 30, 20);
 
     const after = await page.evaluate(() =>
       document.querySelector('#wfp-editor-root .wfpe-dim-bubble').textContent.trim()

@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { loadFixtureWithEditor, requireAbsoluteTarget, hitPointFor } from './_helpers.js';
+import {
+  loadFixtureWithEditor,
+  requireAbsoluteTarget,
+  hitPointFor,
+  dragResizeHandle,
+} from './_helpers.js';
 
 test.use({ viewport: { width: 2000, height: 1200 } });
 
@@ -17,21 +22,9 @@ async function selectByMouse(page, selector) {
   await page.mouse.up();
 }
 
-async function handleCenter(page, dir) {
-  return page.evaluate((d) => {
-    const h = document.querySelector(`#wfp-editor-root .wfpe-handle-${d}`);
-    const r = h.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-  }, dir);
-}
-
+// Race-free handle drag — see the resize-gesture note in tests/_helpers.js.
 async function dragHandle(page, dir, dxView, dyView) {
-  const start = await handleCenter(page, dir);
-  await page.mouse.move(start.x, start.y);
-  await page.mouse.down();
-  await page.mouse.move(start.x + dxView / 2, start.y + dyView / 2, { steps: 5 });
-  await page.mouse.move(start.x + dxView, start.y + dyView, { steps: 5 });
-  await page.mouse.up();
+  await dragResizeHandle(page, dir, dxView, dyView, { steps: 10 });
 }
 
 async function readBox(page, selector) {

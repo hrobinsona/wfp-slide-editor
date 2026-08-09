@@ -292,6 +292,93 @@ export async function hitPointFor(page, selector) {
   }, selector);
 }
 
+// ── Race-free resize-handle gestures ────────────────────────────────────────
+// The selection ring and its 6×6px handles are repositioned by the editor's
+// rAF tracking loop whenever the selected element's rect drifts (font swap,
+// entrance settling, any late layout). A boundingBox()-then-mouse.down
+// sequence therefore carries a built-in gap: each protocol round-trip yields
+// to the page, so under CPU contention (parallel workers) the handle moves
+// between the box read and the press, the press lands beside the handle,
+// startResize never runs, and the gesture silently degrades to a plain
+// click — the classic symptom is a resize test where no inline width/height
+// was ever written.
+//
+// These helpers close the gap by dispatching the press synthetically INSIDE
+// the page: the mousedown is dispatched on the handle element itself, with
+// coordinates read in the same synchronous evaluate (the rAF loop cannot run
+// mid-turn). The editor's startResize keys off e.target.dataset.wfpeHandle
+// rather than hit-testing, and its document-level capture listeners treat
+// synthetic mousemove/mouseup exactly like trusted ones (all math is
+// clientX/Y deltas), so the rest of the gesture is deterministic too.
+
+export async function pressResizeHandle(page, dir) {
+  return page.evaluate((d) => {
+    const handle = document.querySelector(`#wfp-editor-root .wfpe-handle-${d}`);
+    if (!handle) throw new Error(`No resize handle .wfpe-handle-${d} in the editor root`);
+    if (handle.style.display === 'none') {
+      throw new Error(`Resize handle .wfpe-handle-${d} is hidden — is a single element selected?`);
+    }
+    const r = handle.getBoundingClientRect();
+    const x = r.left + r.width / 2;
+    const y = r.top + r.height / 2;
+    handle.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 0,
+        clientX: x,
+        clientY: y,
+      }),
+    );
+    return { x, y };
+  }, dir);
+}
+
+// Interpolated mousemoves so the editor's per-move path (deadzone exit,
+// live W × H tag, refreshSelection) runs several times per gesture, the way
+// the original real-mouse drags exercised it.
+export async function moveResizeGesture(page, from, to, { steps = 5 } = {}) {
+  await page.evaluate(({ from, to, steps }) => {
+    for (let i = 1; i <= steps; i++) {
+      document.dispatchEvent(
+        new MouseEvent('mousemove', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          button: 0,
+          clientX: from.x + ((to.x - from.x) * i) / steps,
+          clientY: from.y + ((to.y - from.y) * i) / steps,
+        }),
+      );
+    }
+  }, { from, to, steps });
+}
+
+export async function releaseResizeGesture(page, at) {
+  await page.evaluate((p) => {
+    document.dispatchEvent(
+      new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        button: 0,
+        clientX: p.x,
+        clientY: p.y,
+      }),
+    );
+  }, at);
+}
+
+// The common case: one full handle drag by a viewport-space delta.
+export async function dragResizeHandle(page, dir, dxView, dyView, opts = {}) {
+  const start = await pressResizeHandle(page, dir);
+  const end = { x: start.x + dxView, y: start.y + dyView };
+  await moveResizeGesture(page, start, end, opts);
+  await releaseResizeGesture(page, end);
+  return { start, end };
+}
+
 function activeSlideIndex(page) {
   return page.evaluate(() =>
     [...document.querySelectorAll('.deck > .slide')].findIndex((s) => s.classList.contains('active')),

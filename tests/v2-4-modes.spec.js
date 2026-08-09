@@ -2,7 +2,13 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EDITOR_PATH, loadFixtureWithEditor, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
+import {
+  EDITOR_PATH,
+  loadFixtureWithEditor,
+  disableFsa,
+  EDITOR_MARKER_ATTR_RE,
+  dragResizeHandle,
+} from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -204,12 +210,7 @@ test.describe('v2.4.1 — Foreign-deck editing', () => {
 
     const handle = page.locator('#wfp-editor-root .wfpe-handle-se');
     await expect(handle).not.toHaveCSS('display', 'none');
-    const handleBox = await handle.boundingBox();
-    expect(handleBox).not.toBeNull();
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(handleBox.x + handleBox.width / 2 + 60, handleBox.y + handleBox.height / 2 + 40, { steps: 4 });
-    await page.mouse.up();
+    await dragResizeHandle(page, 'se', 60, 40, { steps: 4 });
 
     const resized = await target.evaluate((el) => ({
       width: el.offsetWidth,
@@ -594,13 +595,7 @@ test.describe('v2.4.3 — Flat document mode', () => {
 
     const handle = page.locator('#wfp-editor-root .wfpe-handle-e');
     await expect(handle).not.toHaveCSS('display', 'none');
-    const handleBox = await handle.boundingBox();
-    expect(handleBox).not.toBeNull();
-
-    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(handleBox.x + handleBox.width / 2 + 160, handleBox.y + handleBox.height / 2, { steps: 5 });
-    await page.mouse.up();
+    await dragResizeHandle(page, 'e', 160, 0);
 
     const after = await title.evaluate((el) => ({
       width: el.offsetWidth,

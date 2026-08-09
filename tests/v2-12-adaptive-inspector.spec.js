@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pressResizeHandle, moveResizeGesture, releaseResizeGesture } from './_helpers.js';
 
 // v2.12 — adaptive inspector (design 7 + smart overlap gate).
 //
@@ -542,14 +543,11 @@ test.describe('v2.12 — adaptive inspector fade', () => {
     await page.keyboard.press('e');
     await selectByMouse(page, '.s1 .headline');
 
-    const se = await page.evaluate(() => {
-      const h = document.querySelector('#wfp-editor-root .wfpe-handle-se');
-      const r = h.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    });
-    await page.mouse.move(se.x, se.y);
-    await page.mouse.down();
-    await page.mouse.move(se.x + 30, se.y + 20, { steps: 5 });
+    // Race-free grab + mid-gesture hold — see the resize-gesture note in
+    // tests/_helpers.js.
+    const se = await pressResizeHandle(page, 'se');
+    const seEnd = { x: se.x + 30, y: se.y + 20 };
+    await moveResizeGesture(page, se, seEnd);
 
     const dims = await page.evaluate(() => {
       const el = document.querySelector('.s1 .headline');
@@ -566,7 +564,7 @@ test.describe('v2.12 — adaptive inspector fade', () => {
     expect(s.overlap).toBe(false);
     expect(s.faded).toBe(false);
 
-    await page.mouse.up();
+    await releaseResizeGesture(page, seEnd);
     await waitForRestore(page);
     s = await fadeState(page, '.s1 .headline');
     expect(s.tagShown).toBe(false);
