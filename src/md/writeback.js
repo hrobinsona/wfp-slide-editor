@@ -51,10 +51,13 @@ function notesEqual(a, b) {
  *
  * Returns { text, inserted, updated, removed, edited }.
  */
-export function applyMarkdownWriteback(source, { sourceNotes = [], notes = [], edits = [] } = {}) {
+export function applyMarkdownWriteback(
+  source,
+  { sourceNotes = [], notes = [], edits = [], boundNoteStarts = null } = {},
+) {
   const lines = String(source).split('\n');
   const ops = [];
-  const stats = { inserted: 0, updated: 0, removed: 0, edited: 0 };
+  const stats = { inserted: 0, updated: 0, removed: 0, edited: 0, unbound: 0 };
 
   const liveByStart = new Map();
   for (const note of notes) {
@@ -62,7 +65,14 @@ export function applyMarkdownWriteback(source, { sourceNotes = [], notes = [], e
   }
 
   // Callouts that were in the file but whose annotation is gone: delete them.
+  //
+  // `boundNoteStarts` is the set the host actually attached to the DOM. A
+  // callout that never got bound — two notes on one block, where the element
+  // can only carry one — is absent from `notes` for a reason that has nothing
+  // to do with the user deleting it, so it must be left strictly alone.
+  // Treating "not in the DOM" as "deleted" silently destroyed such notes.
   for (const src of sourceNotes) {
+    if (boundNoteStarts && !boundNoteStarts.has(src.noteStart)) { stats.unbound += 1; continue; }
     if (liveByStart.has(src.noteStart)) continue;
     let start = src.noteStart;
     let end = src.noteEnd;
@@ -91,6 +101,17 @@ export function applyMarkdownWriteback(source, { sourceNotes = [], notes = [], e
     // New note: land it immediately after the block it annotates, separated
     // by a blank line so Obsidian renders it as its own callout rather than
     // gluing it to the preceding block.
+    //
+    // A non-finite anchor means the caller could not resolve a source block
+    // (it used to happen when an inline element was annotated, since only
+    // block elements carry data-md-*). Number(undefined) is NaN, and
+    // splice(NaN, …) silently inserts at index 0 — which put the callout above
+    // the first heading and, in a vault note, inside the YAML front matter.
+    // Refuse the op instead.
+    if (note.anchorEnd != null && !Number.isFinite(note.anchorEnd)) {
+      stats.unanchored = (stats.unanchored || 0) + 1;
+      return;
+    }
     const anchorEnd = note.anchorEnd == null ? lines.length - 1 : note.anchorEnd;
     const insertAt = anchorEnd + 1;
     const payload = serializeCallout(note);
@@ -115,10 +136,21 @@ export function applyMarkdownWriteback(source, { sourceNotes = [], notes = [], e
     stats.edited += 1;
   }
 
-  // Descending by target line keeps every remaining op's indices valid. Ties
-  // (two new notes on the same block) are applied in reverse creation order
-  // so they end up in creation order in the file.
-  ops.sort((a, b) => (b.start - a.start) || (b.order - a.order));
+  // Descending by target line keeps every remaining op's indices valid.
+  //
+  // At an EQUAL start, replacements must run before pure inserts. A note
+  // anchored to the block above lands at exactly the next block's start line;
+  // if the insert went first, the replacement's range would then point into
+  // the freshly inserted callout and splice through the middle of it, leaving
+  // a duplicated block and a misplaced note.
+  //
+  // Remaining ties (two new notes on one block) are applied in reverse
+  // creation order so they end up in creation order in the file.
+  ops.sort((a, b) => (
+    (b.start - a.start) ||
+    (Number(b.deleteCount > 0) - Number(a.deleteCount > 0)) ||
+    (b.order - a.order)
+  ));
   for (const op of ops) lines.splice(op.start, op.deleteCount, ...op.lines);
 
   return { text: lines.join('\n'), ...stats };

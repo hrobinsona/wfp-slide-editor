@@ -35,6 +35,9 @@ let sourceNotes = [];
 let blockIndex = new Map(); // "start-end" → scanned block (for edit detection)
 let objectUrls = []; // blob URLs minted for relative images; revoked on re-render
 let recents = []; // most-recent-first file handles, mirrored to IndexedDB
+let boundNoteStarts = new Set(); // source callouts actually attached to the DOM
+let renderedText = new Map(); // block key → textContent as first rendered
+let sourceEol = '\n'; // the file's own line ending, restored on write
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -183,11 +186,18 @@ function renderInto(text) {
   // Saved callouts become live annotations again — this is what stops notes
   // from accumulating as visible blockquotes and keeps the notes panel in
   // sync with the file across sessions.
+  boundNoteStarts = new Set();
   for (const note of notes) {
     const target = els.doc.querySelector(
       `[data-md-line="${note.anchorLine}"][data-md-end="${note.anchorEnd}"]`,
     );
     if (!target) continue;
+    // One element can only carry one annotation. A second callout on the same
+    // block stays unbound rather than overwriting the first — and because it
+    // is unbound, writeback leaves it in the file untouched instead of reading
+    // its absence from the DOM as a deletion.
+    if (target.hasAttribute('data-wfp-edit-annotation-id')) continue;
+    boundNoteStarts.add(note.noteStart);
     target.setAttribute('data-wfp-edit-annotation-id', annotationId());
     target.setAttribute('data-wfp-edit-annotation-text', note.text);
     if (note.status) target.setAttribute('data-wfp-edit-annotation-status', note.status);
@@ -196,9 +206,25 @@ function renderInto(text) {
     target.dataset.mdNoteEnd = String(note.noteEnd);
   }
 
+  // Baseline for edit detection. Comparing a block's live textContent against
+  // its raw Markdown source reports every formatted block as changed forever;
+  // comparing against what was actually rendered detects real edits only.
+  renderedText = new Map();
+  for (const el of els.doc.querySelectorAll('[data-md-line]')) {
+    renderedText.set(`${el.dataset.mdLine}-${el.dataset.mdEnd}`, normalizeText(el.textContent));
+  }
+
   if (window.__wfpMarkdownBridge) window.__wfpMarkdownBridge.refresh();
   els.doc.dataset.ready = 'true';
   resolveRelativeImages();
+}
+
+function normalizeEol(value) {
+  return String(value).replace(/\r\n/g, '\n');
+}
+
+function normalizeText(value) {
+  return String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -206,15 +232,22 @@ function renderInto(text) {
 // ---------------------------------------------------------------------------
 function collectNotes() {
   return [...els.doc.querySelectorAll('[data-wfp-edit-annotation-id]')]
-    .map((el) => ({
-      text: el.getAttribute('data-wfp-edit-annotation-text') || '',
-      status: el.getAttribute('data-wfp-edit-annotation-status') || '',
-      reply: el.getAttribute('data-wfp-edit-annotation-reply') || '',
-      anchorEnd: Number(el.dataset.mdEnd),
-      noteStart: el.dataset.mdNoteLine === undefined ? null : Number(el.dataset.mdNoteLine),
-      noteEnd: el.dataset.mdNoteEnd === undefined ? null : Number(el.dataset.mdNoteEnd),
-    }))
-    .filter((n) => n.text.trim());
+    .map((el) => {
+      // The editor lets you select any descendant, so a note can land on a
+      // <strong> or <a>, which carries no source range. Resolve up to the
+      // owning block — commenting on a bold figure should anchor to its
+      // paragraph, not fail.
+      const block = el.closest('[data-md-line]');
+      return {
+        text: el.getAttribute('data-wfp-edit-annotation-text') || '',
+        status: el.getAttribute('data-wfp-edit-annotation-status') || '',
+        reply: el.getAttribute('data-wfp-edit-annotation-reply') || '',
+        anchorEnd: block ? Number(block.dataset.mdEnd) : null,
+        noteStart: el.dataset.mdNoteLine === undefined ? null : Number(el.dataset.mdNoteLine),
+        noteEnd: el.dataset.mdNoteEnd === undefined ? null : Number(el.dataset.mdNoteEnd),
+      };
+    })
+    .filter((n) => n.text.trim() && (n.noteStart != null || Number.isFinite(n.anchorEnd)));
 }
 
 // Text edits are intentionally narrow: paragraphs and headings whose SOURCE is
@@ -227,6 +260,9 @@ function collectNotes() {
 // already become a bare text node by the time we look — a DOM check would see
 // no markup and happily flatten the source.
 function isPlainSource(block) {
+  // A pipe table survives every inline rule untouched, so the markup test
+  // alone would call it plain and let an edit collapse its rows into one line.
+  if (/^\s*\|/m.test(block.text)) return false;
   return renderInline(block.text) === escapeHtml(block.text);
 }
 
@@ -237,11 +273,10 @@ function collectEdits() {
     const key = `${el.dataset.mdLine}-${el.dataset.mdEnd}`;
     const block = blockIndex.get(key);
     if (!block || (block.type !== 'paragraph' && block.type !== 'heading')) continue;
-    const current = el.textContent.replace(/\s+/g, ' ').trim();
-    const original = String(block.text).replace(/\s+/g, ' ').trim();
-    if (current === original) continue;
+    const current = normalizeText(el.textContent);
+    if (current === renderedText.get(key)) continue; // genuinely untouched
     if (!isPlainSource(block)) {
-      skipped.push(original.slice(0, 40));
+      skipped.push(normalizeText(block.text).slice(0, 40));
       continue;
     }
     edits.push({
@@ -263,18 +298,20 @@ async function save() {
   if (!(await ensurePermission(fileHandle))) return { ok: false, message: 'Write permission denied' };
 
   // The agent writes these files constantly. Refuse rather than clobber if the
-  // file changed underneath us since it was rendered.
-  const onDisk = await (await fileHandle.getFile()).text();
+  // file changed underneath us since it was rendered. Compared on normalized
+  // line endings, since that is the form we hold.
+  const onDisk = normalizeEol(await (await fileHandle.getFile()).text());
   if (onDisk !== sourceText) {
     return { ok: false, message: 'File changed on disk — reopen before saving' };
   }
 
   const notes = collectNotes();
   const { edits, skipped } = collectEdits();
-  const result = applyMarkdownWriteback(sourceText, { sourceNotes, notes, edits });
+  const result = applyMarkdownWriteback(sourceText, { sourceNotes, notes, edits, boundNoteStarts });
 
   const writable = await fileHandle.createWritable();
-  await writable.write(result.text);
+  // Restore the file's own line endings; everything upstream works in \n.
+  await writable.write(sourceEol === '\n' ? result.text : result.text.replace(/\n/g, sourceEol));
   await writable.close();
 
   // Re-render so line numbers match the file again; a second save against
@@ -309,8 +346,11 @@ async function openFile(handle, fileDir = null) {
   recents = await mergeRecents(recents, picked);
   await rememberHandle(recents, RECENTS_KEY);
   renderRecents();
-  const text = await (await picked.getFile()).text();
-  renderInto(text);
+  const raw = await (await picked.getFile()).text();
+  // CRLF files would otherwise break every line regex (`.` never matches \r),
+  // silently turning headings into paragraphs and callouts into content.
+  sourceEol = raw.includes('\r\n') ? '\r\n' : '\n';
+  renderInto(normalizeEol(raw));
   document.title = `${picked.name} — review`;
   setStatus(`${sourceNotes.length} note${sourceNotes.length === 1 ? '' : 's'} in file`);
   loadEditor();
@@ -375,7 +415,9 @@ window.__wfpMarkdownHost = {
   get recents() { return recents.map((h) => h.name); },
   writeback: () => {
     const { edits } = collectEdits();
-    return applyMarkdownWriteback(sourceText, { sourceNotes, notes: collectNotes(), edits });
+    return applyMarkdownWriteback(sourceText, {
+      sourceNotes, notes: collectNotes(), edits, boundNoteStarts,
+    });
   },
   get source() { return sourceText; },
 };

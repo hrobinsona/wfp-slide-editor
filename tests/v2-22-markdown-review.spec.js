@@ -167,6 +167,68 @@ test.describe('v2.22 — markdown writeback', () => {
     ]);
   });
 
+  // ── Data-loss regressions found in review ────────────────────────────────
+  // Every one of these passed the suite before the fix while corrupting or
+  // deleting content in a real file.
+
+  test('an edit and a note on the line above do not corrupt each other', () => {
+    const src = 'Para A\n# Heading\n';
+    const { blocks } = renderMarkdown(src);
+    const out = applyMarkdownWriteback(src, {
+      sourceNotes: [],
+      notes: [{ text: 'my note', anchorEnd: blocks[0].end, noteStart: null }],
+      edits: [{ start: blocks[1].start, end: blocks[1].end, kind: 'heading', level: 1, text: 'New Heading' }],
+    });
+    // The heading must be replaced once, not duplicated around the callout.
+    expect(out.text.match(/Heading/g)).toHaveLength(1);
+    expect(out.text).toContain('# New Heading');
+    const reparsed = renderMarkdown(out.text);
+    expect(reparsed.blocks.map((b) => b.type)).toEqual(['paragraph', 'heading']);
+    expect(reparsed.notes[0].anchorLine).toBe(reparsed.blocks[0].start);
+  });
+
+  test('a note with an unresolvable anchor is refused, not written to line 0', () => {
+    const src = '---\ntitle: x\n---\n\n# Plan\n';
+    const out = applyMarkdownWriteback(src, {
+      sourceNotes: [],
+      notes: [{ text: 'orphan', anchorEnd: Number(undefined), noteStart: null }],
+      edits: [],
+    });
+    expect(out.inserted).toBe(0);
+    expect(out.text).toBe(src); // front matter intact, nothing prepended
+  });
+
+  test('an unbound second callout on a block is preserved, not deleted', () => {
+    const src = 'Para\n\n> [!HARRY] first\n\n> [!HARRY] second\n';
+    const { notes } = renderMarkdown(src);
+    expect(notes).toHaveLength(2);
+    // Only the first could be attached to the single anchor element.
+    const bound = new Set([notes[0].noteStart]);
+    const out = applyMarkdownWriteback(src, {
+      sourceNotes: notes,
+      notes: [{ ...notes[0] }],
+      edits: [],
+      boundNoteStarts: bound,
+    });
+    expect(out.removed).toBe(0);
+    expect(out.text.match(/\[!HARRY\]/g)).toHaveLength(2);
+    expect(out.text).toContain('> [!HARRY] second');
+  });
+
+  test('YAML front matter is never rendered, anchored to, or spliced into', () => {
+    const src = '---\ntitle: Plan\ntags: [a, b]\n---\n\n# Plan\n\nBody text.\n';
+    const { html, blocks } = renderMarkdown(src);
+    expect(html).not.toContain('title: Plan');
+    expect(blocks.map((b) => b.type)).toEqual(['heading', 'paragraph']);
+    const out = applyMarkdownWriteback(src, {
+      sourceNotes: [],
+      notes: [{ text: 'note on body', anchorEnd: blocks[1].end, noteStart: null }],
+      edits: [],
+    });
+    expect(out.text.startsWith('---\ntitle: Plan\ntags: [a, b]\n---\n')).toBe(true);
+    expect(renderMarkdown(out.text).notes).toHaveLength(1);
+  });
+
   test('callout serialization carries the agent channel back', () => {
     expect(serializeCallout({ text: 'fix this', status: 'needs-input', reply: 'how?' })).toEqual([
       '> [!HARRY] fix this',
@@ -416,6 +478,56 @@ test.describe('v2.22 — markdown mode in the browser', () => {
     await page.locator('#md-doc p').nth(1).click();
     await expect(page.locator('#wfp-editor-root [data-wfpe-row="annotation"]')).toBeVisible();
     expect(await page.locator('#md-doc [contenteditable="true"]').count()).toBe(0);
+  });
+
+  test('a note on inline text anchors to its block, not to line 0', async ({ page }) => {
+    await loadHost(page, SAMPLE);
+    // Click the <strong> inside the paragraph — the natural gesture for
+    // "this figure is wrong". It carries no data-md-* of its own.
+    await page.locator('#md-doc p strong').first().click();
+    await page.locator('#wfp-editor-root .wfpe-annotation-input').fill('stale figure');
+    await page.locator('#wfp-editor-root .wfpe-annotation-save-btn').click();
+
+    const out = await page.evaluate(() => window.__wfpMarkdownHost.writeback().text);
+    expect(out.startsWith('# Plan')).toBe(true); // not prepended above the H1
+    const lines = out.split('\n');
+    const noteLine = lines.findIndex((l) => l.includes('[!HARRY]'));
+    const paraLine = lines.findIndex((l) => l.includes('revenue target'));
+    expect(noteLine).toBeGreaterThan(paraLine);
+  });
+
+  test('destructive shortcuts are inert on a markdown surface', async ({ page }) => {
+    // The block carries a saved callout: deleting it used to remove the block
+    // from the page while leaving it in the file, AND drop its note on save.
+    const withNote = SAMPLE.replace(
+      'The revenue target is **$4M** for Q3.\n',
+      'The revenue target is **$4M** for Q3.\n\n> [!HARRY] keep me\n',
+    );
+    await loadHost(page, withNote);
+    // Anchored by source line, so a deleted first paragraph cannot be masked
+    // by the locator sliding onto the next one.
+    const paragraph = page.locator('#md-doc [data-md-line="2"]');
+    await expect(paragraph).toHaveCount(1);
+    await paragraph.click();
+
+    await page.keyboard.press('Backspace');
+    await expect(paragraph).toHaveCount(1); // still there
+
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowUp');
+    expect(await paragraph.getAttribute('style')).toBeFalsy(); // no inline font size
+
+    const out = await page.evaluate(() => window.__wfpMarkdownHost.writeback());
+    expect(out.removed).toBe(0);
+    expect(out.text).toContain('> [!HARRY] keep me');
+    expect(out.text).toBe(withNote);
+  });
+
+  test('an untouched formatted block is not reported as skipped', async ({ page }) => {
+    await loadHost(page, SAMPLE);
+    const collected = await page.evaluate(() => window.__wfpMarkdownHost.collectEdits());
+    expect(collected.edits).toHaveLength(0);
+    expect(collected.skipped).toHaveLength(0);
   });
 
   test('Shift+Enter saves the note; plain Enter keeps writing', async ({ page }) => {
