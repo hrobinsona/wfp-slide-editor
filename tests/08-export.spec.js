@@ -91,7 +91,17 @@ async function triggerExport(page) {
 
 async function readDownloadAsString(download) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  const out = path.join(OUTPUT_DIR, download.suggestedFilename());
+  // Every export of the same deck suggests the same filename, and this file
+  // runs fullyParallel (plus --repeat-each in flake hunts). Saving each
+  // download under the bare suggested name made saveAs race readFileSync
+  // across workers: the reader could see another test's export, or a
+  // half-written file (observed as an empty or text-edit-less export).
+  // A per-call unique prefix isolates every download — same recipe as
+  // readExportedHtml in tests/v2-4-modes.spec.js.
+  const out = path.join(
+    OUTPUT_DIR,
+    `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+  );
   await download.saveAs(out);
   return { path: out, content: fs.readFileSync(out, 'utf-8') };
 }
@@ -206,22 +216,18 @@ test.describe('Phase 8 — Export', () => {
     await setDeckScale(page, 1);
     await page.keyboard.press('e');
 
+    await dblclickElement(page, '.slide.active h1');
+    // Write the replacement text only once the editor has actually entered
+    // text-edit mode on the h1 — writing in the same breath as the dblclick
+    // leaves nothing observable to catch a degraded gesture, and an edit
+    // made outside an open text-edit txn is exactly the kind of mutation
+    // the export path is NOT contractually required to preserve.
+    await expect(page.locator('.slide.active h1')).toHaveAttribute('contenteditable', 'true');
     await page.evaluate(() => {
-      const h1 = document.querySelector('.slide.active h1');
-      const r = h1.getBoundingClientRect();
-      h1.dispatchEvent(
-        new MouseEvent('dblclick', {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: r.left + 10,
-          clientY: r.top + 10,
-          detail: 2,
-        }),
-      );
-      h1.innerHTML = 'EXPORTED HEADLINE TEXT';
+      document.querySelector('.slide.active h1').innerHTML = 'EXPORTED HEADLINE TEXT';
     });
     await page.keyboard.press('Escape');
+    await expect(page.locator('.slide.active h1')).toHaveText('EXPORTED HEADLINE TEXT');
 
     const download = await triggerExport(page);
     const { content } = await readDownloadAsString(download);

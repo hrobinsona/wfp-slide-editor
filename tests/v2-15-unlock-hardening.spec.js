@@ -24,7 +24,15 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { EDITOR_PATH, disableFsa, EDITOR_MARKER_ATTR_RE } from './_helpers.js';
+import {
+  EDITOR_PATH,
+  disableFsa,
+  EDITOR_MARKER_ATTR_RE,
+  pressResizeHandle,
+  moveResizeGesture,
+  releaseResizeGesture,
+  dragResizeHandle,
+} from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUTPUT_DIR = path.join(__dirname, 'output');
@@ -50,17 +58,12 @@ async function dragBySelector(page, selector, dx, dy) {
   await page.mouse.up();
 }
 
-// mousedown+mouseup on a resize handle at the exact same point.
-async function zeroMoveHandleClick(page, handleClass) {
-  const handle = page.locator(`${ROOT} .${handleClass}`);
-  await expect(handle).not.toHaveCSS('display', 'none');
-  const box = await handle.boundingBox();
-  expect(box).not.toBeNull();
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.up();
+// mousedown+mouseup on a resize handle at the exact same point — no
+// mousemove in between, so the deadzone never opens. Race-free grab via
+// the resize-gesture helpers (see the note in tests/_helpers.js).
+async function zeroMoveHandleClick(page, dir) {
+  const start = await pressResizeHandle(page, dir);
+  await releaseResizeGesture(page, start);
 }
 
 test.describe('v2.15 — zero-move resize handle click is a no-op', () => {
@@ -82,7 +85,7 @@ test.describe('v2.15 — zero-move resize handle click is a no-op', () => {
     await target.click();
     expect(await target.evaluate((el) => el.getAttribute('style'))).toBeNull();
 
-    await zeroMoveHandleClick(page, 'wfpe-handle-se');
+    await zeroMoveHandleClick(page, 'se');
 
     // No mutation: still no inline style (responsive stylesheet sizing is
     // NOT silently locked in as fixed px), no freeze marker.
@@ -108,7 +111,7 @@ test.describe('v2.15 — zero-move resize handle click is a no-op', () => {
     await chip.click();
     await expect(page.locator(`${ROOT} .wfpe-inspector`)).toHaveAttribute('data-visible', 'true');
 
-    await zeroMoveHandleClick(page, 'wfpe-handle-se');
+    await zeroMoveHandleClick(page, 'se');
 
     const state = await page.evaluate(() => {
       const row = document.querySelector('.slide.active .chip-row');
@@ -146,12 +149,7 @@ test.describe('v2.15 — zero-move resize handle click is a no-op', () => {
 
     const handle = page.locator(`${ROOT} .wfpe-handle-se`);
     await expect(handle).not.toHaveCSS('display', 'none');
-    const box = await handle.boundingBox();
-    expect(box).not.toBeNull();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 40, { steps: 4 });
-    await page.mouse.up();
+    await dragResizeHandle(page, 'se', 60, 40, { steps: 4 });
 
     const resized = await target.evaluate((el) => ({
       width: el.offsetWidth,
@@ -683,10 +681,7 @@ test.describe('v2.15 — resize anchors are fresh at deadzone activation', () =>
 
     const handle = page.locator(`${ROOT} .wfpe-handle-se`);
     await expect(handle).not.toHaveCSS('display', 'none');
-    const box = await handle.boundingBox();
-    expect(box).not.toBeNull();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
+    const start = await pressResizeHandle(page, 'se');
 
     // Mid-gesture, before the pointer has left the deadzone, something else
     // moves the element (simulating a late layout shift).
@@ -694,8 +689,9 @@ test.describe('v2.15 — resize anchors are fresh at deadzone activation', () =>
       el.style.left = `${el.offsetLeft + 40}px`;
     });
 
-    await page.mouse.move(box.x + box.width / 2 + 30, box.y + box.height / 2 + 20, { steps: 4 });
-    await page.mouse.up();
+    const end = { x: start.x + 30, y: start.y + 20 };
+    await moveResizeGesture(page, start, end, { steps: 4 });
+    await releaseResizeGesture(page, end);
 
     const after = await target.evaluate((el) => ({
       left: el.offsetLeft,
