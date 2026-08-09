@@ -325,6 +325,9 @@ async function save() {
   if (result.edited) parts.push(`${result.edited} edited`);
   let message = parts.length ? `Saved — ${parts.join(', ')}` : 'Saved — no changes';
   if (skipped.length) message += ` · ${skipped.length} formatted block(s) left untouched`;
+  // A block can only carry one annotation, so any further callout on it stays
+  // in the file but is invisible here. Say so, or it reads as a lost note.
+  if (result.unbound) message += ` · ${result.unbound} note(s) not shown (one per block)`;
   return { ok: true, message };
 }
 

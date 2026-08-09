@@ -264,13 +264,19 @@ export function renderMarkdown(text) {
     // A callout annotates the block it FOLLOWS; with nothing before it, the
     // one it precedes. Paired by index in the scanned list, so the binding
     // never depends on rendered text.
+    // Front matter is excluded as an anchor as well as a callout: it never
+    // renders, so a note bound to it would have no element to attach to and
+    // would silently vanish from the review surface — inviting a duplicate.
+    // A callout sitting directly under front matter falls through to the
+    // forward scan and anchors to the first real block instead.
+    const anchorable = (b) => b.type !== 'callout' && b.type !== 'frontmatter';
     let anchor = null;
     for (let j = index - 1; j >= 0; j -= 1) {
-      if (blocks[j].type !== 'callout') { anchor = blocks[j]; break; }
+      if (anchorable(blocks[j])) { anchor = blocks[j]; break; }
     }
     if (!anchor) {
       for (let j = index + 1; j < blocks.length; j += 1) {
-        if (blocks[j].type !== 'callout') { anchor = blocks[j]; break; }
+        if (anchorable(blocks[j])) { anchor = blocks[j]; break; }
       }
     }
     notes.push({
