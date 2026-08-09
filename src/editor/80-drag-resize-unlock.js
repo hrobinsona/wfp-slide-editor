@@ -36,11 +36,6 @@
     if (state.overviewMode) return;
     if (!state.editMode) return;
     if (e.button !== 0) return;
-    // v2.22 — Markdown mode has no geometry: a dragged paragraph would write
-    // an inline style the writeback cannot represent and would silently drop.
-    // Selection, text edit, and annotation all still run (they are owned by
-    // the click/dblclick paths, not this one).
-    if (state.markdownMode) return;
 
     // While a text edit is open, mousedowns INSIDE the editing element are
     // for caret/selection — let the browser handle them natively.
@@ -56,6 +51,15 @@
       }
       endTextEdit();
     }
+
+    // v2.22 — Markdown mode has no geometry: a dragged paragraph would write
+    // an inline style the writeback cannot represent and would silently drop.
+    // This bails AFTER the text-edit teardown above deliberately — that block
+    // is the only thing that commits an open edit when the pointer lands
+    // elsewhere, so returning ahead of it strands state.editingText and makes
+    // every subsequent block uneditable until edit mode is toggled. Selection
+    // is unaffected: the click path (70-selection-events) owns it.
+    if (state.markdownMode) return;
 
     // Resize-handle hit takes precedence over a fresh selection/drag.
     const handleDir = e.target && e.target.dataset && e.target.dataset.wfpeHandle;

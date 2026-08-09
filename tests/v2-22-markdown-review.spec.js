@@ -260,6 +260,33 @@ test.describe('v2.22 — markdown mode in the browser', () => {
     await expect(page.locator('#wfp-editor-root .wfpe-notes-card')).toHaveCount(1);
   });
 
+  test('text editing moves from one block to the next without leaving edit mode', async ({ page }) => {
+    await loadHost(page, 'First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n');
+    const paragraphs = page.locator('#md-doc p');
+
+    await paragraphs.nth(0).dblclick();
+    await expect(paragraphs.nth(0)).toHaveAttribute('contenteditable', 'true');
+
+    // The mousedown that opens the next edit must first commit the open one.
+    // onMouseDown owns that teardown, so any early return placed ahead of it
+    // strands state.editingText and every later block becomes uneditable.
+    await paragraphs.nth(1).dblclick();
+    await expect(paragraphs.nth(1)).toHaveAttribute('contenteditable', 'true');
+    await expect(paragraphs.nth(0)).not.toHaveAttribute('contenteditable', 'true');
+
+    await paragraphs.nth(2).dblclick();
+    await expect(paragraphs.nth(2)).toHaveAttribute('contenteditable', 'true');
+    expect(await page.locator('#md-doc [contenteditable="true"]').count()).toBe(1);
+  });
+
+  test('clicking a different block after a text edit still selects it', async ({ page }) => {
+    await loadHost(page, 'First paragraph.\n\nSecond paragraph.\n');
+    await page.locator('#md-doc p').nth(0).dblclick();
+    await page.locator('#md-doc p').nth(1).click();
+    await expect(page.locator('#wfp-editor-root [data-wfpe-row="annotation"]')).toBeVisible();
+    expect(await page.locator('#md-doc [contenteditable="true"]').count()).toBe(0);
+  });
+
   test('editing a formatted block never flattens its markdown syntax', async ({ page }) => {
     await loadHost(page, SAMPLE);
     // Retyping the paragraph destroys the <strong> in the DOM. The skip
