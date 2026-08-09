@@ -771,7 +771,7 @@
   annotationSaveBtn.className = 'wfpe-annotation-save-btn';
   annotationSaveBtn.dataset.action = 'save-annotation';
   annotationSaveBtn.textContent = 'Save';
-  annotationSaveBtn.title = 'Save agent note';
+  annotationSaveBtn.title = 'Save agent note (Shift+Enter)';
   annotationActions.appendChild(annotationSaveBtn);
 
   annotationRow.appendChild(annotationActions);
@@ -1499,6 +1499,14 @@
       e.preventDefault();
       populateAnnotation(state.selected, { force: true });
       annotationTextarea.blur();
+      return;
+    }
+    // Shift+Enter commits the note. Plain Enter stays a newline — notes run to
+    // several sentences often enough that the usual "Enter submits" would cost
+    // more than it saves.
+    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      saveAnnotation(getAnnotationEditorTarget(), annotationTextarea.value);
     }
   });
   annotationSaveBtn.addEventListener('click', (e) => {

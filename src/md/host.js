@@ -311,7 +311,6 @@ async function openFile(handle, fileDir = null) {
   renderRecents();
   const text = await (await picked.getFile()).text();
   renderInto(text);
-  els.name.textContent = picked.name;
   document.title = `${picked.name} — review`;
   setStatus(`${sourceNotes.length} note${sourceNotes.length === 1 ? '' : 's'} in file`);
   loadEditor();
@@ -322,10 +321,15 @@ async function openFile(handle, fileDir = null) {
 function renderRecents() {
   const labels = recentLabels(recents);
   els.recent.replaceChildren();
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = recents.length ? 'Recent…' : 'No recent files';
-  els.recent.appendChild(placeholder);
+  // The open file is always recents[0], so the control can name what you are
+  // looking at AND switch away from it. The placeholder only exists for the
+  // state where history was restored but nothing is open yet.
+  if (!fileHandle) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = recents.length ? 'Recent…' : 'No recent files';
+    els.recent.appendChild(placeholder);
+  }
   labels.forEach((label, index) => {
     const option = document.createElement('option');
     option.value = String(index);
@@ -333,7 +337,7 @@ function renderRecents() {
     els.recent.appendChild(option);
   });
   els.recent.hidden = recents.length === 0;
-  els.recent.value = '';
+  els.recent.value = fileHandle ? '0' : '';
 }
 
 let editorLoaded = false;
@@ -379,7 +383,6 @@ window.__wfpMarkdownHost = {
 function boot() {
   els.doc = document.getElementById('md-doc');
   els.status = document.getElementById('md-status');
-  els.name = document.getElementById('md-name');
   els.files = document.getElementById('md-files');
   els.recent = document.getElementById('md-recent');
   const guard = (fn) => () => fn().catch((e) => setStatus(e.message, 'error'));

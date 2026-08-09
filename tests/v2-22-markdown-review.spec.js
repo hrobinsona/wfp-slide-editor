@@ -284,14 +284,15 @@ test.describe('v2.22 — markdown mode in the browser', () => {
         afterFirst,
         afterSecond,
         recents: window.__wfpMarkdownHost.recents,
-        openName: document.getElementById('md-name').textContent,
+        // The control names the open file rather than a generic placeholder.
+        openName: document.getElementById('md-recent').selectedOptions[0].textContent,
         docText: document.querySelector('#md-doc h1')?.textContent,
       };
     });
 
-    expect(state.afterFirst).toEqual(['Recent…', 'plan.md']);
+    expect(state.afterFirst).toEqual(['plan.md']);
     // The regression: this used to keep naming the first file forever.
-    expect(state.afterSecond).toEqual(['Recent…', 'context.md', 'plan.md']);
+    expect(state.afterSecond).toEqual(['context.md', 'plan.md']);
     expect(state.recents).toEqual(['context.md', 'plan.md']);
     expect(state.openName).toBe('context.md');
     expect(state.docText).toBe('Context');
@@ -311,10 +312,11 @@ test.describe('v2.22 — markdown mode in the browser', () => {
     });
 
     await page.locator('#md-recent').selectOption({ label: 'plan.md' });
-    await expect(page.locator('#md-name')).toHaveText('plan.md');
     await expect(page.locator('#md-doc h1')).toHaveText('Plan');
-    // Reopening promotes it back to the front rather than duplicating it.
-    await expect(page.locator('#md-recent option')).toHaveText(['Recent…', 'plan.md', 'context.md']);
+    // Reopening promotes it back to the front rather than duplicating it, and
+    // the control now names the file you switched to.
+    await expect(page.locator('#md-recent option')).toHaveText(['plan.md', 'context.md']);
+    expect(await page.locator('#md-recent').inputValue()).toBe('0');
   });
 
   test('rendered markdown becomes an annotatable flat document', async ({ page }) => {
@@ -414,6 +416,30 @@ test.describe('v2.22 — markdown mode in the browser', () => {
     await page.locator('#md-doc p').nth(1).click();
     await expect(page.locator('#wfp-editor-root [data-wfpe-row="annotation"]')).toBeVisible();
     expect(await page.locator('#md-doc [contenteditable="true"]').count()).toBe(0);
+  });
+
+  test('Shift+Enter saves the note; plain Enter keeps writing', async ({ page }) => {
+    await loadHost(page, SAMPLE);
+    await page.locator('#md-doc p').first().click();
+    const textarea = page.locator('#wfp-editor-root .wfpe-annotation-input');
+
+    await textarea.click();
+    await page.keyboard.type('first line');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('second line');
+    // Plain Enter must not commit — the note is still a draft with a newline.
+    await expect(textarea).toHaveValue('first line\nsecond line');
+    await expect(page.locator('#md-doc p').first()).not.toHaveAttribute('data-wfp-edit-annotation-text', /./);
+
+    await page.keyboard.press('Shift+Enter');
+    await expect(page.locator('#md-doc p').first())
+      .toHaveAttribute('data-wfp-edit-annotation-text', 'first line\nsecond line');
+    await expect(page.locator('#wfp-editor-root .wfpe-annotation-status')).toHaveText('Saved');
+
+    // And it reaches the file as a multi-line callout.
+    const out = await page.evaluate(() => window.__wfpMarkdownHost.writeback().text);
+    expect(out).toContain('> [!HARRY] first line');
+    expect(out).toContain('> second line');
   });
 
   test('editing a formatted block never flattens its markdown syntax', async ({ page }) => {

@@ -73,7 +73,7 @@ Bookmark that page (a normal bookmark, not a bookmarklet — a `.md` file is not
 - **Open .md** for a one-off file outside that folder.
 - **Recent…** lists the last eight files you opened, most recent first, across folders. It updates on every open and survives a restart (picking one is also the gesture Chrome needs to re-grant write access).
 
-Edit mode is already on when the file opens — this surface exists only to annotate. Select any block, write an agent note, and press `Cmd/Ctrl+S`. The note is written back into the Markdown as an Obsidian callout:
+Edit mode is already on when the file opens — this surface exists only to annotate. Select any block and write an agent note; `Shift+Enter` saves it (plain `Enter` stays a newline, since notes often run to a few sentences). Then press `Cmd/Ctrl+S` to write the file. The note lands in the Markdown as an Obsidian callout:
 
 ```markdown
 > [!HARRY] this figure is from the old model
