@@ -229,6 +229,34 @@ test.describe('v2.22 — markdown writeback', () => {
     expect(renderMarkdown(out.text).notes).toHaveLength(1);
   });
 
+  test('a callout directly under front matter anchors to the first real block', () => {
+    const src = '---\ntitle: Plan\n---\n\n> [!HARRY] about the intro\n\n# Plan\n\nBody.\n';
+    const { notes, blocks } = renderMarkdown(src);
+    expect(notes).toHaveLength(1);
+    // Front matter never renders, so anchoring to it would make the note
+    // invisible on the surface even though it is in the file.
+    expect(notes[0].anchorLine).toBe(blocks[0].start);
+    expect(blocks[0].type).toBe('heading');
+  });
+
+  test('CRLF files are recognized and their line endings restored', () => {
+    const crlf = '# Plan\r\n\r\nBody text.\r\n\r\n> [!HARRY] stale\r\n';
+    const normalized = crlf.replace(/\r\n/g, '\n');
+    const { blocks, notes } = renderMarkdown(normalized);
+    // Headings must not degrade to paragraphs, and callouts must be lifted.
+    expect(blocks.map((b) => b.type)).toEqual(['heading', 'paragraph']);
+    expect(notes.map((n) => n.text)).toEqual(['stale']);
+    // A no-change save restores the original bytes once the host re-applies
+    // the file's own line ending.
+    const out = applyMarkdownWriteback(normalized, {
+      sourceNotes: notes,
+      notes,
+      edits: [],
+      boundNoteStarts: new Set(notes.map((n) => n.noteStart)),
+    });
+    expect(out.text.replace(/\n/g, '\r\n')).toBe(crlf);
+  });
+
   test('callout serialization carries the agent channel back', () => {
     expect(serializeCallout({ text: 'fix this', status: 'needs-input', reply: 'how?' })).toEqual([
       '> [!HARRY] fix this',
