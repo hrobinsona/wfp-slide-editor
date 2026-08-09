@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { EDITOR_PATH } from './_helpers.js';
 import { renderMarkdown, scanBlocks } from '../src/md/render.js';
 import { applyMarkdownWriteback, serializeCallout } from '../src/md/writeback.js';
+import { mergeRecents, recentLabels, RECENTS_CAP } from '../src/md/recents.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -175,6 +176,57 @@ test.describe('v2.22 — markdown writeback', () => {
   });
 });
 
+test.describe('v2.22 — recent files', () => {
+  // Stand-in for a FileSystemFileHandle: identity is isSameEntry, not name.
+  const handle = (name, id = name) => ({
+    name,
+    id,
+    isSameEntry: async (other) => other.id === id,
+  });
+
+  test('the most recently opened file is always first', async () => {
+    const a = handle('plan.md');
+    const b = handle('context.md');
+    let list = await mergeRecents([], a);
+    list = await mergeRecents(list, b);
+    expect(list.map((h) => h.name)).toEqual(['context.md', 'plan.md']);
+  });
+
+  test('reopening a file moves it to the front instead of duplicating it', async () => {
+    const a = handle('plan.md');
+    const b = handle('context.md');
+    const c = handle('notes.md');
+    let list = await mergeRecents([], a);
+    list = await mergeRecents(list, b);
+    list = await mergeRecents(list, c);
+    // Same file, freshly picked — a different object, same entry.
+    list = await mergeRecents(list, handle('plan.md'));
+    expect(list.map((h) => h.name)).toEqual(['plan.md', 'notes.md', 'context.md']);
+  });
+
+  test('same-named files in different folders stay distinct and get labels', async () => {
+    const one = handle('notes.md', 'a/notes.md');
+    const two = handle('notes.md', 'b/notes.md');
+    const list = await mergeRecents(await mergeRecents([], one), two);
+    expect(list).toHaveLength(2);
+    expect(recentLabels(list)).toEqual(['notes.md', 'notes.md (2)']);
+  });
+
+  test('the list is capped and never mutates its input', async () => {
+    const original = Array.from({ length: RECENTS_CAP }, (_, i) => handle(`f${i}.md`));
+    const snapshot = [...original];
+    const list = await mergeRecents(original, handle('new.md'));
+    expect(list).toHaveLength(RECENTS_CAP);
+    expect(list[0].name).toBe('new.md');
+    expect(original).toEqual(snapshot);
+  });
+
+  test('a handle without isSameEntry still dedupes by name', async () => {
+    const list = await mergeRecents([{ name: 'plan.md' }], { name: 'plan.md' });
+    expect(list).toHaveLength(1);
+  });
+});
+
 // ── Browser layer: the host page + the editor's markdown mode ───────────────
 
 async function loadHost(page, markdown) {
@@ -208,7 +260,61 @@ test.describe('v2.22 — markdown mode in the browser', () => {
     await expect(page.locator('#md-open-dir')).toBeVisible();
     await expect(page.locator('#md-open')).toBeVisible();
     await expect(page.locator('#md-files')).toBeHidden();
+    await expect(page.locator('#md-recent')).toBeHidden();
     await expect(page.locator('#md-status')).toContainText('Open a folder');
+    // The stale single-slot control is gone for good.
+    await expect(page.locator('#md-reopen')).toHaveCount(0);
+  });
+
+  test('the recents control follows the file you just opened', async ({ page }) => {
+    await page.goto(pathToFileURL(HOST_PAGE).href);
+    await page.waitForFunction(() => !!window.__wfpMarkdownHost, null, { timeout: 10_000 });
+
+    const state = await page.evaluate(async () => {
+      const make = (name, body) => ({
+        name,
+        isSameEntry: async (other) => other.name === name,
+        getFile: async () => ({ text: async () => body, lastModified: 1 }),
+      });
+      await window.__wfpMarkdownHost.openFile(make('plan.md', '# Plan\n'));
+      const afterFirst = [...document.querySelectorAll('#md-recent option')].map((o) => o.textContent);
+      await window.__wfpMarkdownHost.openFile(make('context.md', '# Context\n'));
+      const afterSecond = [...document.querySelectorAll('#md-recent option')].map((o) => o.textContent);
+      return {
+        afterFirst,
+        afterSecond,
+        recents: window.__wfpMarkdownHost.recents,
+        openName: document.getElementById('md-name').textContent,
+        docText: document.querySelector('#md-doc h1')?.textContent,
+      };
+    });
+
+    expect(state.afterFirst).toEqual(['Recent…', 'plan.md']);
+    // The regression: this used to keep naming the first file forever.
+    expect(state.afterSecond).toEqual(['Recent…', 'context.md', 'plan.md']);
+    expect(state.recents).toEqual(['context.md', 'plan.md']);
+    expect(state.openName).toBe('context.md');
+    expect(state.docText).toBe('Context');
+  });
+
+  test('picking an older entry from recents opens that file', async ({ page }) => {
+    await page.goto(pathToFileURL(HOST_PAGE).href);
+    await page.waitForFunction(() => !!window.__wfpMarkdownHost, null, { timeout: 10_000 });
+    await page.evaluate(async () => {
+      const make = (name, body) => ({
+        name,
+        isSameEntry: async (other) => other.name === name,
+        getFile: async () => ({ text: async () => body, lastModified: 1 }),
+      });
+      await window.__wfpMarkdownHost.openFile(make('plan.md', '# Plan\n'));
+      await window.__wfpMarkdownHost.openFile(make('context.md', '# Context\n'));
+    });
+
+    await page.locator('#md-recent').selectOption({ label: 'plan.md' });
+    await expect(page.locator('#md-name')).toHaveText('plan.md');
+    await expect(page.locator('#md-doc h1')).toHaveText('Plan');
+    // Reopening promotes it back to the front rather than duplicating it.
+    await expect(page.locator('#md-recent option')).toHaveText(['Recent…', 'plan.md', 'context.md']);
   });
 
   test('rendered markdown becomes an annotatable flat document', async ({ page }) => {

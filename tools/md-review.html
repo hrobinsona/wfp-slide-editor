@@ -37,7 +37,7 @@
     cursor: pointer;
   }
   #md-chrome button:hover { background: #f4f2ec; }
-  #md-files {
+  #md-files, #md-recent {
     font: inherit;
     max-width: 320px;
     padding: 4px 6px;
@@ -75,7 +75,7 @@
   @media (prefers-color-scheme: dark) {
     body { background: #17161a; color: #e9e7e2; }
     #md-chrome { background: rgba(23,22,26,0.92); border-bottom-color: #2c2a31; }
-    #md-chrome button, #md-files { background: #232128; border-color: #3a373f; color: inherit; }
+    #md-chrome button, #md-files, #md-recent { background: #232128; border-color: #3a373f; color: inherit; }
     #md-chrome button:hover { background: #2c2a31; }
     h2 { border-bottom-color: #2c2a31; }
     code, pre { background: #232128; }
@@ -89,7 +89,7 @@
   <button id="md-reopen-dir" type="button" hidden></button>
   <select id="md-files" hidden aria-label="Markdown files in folder"></select>
   <button id="md-open" type="button">Open .md</button>
-  <button id="md-reopen" type="button" hidden></button>
+  <select id="md-recent" hidden aria-label="Recently opened files"></select>
   <button id="md-save" type="button">Save</button>
   <span id="md-name"></span>
   <span id="md-status">Loading…</span>
@@ -493,6 +493,60 @@ export function applyMarkdownWriteback(source, { sourceNotes = [], notes = [], e
   return { text: lines.join('\n'), ...stats };
 }
 
+// ── recents.js ──────────────────────────────────────────────────────
+// ===========================================================================
+// Recent-file list (v2.22)
+//
+// Kept DOM-free so it can be unit-tested in Node: the File System Access
+// picker cannot be automated, but the list arithmetic around it can be, and
+// that is where the ordering and duplication bugs actually live.
+//
+// Identity is `isSameEntry`, not name: two notes in different folders can
+// share a filename, and the same file re-picked yields a different handle
+// object that must still collapse onto one entry.
+// ===========================================================================
+
+export const RECENTS_CAP = 8;
+
+async function sameEntry(a, b) {
+  if (a === b) return true;
+  try {
+    if (typeof a.isSameEntry === 'function') return await a.isSameEntry(b);
+  } catch (_) { /* fall through to the name comparison below */ }
+  return a.name === b.name;
+}
+
+/**
+ * Put `handle` at the front, drop any earlier entry for the same file, and cap
+ * the result. Returns a new array; the input is never mutated.
+ */
+export async function mergeRecents(list, handle, cap = RECENTS_CAP) {
+  if (!handle) return [...(list || [])].slice(0, cap);
+  const out = [handle];
+  for (const item of list || []) {
+    if (out.length >= cap) break;
+    if (!item) continue;
+    if (await sameEntry(item, handle)) continue;
+    out.push(item);
+  }
+  return out;
+}
+
+/**
+ * Labels for the recents picker. Duplicate filenames are disambiguated with a
+ * numeric suffix so two `notes.md` from different folders stay distinguishable
+ * — the handle carries no path, so there is nothing better to show.
+ */
+export function recentLabels(list) {
+  const seen = new Map();
+  return (list || []).map((handle) => {
+    const name = handle?.name || 'untitled';
+    const count = seen.get(name) || 0;
+    seen.set(name, count + 1);
+    return count === 0 ? name : `${name} (${count + 1})`;
+  });
+}
+
 // ── host.js ─────────────────────────────────────────────────────────
 // ===========================================================================
 // Markdown review host (v2.22)
@@ -515,6 +569,7 @@ const DB_NAME = 'wfp-md-review';
 const STORE = 'handles';
 const HANDLE_KEY = 'last';
 const DIR_KEY = 'lastDir';
+const RECENTS_KEY = 'recents';
 // Walk caps. A vault can be large and this list only has to be usable, not
 // exhaustive; hidden and dependency directories are never interesting here.
 const MAX_DEPTH = 6;
@@ -529,6 +584,7 @@ let sourceText = '';
 let sourceNotes = [];
 let blockIndex = new Map(); // "start-end" → scanned block (for edit detection)
 let objectUrls = []; // blob URLs minted for relative images; revoked on re-render
+let recents = []; // most-recent-first file handles, mirrored to IndexedDB
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -796,12 +852,38 @@ async function openFile(handle, fileDir = null) {
   // therefore resolvable relative images.
   currentFileDir = fileDir;
   await rememberHandle(picked);
+  // Refresh the recents list on EVERY open, not just at boot. The first
+  // version bound the reopen control once during boot and closed over that
+  // handle, so it named — and reopened — whichever file happened to be first,
+  // for the rest of the session.
+  recents = await mergeRecents(recents, picked);
+  await rememberHandle(recents, RECENTS_KEY);
+  renderRecents();
   const text = await (await picked.getFile()).text();
   renderInto(text);
   els.name.textContent = picked.name;
   document.title = `${picked.name} — review`;
   setStatus(`${sourceNotes.length} note${sourceNotes.length === 1 ? '' : 's'} in file`);
   loadEditor();
+}
+
+// Rebuilt from `recents` each time rather than mutated, so the control can
+// never drift from the list it represents.
+function renderRecents() {
+  const labels = recentLabels(recents);
+  els.recent.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = recents.length ? 'Recent…' : 'No recent files';
+  els.recent.appendChild(placeholder);
+  labels.forEach((label, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = label;
+    els.recent.appendChild(option);
+  });
+  els.recent.hidden = recents.length === 0;
+  els.recent.value = '';
 }
 
 let editorLoaded = false;
@@ -833,6 +915,10 @@ window.__wfpMarkdownHost = {
   renderInto,
   collectNotes,
   collectEdits,
+  // Accepts a stand-in handle so the open→recents wiring can be exercised
+  // without a picker; the real one differs only in where it comes from.
+  openFile,
+  get recents() { return recents.map((h) => h.name); },
   writeback: () => {
     const { edits } = collectEdits();
     return applyMarkdownWriteback(sourceText, { sourceNotes, notes: collectNotes(), edits });
@@ -845,6 +931,7 @@ function boot() {
   els.status = document.getElementById('md-status');
   els.name = document.getElementById('md-name');
   els.files = document.getElementById('md-files');
+  els.recent = document.getElementById('md-recent');
   const guard = (fn) => () => fn().catch((e) => setStatus(e.message, 'error'));
 
   document.getElementById('md-open').addEventListener('click', guard(() => openFile()));
@@ -853,6 +940,12 @@ function boot() {
   els.files.addEventListener('change', guard(async () => {
     const file = els.files.__files?.[Number(els.files.value)];
     if (file) await openFile(file.handle, file.dir);
+  }));
+  // Reads `recents` at click time rather than closing over a handle, which is
+  // what made the old single button permanently stale.
+  els.recent.addEventListener('change', guard(async () => {
+    const handle = recents[Number(els.recent.value)];
+    if (handle) await openFile(handle);
   }));
 
   if (!window.showOpenFilePicker) {
@@ -869,12 +962,9 @@ function boot() {
     reopenDir.textContent = `Reopen ${handle.name}/`;
     reopenDir.addEventListener('click', guard(() => openDirectory(handle)));
   });
-  recallHandle().then((handle) => {
-    if (!handle) return;
-    const reopen = document.getElementById('md-reopen');
-    reopen.hidden = false;
-    reopen.textContent = `Reopen ${handle.name}`;
-    reopen.addEventListener('click', guard(() => openFile(handle)));
+  recallHandle(RECENTS_KEY).then((stored) => {
+    recents = Array.isArray(stored) ? stored.filter(Boolean) : [];
+    renderRecents();
   });
   setStatus('Open a folder or a single .md to begin');
 }

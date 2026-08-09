@@ -19,6 +19,7 @@ const DB_NAME = 'wfp-md-review';
 const STORE = 'handles';
 const HANDLE_KEY = 'last';
 const DIR_KEY = 'lastDir';
+const RECENTS_KEY = 'recents';
 // Walk caps. A vault can be large and this list only has to be usable, not
 // exhaustive; hidden and dependency directories are never interesting here.
 const MAX_DEPTH = 6;
@@ -33,6 +34,7 @@ let sourceText = '';
 let sourceNotes = [];
 let blockIndex = new Map(); // "start-end" → scanned block (for edit detection)
 let objectUrls = []; // blob URLs minted for relative images; revoked on re-render
+let recents = []; // most-recent-first file handles, mirrored to IndexedDB
 
 function idb() {
   return new Promise((resolve, reject) => {
@@ -300,12 +302,38 @@ async function openFile(handle, fileDir = null) {
   // therefore resolvable relative images.
   currentFileDir = fileDir;
   await rememberHandle(picked);
+  // Refresh the recents list on EVERY open, not just at boot. The first
+  // version bound the reopen control once during boot and closed over that
+  // handle, so it named — and reopened — whichever file happened to be first,
+  // for the rest of the session.
+  recents = await mergeRecents(recents, picked);
+  await rememberHandle(recents, RECENTS_KEY);
+  renderRecents();
   const text = await (await picked.getFile()).text();
   renderInto(text);
   els.name.textContent = picked.name;
   document.title = `${picked.name} — review`;
   setStatus(`${sourceNotes.length} note${sourceNotes.length === 1 ? '' : 's'} in file`);
   loadEditor();
+}
+
+// Rebuilt from `recents` each time rather than mutated, so the control can
+// never drift from the list it represents.
+function renderRecents() {
+  const labels = recentLabels(recents);
+  els.recent.replaceChildren();
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = recents.length ? 'Recent…' : 'No recent files';
+  els.recent.appendChild(placeholder);
+  labels.forEach((label, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.textContent = label;
+    els.recent.appendChild(option);
+  });
+  els.recent.hidden = recents.length === 0;
+  els.recent.value = '';
 }
 
 let editorLoaded = false;
@@ -337,6 +365,10 @@ window.__wfpMarkdownHost = {
   renderInto,
   collectNotes,
   collectEdits,
+  // Accepts a stand-in handle so the open→recents wiring can be exercised
+  // without a picker; the real one differs only in where it comes from.
+  openFile,
+  get recents() { return recents.map((h) => h.name); },
   writeback: () => {
     const { edits } = collectEdits();
     return applyMarkdownWriteback(sourceText, { sourceNotes, notes: collectNotes(), edits });
@@ -349,6 +381,7 @@ function boot() {
   els.status = document.getElementById('md-status');
   els.name = document.getElementById('md-name');
   els.files = document.getElementById('md-files');
+  els.recent = document.getElementById('md-recent');
   const guard = (fn) => () => fn().catch((e) => setStatus(e.message, 'error'));
 
   document.getElementById('md-open').addEventListener('click', guard(() => openFile()));
@@ -357,6 +390,12 @@ function boot() {
   els.files.addEventListener('change', guard(async () => {
     const file = els.files.__files?.[Number(els.files.value)];
     if (file) await openFile(file.handle, file.dir);
+  }));
+  // Reads `recents` at click time rather than closing over a handle, which is
+  // what made the old single button permanently stale.
+  els.recent.addEventListener('change', guard(async () => {
+    const handle = recents[Number(els.recent.value)];
+    if (handle) await openFile(handle);
   }));
 
   if (!window.showOpenFilePicker) {
@@ -373,12 +412,9 @@ function boot() {
     reopenDir.textContent = `Reopen ${handle.name}/`;
     reopenDir.addEventListener('click', guard(() => openDirectory(handle)));
   });
-  recallHandle().then((handle) => {
-    if (!handle) return;
-    const reopen = document.getElementById('md-reopen');
-    reopen.hidden = false;
-    reopen.textContent = `Reopen ${handle.name}`;
-    reopen.addEventListener('click', guard(() => openFile(handle)));
+  recallHandle(RECENTS_KEY).then((stored) => {
+    recents = Array.isArray(stored) ? stored.filter(Boolean) : [];
+    renderRecents();
   });
   setStatus('Open a folder or a single .md to begin');
 }
