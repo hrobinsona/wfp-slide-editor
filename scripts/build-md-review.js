@@ -133,7 +133,6 @@ function buildPage() {
   <button id="md-open" type="button">Open .md</button>
   <select id="md-recent" hidden aria-label="Recently opened files"></select>
   <button id="md-save" type="button">Save</button>
-  <span id="md-name"></span>
   <span id="md-status">Loading…</span>
 </header>
 <main id="md-doc"></main>
