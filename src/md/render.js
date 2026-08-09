@@ -99,6 +99,21 @@ function isBlockStart(line) {
 export function scanBlocks(lines) {
   const blocks = [];
   let i = 0;
+
+  // YAML front matter is metadata, not prose. Without this it scans as
+  // hr/paragraph/hr, and annotating that "paragraph" splices a callout between
+  // the fences — which breaks Obsidian properties. Claimed as one opaque
+  // block so nothing can render, anchor to, or edit inside it.
+  if (lines[0] === '---') {
+    for (let j = 1; j < lines.length; j += 1) {
+      if (lines[j] === '---' || lines[j] === '...') {
+        blocks.push({ type: 'frontmatter', start: 0, end: j });
+        i = j + 1;
+        break;
+      }
+    }
+  }
+
   while (i < lines.length) {
     const line = lines[i];
     if (isBlankLine(line)) { i += 1; continue; }
@@ -242,6 +257,9 @@ export function renderMarkdown(text) {
   const contentBlocks = [];
 
   blocks.forEach((block, index) => {
+    // Front matter is carried in the source but never rendered, so it cannot
+    // be annotated, edited, or used as an anchor.
+    if (block.type === 'frontmatter') return;
     if (block.type !== 'callout') { contentBlocks.push(block); return; }
     // A callout annotates the block it FOLLOWS; with nothing before it, the
     // one it precedes. Paired by index in the scanned list, so the binding

@@ -7356,6 +7356,21 @@
     // overview would be surprising UX.
     if (!state.editMode && !state.overviewMode) return;
 
+    // v2.22 — element-mutating shortcuts have no meaning on a Markdown
+    // surface, and are actively harmful there: deleting a block removes it
+    // from the page but not from the file, and doing so drops any callout
+    // anchored to it on the next save. Copy/paste clones a block along with
+    // its source range, and the font nudge writes an inline style the
+    // writeback cannot represent. Selection, text edit, and notes are
+    // untouched.
+    if (state.markdownMode && (
+      (isMod && !e.altKey && /^[cvCV]$/.test(e.key)) ||
+      (noModifier && (e.key === 'Backspace' || e.key === 'Delete')) ||
+      (noModifier && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))
+    )) {
+      return;
+    }
+
     if (state.editMode && isMod && !e.altKey && (e.key === 'c' || e.key === 'C')) {
       if (!state.selected) return;
       e.preventDefault();
