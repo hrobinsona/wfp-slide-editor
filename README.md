@@ -71,7 +71,7 @@ Bookmark that page (a normal bookmark, not a bookmarklet — a `.md` file is not
 
 - **Open folder** once on your vault or repo root. Every `.md` beneath it appears in the dropdown, so switching notes is one click with no picker, and relative images resolve.
 - **Open .md** for a one-off file outside that folder.
-- Either way the last folder and file are remembered, and reappear as **Reopen** buttons next session (one click, which is also the gesture Chrome needs to re-grant write access).
+- **Recent…** lists the last eight files you opened, most recent first, across folders. It updates on every open and survives a restart (picking one is also the gesture Chrome needs to re-grant write access).
 
 Edit mode is already on when the file opens — this surface exists only to annotate. Select any block, write an agent note, and press `Cmd/Ctrl+S`. The note is written back into the Markdown as an Obsidian callout:
 

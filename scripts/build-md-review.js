@@ -19,7 +19,7 @@ const ROOT = path.resolve(__dirname, '..');
 const SOURCE_ROOT = path.join(ROOT, 'src', 'md');
 const OUTPUT_FILE = path.join(ROOT, 'tools', 'md-review.html');
 
-const PARTS = ['render.js', 'writeback.js', 'host.js'];
+const PARTS = ['render.js', 'writeback.js', 'recents.js', 'host.js'];
 
 // Only cross-module imports are stripped — the parts become one module, so an
 // import of a sibling would be a network fetch the file:// origin denies.
@@ -57,7 +57,7 @@ const PAGE_CSS = `
     cursor: pointer;
   }
   #md-chrome button:hover { background: #f4f2ec; }
-  #md-files {
+  #md-files, #md-recent {
     font: inherit;
     max-width: 320px;
     padding: 4px 6px;
@@ -95,7 +95,7 @@ const PAGE_CSS = `
   @media (prefers-color-scheme: dark) {
     body { background: #17161a; color: #e9e7e2; }
     #md-chrome { background: rgba(23,22,26,0.92); border-bottom-color: #2c2a31; }
-    #md-chrome button, #md-files { background: #232128; border-color: #3a373f; color: inherit; }
+    #md-chrome button, #md-files, #md-recent { background: #232128; border-color: #3a373f; color: inherit; }
     #md-chrome button:hover { background: #2c2a31; }
     h2 { border-bottom-color: #2c2a31; }
     code, pre { background: #232128; }
@@ -131,7 +131,7 @@ function buildPage() {
   <button id="md-reopen-dir" type="button" hidden></button>
   <select id="md-files" hidden aria-label="Markdown files in folder"></select>
   <button id="md-open" type="button">Open .md</button>
-  <button id="md-reopen" type="button" hidden></button>
+  <select id="md-recent" hidden aria-label="Recently opened files"></select>
   <button id="md-save" type="button">Save</button>
   <span id="md-name"></span>
   <span id="md-status">Loading…</span>
