@@ -70,6 +70,23 @@
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="9 18 15 12 9 6" />' +
       '</svg>',
+    // Chevron-left: notes-panel "previous note" control (v2.21).
+    chevronLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="15 18 9 12 15 6" />' +
+      '</svg>',
+    // Round speech bubble — Agent-notes toolbar button (v2.21). Distinct
+    // from the squared `handoff` bubble used in the export menu.
+    notes:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.3 8.6 8.6 0 0 1-3.8-.9L3 21l2.1-5.7a8.3 8.3 0 1 1 15.9-3.8z" />' +
+      '</svg>',
+    // × — notes-panel close control (v2.21).
+    close:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="6" y1="6" x2="18" y2="18" />' +
+      '<line x1="18" y1="6" x2="6" y2="18" />' +
+      '</svg>',
     // Text-align triplet — inspector Align segmented control (ink-glass 3b).
     alignLeft:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
@@ -202,6 +219,15 @@
   exportBtn.appendChild(exportBadge);
   exportBtn.setAttribute('aria-haspopup', 'menu');
   exportBtn.setAttribute('aria-expanded', 'false');
+  // v2.21 — agent-notes panel toggle. Count badge clones the export badge
+  // recipe; hidden at zero via CSS [data-count="0"].
+  const notesBtn = makeToolbarButton('notes', 'Agent notes', 'Agent notes (N)', 'notes');
+  const notesBadge = document.createElement('span');
+  notesBadge.className = 'wfpe-notes-badge';
+  notesBadge.dataset.count = '0';
+  notesBadge.setAttribute('aria-hidden', 'true');
+  notesBtn.appendChild(notesBadge);
+  notesBtn.setAttribute('aria-expanded', 'false');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
 
@@ -215,6 +241,7 @@
   toolbarFoldInner.className = 'wfpe-toolbar-fold-inner';
   toolbarFold.appendChild(toolbarFoldInner);
   toolbarFoldInner.appendChild(overviewBtn);
+  toolbarFoldInner.appendChild(notesBtn);
   toolbarFoldInner.appendChild(exportBtn);
   toolbarFoldInner.appendChild(undoBtn);
   toolbarFoldInner.appendChild(redoBtn);
@@ -290,6 +317,55 @@
   exportDockInner.appendChild(exportMenu);
   exportDock.appendChild(exportDockInner);
   stack.appendChild(exportDock);
+
+  // v2.21 — agent-notes panel: third stack segment, between the export
+  // dock and the inspector dock. The inspector opening BELOW the list
+  // keeps cards stationary as selection changes. Same grid-fold recipe
+  // as the export dock; card DOM is owned by renderNotesPanel()
+  // (45-notes-panel.js) and only built while the panel is open.
+  const notesDock = document.createElement('div');
+  notesDock.className = 'wfpe-notes-dock';
+  notesDock.dataset.visible = 'false';
+  const notesDockInner = document.createElement('div');
+  notesDockInner.className = 'wfpe-notes-dock-inner';
+  notesDock.appendChild(notesDockInner);
+
+  const notesPanel = document.createElement('div');
+  notesPanel.className = 'wfpe-notes-panel';
+  notesPanel.dataset.open = 'false'; // stable hook for tests
+  notesPanel.dataset.last = 'true';
+
+  const notesHeader = document.createElement('div');
+  notesHeader.className = 'wfpe-notes-header';
+  const notesTitle = document.createElement('span');
+  notesTitle.className = 'wfpe-notes-title';
+  notesTitle.textContent = 'Agent notes';
+  notesHeader.appendChild(notesTitle);
+
+  function makeNotesNavButton(action, label, hint, iconKey) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wfpe-notes-nav-btn';
+    b.dataset.action = action;
+    b.title = hint;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = ICONS[iconKey];
+    return b;
+  }
+  const notesPrevBtn = makeNotesNavButton('notes-prev', 'Previous note', 'Previous note (Shift+N)', 'chevronLeft');
+  const notesNextBtn = makeNotesNavButton('notes-next', 'Next note', 'Next note (N)', 'chevronRight');
+  const notesCloseBtn = makeNotesNavButton('notes-close', 'Close agent notes', 'Close (Esc)', 'close');
+  notesHeader.appendChild(notesPrevBtn);
+  notesHeader.appendChild(notesNextBtn);
+  notesHeader.appendChild(notesCloseBtn);
+  notesPanel.appendChild(notesHeader);
+
+  const notesList = document.createElement('div');
+  notesList.className = 'wfpe-notes-list';
+  notesPanel.appendChild(notesList);
+
+  notesDockInner.appendChild(notesPanel);
+  stack.appendChild(notesDock);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -913,18 +989,47 @@
   // the inspector dims + folds to its header while the menu is open.
   function refreshStackSeams() {
     const inspectorVisible = inspectorDock.dataset.visible === 'true';
-    toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
-    exportMenu.dataset.abovePanel = String(inspectorVisible);
+    toolbar.dataset.docked = String(state.exportMenuOpen || state.notesPanelOpen || inspectorVisible);
+    exportMenu.dataset.abovePanel = String(state.notesPanelOpen || inspectorVisible);
+    // v2.21 — the notes panel rounds its bottom only while it is the last
+    // visible segment. Only the inspector matters here: the export dock
+    // sits ABOVE the notes dock, and the two middle segments are mutually
+    // exclusive (openNotesPanel/openExportMenu close each other) — if that
+    // exclusivity is ever relaxed, revisit this.
+    notesPanel.dataset.last = String(!inspectorVisible);
     inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
     positionInspectorStack();
   }
   function openExportMenu() {
     state.exportMenuOpen = true;
+    closeNotesPanel(); // one middle segment at a time; no-op when closed
     exportDock.dataset.visible = 'true';
     exportMenu.dataset.open = 'true'; // stable hook for tests
     exportBtn.setAttribute('aria-expanded', 'true');
     refreshStackSeams();
     refreshExportUi();
+  }
+  // v2.21 — notes-panel fold. Unlike the export menu this is a browsing
+  // surface, not a menu: it deliberately does NOT close on click-away —
+  // only the toolbar toggle, its × button, or Escape dismiss it.
+  function openNotesPanel() {
+    state.notesPanelOpen = true;
+    closeExportMenu(); // one middle segment at a time; no-op when closed
+    notesDock.dataset.visible = 'true';
+    notesPanel.dataset.open = 'true'; // stable hook for tests
+    notesBtn.setAttribute('aria-expanded', 'true');
+    // Full fan-out (badges + card render), not just renderNotesPanel():
+    // matches openExportMenu, so counts are honest even when annotation
+    // attributes changed outside the save path (e.g. agent reimport).
+    refreshExportUi();
+    refreshStackSeams();
+  }
+  function closeNotesPanel() {
+    state.notesPanelOpen = false;
+    notesDock.dataset.visible = 'false';
+    notesPanel.dataset.open = 'false';
+    notesBtn.setAttribute('aria-expanded', 'false');
+    refreshStackSeams();
   }
   function closeExportMenu() {
     state.exportMenuOpen = false;
@@ -985,6 +1090,31 @@
     e.preventDefault();
     if (isFlatMode()) return;
     setOverviewMode(!state.overviewMode);
+  });
+  // v2.21 — notes-panel wiring. Cards are rebuilt wholesale by
+  // renderNotesPanel(), so clicks are delegated from the stable list node.
+  notesBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (state.notesPanelOpen) closeNotesPanel();
+    else openNotesPanel();
+  });
+  notesPrevBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    cycleAnnotation(-1);
+  });
+  notesNextBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    cycleAnnotation(1);
+  });
+  notesCloseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeNotesPanel();
+  });
+  notesList.addEventListener('click', (e) => {
+    const card = e.target.closest('.wfpe-notes-card');
+    if (!card) return;
+    e.preventDefault();
+    jumpToAnnotation(card.dataset.annotationId);
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
     e.preventDefault();

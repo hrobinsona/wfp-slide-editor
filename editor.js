@@ -112,6 +112,8 @@
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
     exportMenuOpen: false, // v2.11 — export action menu (4b) open/closed
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
+    notesPanelOpen: false, // v2.21 — agent-notes panel (third stack segment) open/closed; toggled by toolbar button / hotkey N / Escape
+    notesCursorId: null, // v2.21 — annotation id of the last note jumped to; N/Shift+N flicking resumes here when nothing is selected
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set after an editor-owned slide activation/mutation/refresh; flips arrow-nav to live-DOM when the fixture's cached cursor/list can be stale
@@ -186,9 +188,11 @@
       align-items: flex-start;
     }
     #${ROOT_ID} .wfpe-toolbar {
-      width: 214px;              /* collapsed: 58px via [data-collapsed];
-                                    v2.11.1: 246 - 32 after Handoff merged
-                                    into Export (one 30px button + 2px gap) */
+      width: 246px;              /* collapsed: 58px via [data-collapsed];
+                                    v2.21: back to the full stack width —
+                                    the Agent-notes button restores the
+                                    30px + 2px gap that v2.11.1 removed
+                                    when Handoff merged into Export */
       flex: none;
       box-sizing: border-box;
       pointer-events: none;
@@ -511,6 +515,227 @@
       color: rgba(255,255,255,0.45);
       font-family: ui-monospace, Menlo, monospace;
     }
+    /* ----- v2.21 — Agent-notes dock: third stack segment (toolbar →
+       export menu → notes → inspector), same grid-fold recipe as the
+       export dock. Lists every saved annotation across the deck; the
+       inspector docking BELOW it keeps cards stationary as selection
+       changes. ----- */
+    #${ROOT_ID} .wfpe-notes-dock {
+      width: 246px;
+      pointer-events: none;
+      display: grid;
+      grid-template-rows: 0fr;
+      /* A zero-height segment still sits between two 1px stack gaps —
+         2px of dead seam that would break the ink-glass 1px contract
+         (inspector dockTop = 56, menu↔inspector gap = 1). The folded
+         dock cancels one gap with a negative margin; the open dock
+         restores it, animated with the same fold curve. */
+      margin-bottom: -1px;
+      transition:
+        grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1),
+        margin-bottom 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="true"] {
+      grid-template-rows: 1fr;
+      margin-bottom: 0;
+    }
+    #${ROOT_ID} .wfpe-notes-dock-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+    #${ROOT_ID} .wfpe-notes-panel {
+      display: flex;
+      flex-direction: column;
+      /* Straight 6px top always (it sits below the bar); the bottom rounds
+         to 12px only while it is the last segment — an inspector docked
+         below squares it via [data-last="false"], mirroring the export
+         menu's [data-above-panel] rule. */
+      border-radius: 6px 6px 12px 12px;
+      background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)), rgba(22,25,31,0.32);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);  /* no outer drop shadow */
+      overflow: hidden;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.28);
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      user-select: none;
+      box-sizing: border-box;
+      transition:
+        border-radius 380ms cubic-bezier(0.32,0.72,0,1),
+        visibility 0s;
+    }
+    #${ROOT_ID} .wfpe-notes-panel[data-last="false"] { border-radius: 6px; }
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="true"] .wfpe-notes-panel {
+      pointer-events: auto;
+    }
+    /* Folded shut: hide for focus/AT once the fold completes, mirroring
+       the inspector dock's rule. */
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="false"] .wfpe-notes-panel {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
+    }
+    #${ROOT_ID} .wfpe-notes-header {
+      display: flex;
+      align-items: center;
+      height: 36px;
+      box-sizing: border-box;
+      padding: 0 6px 0 13px;
+      gap: 2px;
+    }
+    #${ROOT_ID} .wfpe-notes-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      opacity: 0.95;
+      margin-right: auto;
+    }
+    #${ROOT_ID} .wfpe-notes-nav-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-notes-nav-btn:hover:not(:disabled) { background-color: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-notes-nav-btn:disabled { opacity: 0.35; cursor: default; }
+    #${ROOT_ID} .wfpe-notes-nav-btn .wfpe-icon {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    /* The hard scroll cap is what keeps toolbar + export/notes + inspector
+       inside the viewport budget on short windows. */
+    #${ROOT_ID} .wfpe-notes-list {
+      min-height: 0;
+      max-height: 40vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 0 5px 5px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      /* Same thin translucent scrollbar recipe as .wfpe-inspector-body —
+         the default white scrollbar reads as a foreign object on glass. */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.28) transparent;
+    }
+    #${ROOT_ID} .wfpe-notes-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .wfpe-notes-list::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(255,255,255,0.28);
+    }
+    #${ROOT_ID} .wfpe-notes-empty {
+      padding: 2px 9px 12px;
+      font-size: 10.5px;
+      color: rgba(255,255,255,0.60);
+    }
+    /* Card accent bar follows the marker status vocabulary: coral note,
+       amber needs-input, slate skipped. */
+    #${ROOT_ID} .wfpe-notes-card {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      width: 100%;
+      padding: 7px 9px;
+      border: 0;
+      border-left: 2px solid #f0685b;
+      border-radius: 8px;
+      background: transparent;
+      color: #fff;
+      text-align: left;
+      cursor: pointer;
+      box-sizing: border-box;
+      font: inherit;
+    }
+    #${ROOT_ID} .wfpe-notes-card:hover { background: rgba(255,255,255,0.10); }
+    #${ROOT_ID} .wfpe-notes-card[data-active="true"] { background: rgba(240,104,91,0.20); }
+    #${ROOT_ID} .wfpe-notes-card[data-status="needs-input"] { border-left-color: #f0a83b; }
+    #${ROOT_ID} .wfpe-notes-card[data-status="skipped"] { border-left-color: #9aa6b2; }
+    #${ROOT_ID} .wfpe-notes-card-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    #${ROOT_ID} .wfpe-notes-card-chip {
+      flex: none;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+      font-size: 9px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    #${ROOT_ID} .wfpe-notes-card-snippet {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 9.5px;
+      color: rgba(255,255,255,0.60);
+    }
+    #${ROOT_ID} .wfpe-notes-card-instruction {
+      font-size: 11px;
+      font-weight: 500;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    #${ROOT_ID} .wfpe-notes-card-reply { font-size: 9.5px; }
+    #${ROOT_ID} .wfpe-notes-card-reply[data-status="needs-input"] { color: #ffd9a1; }
+    #${ROOT_ID} .wfpe-notes-card-reply[data-status="skipped"] { color: rgba(226,232,238,0.75); }
+    /* Notes count badge on the toolbar button — same recipe as the export
+       badge above. */
+    #${ROOT_ID} .wfpe-toolbar-btn[data-action="notes"] { position: relative; }
+    #${ROOT_ID} .wfpe-notes-badge {
+      position: absolute;
+      top: 0;
+      right: 0;
+      min-width: 12px;
+      height: 12px;
+      padding: 0 3px;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 70%);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.35);
+      font-size: 7.5px;
+      font-weight: 600;
+      line-height: 1;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-notes-badge[data-count="0"] { display: none; }
     /* ----- Inspector — docked glass segment, 1px seam under the bar.
        The outer dock wrapper animates the whole segment in/out on
        select/deselect via grid-template-rows; the panel itself no longer
@@ -1736,6 +1961,23 @@
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
       '<polyline points="9 18 15 12 9 6" />' +
       '</svg>',
+    // Chevron-left: notes-panel "previous note" control (v2.21).
+    chevronLeft:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<polyline points="15 18 9 12 15 6" />' +
+      '</svg>',
+    // Round speech bubble — Agent-notes toolbar button (v2.21). Distinct
+    // from the squared `handoff` bubble used in the export menu.
+    notes:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.3 8.6 8.6 0 0 1-3.8-.9L3 21l2.1-5.7a8.3 8.3 0 1 1 15.9-3.8z" />' +
+      '</svg>',
+    // × — notes-panel close control (v2.21).
+    close:
+      '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+      '<line x1="6" y1="6" x2="18" y2="18" />' +
+      '<line x1="18" y1="6" x2="6" y2="18" />' +
+      '</svg>',
     // Text-align triplet — inspector Align segmented control (ink-glass 3b).
     alignLeft:
       '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true">' +
@@ -1868,6 +2110,15 @@
   exportBtn.appendChild(exportBadge);
   exportBtn.setAttribute('aria-haspopup', 'menu');
   exportBtn.setAttribute('aria-expanded', 'false');
+  // v2.21 — agent-notes panel toggle. Count badge clones the export badge
+  // recipe; hidden at zero via CSS [data-count="0"].
+  const notesBtn = makeToolbarButton('notes', 'Agent notes', 'Agent notes (N)', 'notes');
+  const notesBadge = document.createElement('span');
+  notesBadge.className = 'wfpe-notes-badge';
+  notesBadge.dataset.count = '0';
+  notesBadge.setAttribute('aria-hidden', 'true');
+  notesBtn.appendChild(notesBadge);
+  notesBtn.setAttribute('aria-expanded', 'false');
   const undoBtn = makeToolbarButton('undo', 'Undo', 'Undo (Cmd/Ctrl+Z)', 'undo');
   const redoBtn = makeToolbarButton('redo', 'Redo', 'Redo (Cmd/Ctrl+Shift+Z)', 'redo');
 
@@ -1881,6 +2132,7 @@
   toolbarFoldInner.className = 'wfpe-toolbar-fold-inner';
   toolbarFold.appendChild(toolbarFoldInner);
   toolbarFoldInner.appendChild(overviewBtn);
+  toolbarFoldInner.appendChild(notesBtn);
   toolbarFoldInner.appendChild(exportBtn);
   toolbarFoldInner.appendChild(undoBtn);
   toolbarFoldInner.appendChild(redoBtn);
@@ -1956,6 +2208,55 @@
   exportDockInner.appendChild(exportMenu);
   exportDock.appendChild(exportDockInner);
   stack.appendChild(exportDock);
+
+  // v2.21 — agent-notes panel: third stack segment, between the export
+  // dock and the inspector dock. The inspector opening BELOW the list
+  // keeps cards stationary as selection changes. Same grid-fold recipe
+  // as the export dock; card DOM is owned by renderNotesPanel()
+  // (45-notes-panel.js) and only built while the panel is open.
+  const notesDock = document.createElement('div');
+  notesDock.className = 'wfpe-notes-dock';
+  notesDock.dataset.visible = 'false';
+  const notesDockInner = document.createElement('div');
+  notesDockInner.className = 'wfpe-notes-dock-inner';
+  notesDock.appendChild(notesDockInner);
+
+  const notesPanel = document.createElement('div');
+  notesPanel.className = 'wfpe-notes-panel';
+  notesPanel.dataset.open = 'false'; // stable hook for tests
+  notesPanel.dataset.last = 'true';
+
+  const notesHeader = document.createElement('div');
+  notesHeader.className = 'wfpe-notes-header';
+  const notesTitle = document.createElement('span');
+  notesTitle.className = 'wfpe-notes-title';
+  notesTitle.textContent = 'Agent notes';
+  notesHeader.appendChild(notesTitle);
+
+  function makeNotesNavButton(action, label, hint, iconKey) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wfpe-notes-nav-btn';
+    b.dataset.action = action;
+    b.title = hint;
+    b.setAttribute('aria-label', label);
+    b.innerHTML = ICONS[iconKey];
+    return b;
+  }
+  const notesPrevBtn = makeNotesNavButton('notes-prev', 'Previous note', 'Previous note (Shift+N)', 'chevronLeft');
+  const notesNextBtn = makeNotesNavButton('notes-next', 'Next note', 'Next note (N)', 'chevronRight');
+  const notesCloseBtn = makeNotesNavButton('notes-close', 'Close agent notes', 'Close (Esc)', 'close');
+  notesHeader.appendChild(notesPrevBtn);
+  notesHeader.appendChild(notesNextBtn);
+  notesHeader.appendChild(notesCloseBtn);
+  notesPanel.appendChild(notesHeader);
+
+  const notesList = document.createElement('div');
+  notesList.className = 'wfpe-notes-list';
+  notesPanel.appendChild(notesList);
+
+  notesDockInner.appendChild(notesPanel);
+  stack.appendChild(notesDock);
 
   // Inspector panel. Ink-glass 3b docks it beneath the toolbar as the
   // second glass segment: an outer .wfpe-inspector-dock wrapper (fixed at
@@ -2579,18 +2880,47 @@
   // the inspector dims + folds to its header while the menu is open.
   function refreshStackSeams() {
     const inspectorVisible = inspectorDock.dataset.visible === 'true';
-    toolbar.dataset.docked = String(state.exportMenuOpen || inspectorVisible);
-    exportMenu.dataset.abovePanel = String(inspectorVisible);
+    toolbar.dataset.docked = String(state.exportMenuOpen || state.notesPanelOpen || inspectorVisible);
+    exportMenu.dataset.abovePanel = String(state.notesPanelOpen || inspectorVisible);
+    // v2.21 — the notes panel rounds its bottom only while it is the last
+    // visible segment. Only the inspector matters here: the export dock
+    // sits ABOVE the notes dock, and the two middle segments are mutually
+    // exclusive (openNotesPanel/openExportMenu close each other) — if that
+    // exclusivity is ever relaxed, revisit this.
+    notesPanel.dataset.last = String(!inspectorVisible);
     inspector.dataset.suppressed = String(state.exportMenuOpen && inspectorVisible);
     positionInspectorStack();
   }
   function openExportMenu() {
     state.exportMenuOpen = true;
+    closeNotesPanel(); // one middle segment at a time; no-op when closed
     exportDock.dataset.visible = 'true';
     exportMenu.dataset.open = 'true'; // stable hook for tests
     exportBtn.setAttribute('aria-expanded', 'true');
     refreshStackSeams();
     refreshExportUi();
+  }
+  // v2.21 — notes-panel fold. Unlike the export menu this is a browsing
+  // surface, not a menu: it deliberately does NOT close on click-away —
+  // only the toolbar toggle, its × button, or Escape dismiss it.
+  function openNotesPanel() {
+    state.notesPanelOpen = true;
+    closeExportMenu(); // one middle segment at a time; no-op when closed
+    notesDock.dataset.visible = 'true';
+    notesPanel.dataset.open = 'true'; // stable hook for tests
+    notesBtn.setAttribute('aria-expanded', 'true');
+    // Full fan-out (badges + card render), not just renderNotesPanel():
+    // matches openExportMenu, so counts are honest even when annotation
+    // attributes changed outside the save path (e.g. agent reimport).
+    refreshExportUi();
+    refreshStackSeams();
+  }
+  function closeNotesPanel() {
+    state.notesPanelOpen = false;
+    notesDock.dataset.visible = 'false';
+    notesPanel.dataset.open = 'false';
+    notesBtn.setAttribute('aria-expanded', 'false');
+    refreshStackSeams();
   }
   function closeExportMenu() {
     state.exportMenuOpen = false;
@@ -2651,6 +2981,31 @@
     e.preventDefault();
     if (isFlatMode()) return;
     setOverviewMode(!state.overviewMode);
+  });
+  // v2.21 — notes-panel wiring. Cards are rebuilt wholesale by
+  // renderNotesPanel(), so clicks are delegated from the stable list node.
+  notesBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (state.notesPanelOpen) closeNotesPanel();
+    else openNotesPanel();
+  });
+  notesPrevBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    cycleAnnotation(-1);
+  });
+  notesNextBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    cycleAnnotation(1);
+  });
+  notesCloseBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeNotesPanel();
+  });
+  notesList.addEventListener('click', (e) => {
+    const card = e.target.closest('.wfpe-notes-card');
+    if (!card) return;
+    e.preventDefault();
+    jumpToAnnotation(card.dataset.annotationId);
   });
   inspectorMinimiseBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -4009,6 +4364,9 @@
     const count = getAnnotatedElements(document).length;
     exportBadge.dataset.count = String(count);
     exportBadge.textContent = count > 0 ? String(count) : '';
+    // v2.21 — the notes-panel toolbar badge tracks the same count.
+    notesBadge.dataset.count = String(count);
+    notesBadge.textContent = count > 0 ? String(count) : '';
     const label = exportPrimaryItem.querySelector('.wfpe-export-menu-label');
     const sub = exportPrimaryItem.querySelector('.wfpe-export-menu-sub');
     if (count > 0) {
@@ -4026,6 +4384,10 @@
     cleanLabel.textContent = 'Clean copy';
     cleanSub.textContent = count > 0 ? 'Edits only — notes stripped' : 'Download a copy';
     refreshAnnotationMarkers();
+    // v2.21 — single fan-out point for the notes-panel card list too; a
+    // no-op while the panel is closed. Deliberately NOT hooked into
+    // refreshAnnotationMarkers(), which runs on every scroll/resize tick.
+    renderNotesPanel();
   }
 
   function parseHandoffPayload() {
@@ -5355,12 +5717,13 @@
     const width = Math.max(246, stack.offsetWidth || 0);
     const toolbarHeight = toolbar.offsetHeight || 36;
     const exportHeight = state.exportMenuOpen ? (exportMenu.offsetHeight + 1) : 0;
+    const notesHeight = state.notesPanelOpen ? ((notesPanel.offsetHeight || 0) + 1) : 0;
     const bodyHeight = (state.inspectorMinimised || state.exportMenuOpen)
       ? 0
       : inspectorFoldInner.scrollHeight;
     const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
     const height = Math.min(
-      toolbarHeight + exportHeight + inspectorHeight + 2,
+      toolbarHeight + exportHeight + notesHeight + inspectorHeight + 2,
       window.innerHeight - margin * 2
     );
     const expandedSelection = {
@@ -5388,6 +5751,151 @@
       inspector.dataset.revealed = 'false';
     }
     inspector.dataset.avoidance = nextAvoidance;
+  }
+  // ===========================================================================
+  // Agent-notes panel (v2.21)
+  //
+  // A browsable list of every saved annotation across the deck — the
+  // cross-slide counterpart to the active-slide-only pins. Cards live in
+  // the .wfpe-notes-list node (30-ui) and are rebuilt wholesale per
+  // fan-out; renderNotesPanel() is a no-op while the panel is closed, so
+  // the closed panel costs nothing. Entry enumeration reuses
+  // getAnnotatedElements(document) — document order, which is slide order
+  // — NOT state.annotatedElementsCache (that cache is emptied in overview
+  // mode and edit-off, both of which keep the panel populated).
+  //
+  // Jumping mirrors navigateToSlide()'s activation contract exactly:
+  // state.deckMutated flips arrow-nav to live-DOM queries so a fixture's
+  // stale navigation closures cannot misnavigate after the editor
+  // activates a slide behind the host's back.
+  // ===========================================================================
+  function collectNotesPanelEntries() {
+    const slides = getSlides();
+    // Whole-document fallback keeps chip numbering consistent with the
+    // handoff payload (getSlideIndexForHandoffTarget) when a slide lives
+    // outside the resolved deck root (multi-deck / nested documents).
+    const allSlides = [...document.querySelectorAll('.slide')];
+    return getAnnotatedElements(document).map((el) => {
+      const slide = el.closest('.slide');
+      const deckIndex = slide ? slides.indexOf(slide) : -1;
+      return {
+        id: getAnnotationId(el),
+        el,
+        slideIndex: deckIndex >= 0 ? deckIndex : (slide ? allSlides.indexOf(slide) : -1),
+        snippet: summarizeTargetText(el).slice(0, 60),
+        instruction: getAnnotationText(el),
+        status: el.getAttribute(ANNOTATION_STATUS_ATTR) || '',
+        reply: normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR)),
+      };
+    });
+  }
+
+  function makeNotesCard(entry, selectedId) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'wfpe-notes-card';
+    card.dataset.annotationId = entry.id;
+    if (entry.status) card.dataset.status = entry.status;
+    card.dataset.active = (selectedId && entry.id === selectedId) ? 'true' : 'false';
+    card.setAttribute('aria-label', 'Go to agent note');
+
+    const top = document.createElement('span');
+    top.className = 'wfpe-notes-card-top';
+    if (entry.slideIndex >= 0) {
+      const chip = document.createElement('span');
+      chip.className = 'wfpe-notes-card-chip';
+      chip.textContent = String(entry.slideIndex + 1);
+      chip.title = `Slide ${entry.slideIndex + 1}`;
+      top.appendChild(chip);
+    }
+    const snippet = document.createElement('span');
+    snippet.className = 'wfpe-notes-card-snippet';
+    snippet.textContent = entry.snippet || `<${entry.el.tagName.toLowerCase()}>`;
+    top.appendChild(snippet);
+    card.appendChild(top);
+
+    const instruction = document.createElement('span');
+    instruction.className = 'wfpe-notes-card-instruction';
+    instruction.textContent = entry.instruction;
+    card.appendChild(instruction);
+
+    if (entry.status) {
+      const reply = document.createElement('span');
+      reply.className = 'wfpe-notes-card-reply';
+      reply.dataset.status = entry.status;
+      const label = entry.status === 'needs-input' ? 'Agent needs input' : 'Agent skipped';
+      reply.textContent = entry.reply ? `${label}: ${entry.reply}` : `${label}.`;
+      card.appendChild(reply);
+    }
+    return card;
+  }
+
+  function renderNotesPanel() {
+    if (!state.notesPanelOpen) return;
+    const entries = collectNotesPanelEntries();
+    const selectedId = getAnnotationId(state.selected);
+    notesList.replaceChildren();
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'wfpe-notes-empty';
+      empty.textContent = 'No agent notes yet. Select an element and add one in the inspector.';
+      notesList.appendChild(empty);
+    } else {
+      for (const entry of entries) notesList.appendChild(makeNotesCard(entry, selectedId));
+    }
+    const cycleDisabled = entries.length < 2;
+    notesPrevBtn.disabled = cycleDisabled;
+    notesNextBtn.disabled = cycleDisabled;
+  }
+
+  function jumpToAnnotation(id) {
+    const el = findAnnotationElementById(id);
+    if (!el) {
+      // Stale card (note deleted between fan-outs) — degrade to a
+      // re-render, never a wrong jump.
+      renderNotesPanel();
+      return;
+    }
+    closeExportMenu();
+    if (state.overviewMode) setOverviewMode(false);
+    // Selection machinery requires edit mode; a jump from edit-off is an
+    // explicit "take me to this note", so turning it on is the intent.
+    if (!state.editMode) setEditMode(true);
+    const slide = el.closest('.slide');
+    if (slide && slide !== getActiveSlide()) {
+      // The editor activated this slide without advancing the host deck's
+      // private cursor — own subsequent arrows (see navigateToSlide).
+      state.deckMutated = getDocumentMode() !== 'flat';
+      synchronizeSlideState(slide);
+    }
+    state.notesCursorId = id;
+    setSelected(el);
+    // Opens the inspector (populated note + reply) and, via its
+    // refreshExportUi tail, re-renders the card list with data-active set.
+    refreshInspector();
+    // Slides are viewport-sized; only flat documents scroll to content.
+    if (isFlatMode()) el.scrollIntoView({ block: 'center' });
+    // Focus stays OUT of the note textarea: a focused textarea would
+    // swallow the next N keystroke (isTypingTarget) and end the flicking.
+    const activeCard = notesList.querySelector('[data-active="true"]');
+    if (activeCard) activeCard.scrollIntoView({ block: 'nearest' });
+  }
+
+  function cycleAnnotation(delta) {
+    const entries = collectNotesPanelEntries();
+    if (entries.length === 0) return;
+    if (!state.notesPanelOpen) openNotesPanel();
+    const selectedId = getAnnotationId(state.selected);
+    let index = selectedId
+      ? entries.findIndex((entry) => entry.id === selectedId)
+      : -1;
+    if (index < 0 && state.notesCursorId) {
+      index = entries.findIndex((entry) => entry.id === state.notesCursorId);
+    }
+    const next = index < 0
+      ? (delta > 0 ? 0 : entries.length - 1)
+      : (index + delta + entries.length) % entries.length;
+    jumpToAnnotation(entries[next].id);
   }
   // ===========================================================================
   // History (undo/redo)
@@ -5800,6 +6308,7 @@
       refreshInspector();
     }
     refreshAnnotationMarkers();
+    renderNotesPanel(); // v2.21 — panel stays populated in both modes
   }
 
   // ===========================================================================
@@ -5847,6 +6356,7 @@
     overviewBtn.dataset.mode = state.overviewMode ? 'on' : 'off';
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
     refreshAnnotationMarkers();
+    renderNotesPanel(); // v2.21 — panel stays populated in both modes
   }
 
   // ---------------------------------------------------------------------------
@@ -6709,6 +7219,19 @@
       return;
     }
 
+    // v2.21 — flick through agent notes: N next, Shift+N previous
+    // (noModifier permits Shift, which carries the direction). Works
+    // regardless of edit mode — the jump normalizes mode itself — and
+    // opens the panel on first press. With no notes the key is left
+    // alone so the host page keeps its normal meaning.
+    if ((e.key === 'n' || e.key === 'N') && noModifier) {
+      if (getAnnotatedElements(document).length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cycleAnnotation(e.shiftKey ? -1 : 1);
+      return;
+    }
+
     // Escape is the keyboard counterpart to clicking empty slide background:
     // it drops the selection so the ring and inspector go away and the
     // navigation keys revert to the deck. It only gets here once every
@@ -6722,6 +7245,16 @@
       e.stopPropagation();
       setSelected(null);
       refreshInspector();
+      return;
+    }
+
+    // v2.21 — with nothing selected, Escape closes the notes panel: the
+    // last layer of the Escape onion (menu → text edit → overview →
+    // deselect → notes panel).
+    if (e.key === 'Escape' && noModifier && state.notesPanelOpen) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNotesPanel();
       return;
     }
 

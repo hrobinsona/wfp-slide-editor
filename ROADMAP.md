@@ -70,7 +70,7 @@ Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 ### Slide- and Deck-scoped Agent Notes
 
-Raised 2026-07-24, same review. Notes attach only to a single selected element in the active slide (`saveAnnotation` refuses multi-select and Overview mode), so deck-scoped intent — the stated main purpose of annotations — gets smuggled through an arbitrary element's note. Candidate: a `scope` field in the handoff payload (`element` | `slide` | `deck`), a note affordance on Overview slide cards, and a single deck-level note reachable from the export menu. Revisits the v2.5 "slide-level annotations" non-goal. Deliberately excludes typed/relational annotations — freeform text plus scope covers the gap.
+Raised 2026-07-24, same review. Partially addressed by v2.21 (`feature-briefs/v2.21-agent-notes-panel.md`): a browsable panel now lists every element-scoped note across the deck with jump and prev/next flicking. Slide- and deck-scoped note *authoring* remains open, as below. Notes attach only to a single selected element in the active slide (`saveAnnotation` refuses multi-select and Overview mode), so deck-scoped intent — the stated main purpose of annotations — gets smuggled through an arbitrary element's note. Candidate: a `scope` field in the handoff payload (`element` | `slide` | `deck`), a note affordance on Overview slide cards, and a single deck-level note reachable from the export menu. Revisits the v2.5 "slide-level annotations" non-goal. Deliberately excludes typed/relational annotations — freeform text plus scope covers the gap.
 
 ### Persistence
 

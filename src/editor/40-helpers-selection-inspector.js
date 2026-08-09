@@ -876,6 +876,9 @@
     const count = getAnnotatedElements(document).length;
     exportBadge.dataset.count = String(count);
     exportBadge.textContent = count > 0 ? String(count) : '';
+    // v2.21 — the notes-panel toolbar badge tracks the same count.
+    notesBadge.dataset.count = String(count);
+    notesBadge.textContent = count > 0 ? String(count) : '';
     const label = exportPrimaryItem.querySelector('.wfpe-export-menu-label');
     const sub = exportPrimaryItem.querySelector('.wfpe-export-menu-sub');
     if (count > 0) {
@@ -893,6 +896,10 @@
     cleanLabel.textContent = 'Clean copy';
     cleanSub.textContent = count > 0 ? 'Edits only — notes stripped' : 'Download a copy';
     refreshAnnotationMarkers();
+    // v2.21 — single fan-out point for the notes-panel card list too; a
+    // no-op while the panel is closed. Deliberately NOT hooked into
+    // refreshAnnotationMarkers(), which runs on every scroll/resize tick.
+    renderNotesPanel();
   }
 
   function parseHandoffPayload() {
@@ -2222,12 +2229,13 @@
     const width = Math.max(246, stack.offsetWidth || 0);
     const toolbarHeight = toolbar.offsetHeight || 36;
     const exportHeight = state.exportMenuOpen ? (exportMenu.offsetHeight + 1) : 0;
+    const notesHeight = state.notesPanelOpen ? ((notesPanel.offsetHeight || 0) + 1) : 0;
     const bodyHeight = (state.inspectorMinimised || state.exportMenuOpen)
       ? 0
       : inspectorFoldInner.scrollHeight;
     const inspectorHeight = (inspectorHeader.offsetHeight || 36) + bodyHeight + 1;
     const height = Math.min(
-      toolbarHeight + exportHeight + inspectorHeight + 2,
+      toolbarHeight + exportHeight + notesHeight + inspectorHeight + 2,
       window.innerHeight - margin * 2
     );
     const expandedSelection = {

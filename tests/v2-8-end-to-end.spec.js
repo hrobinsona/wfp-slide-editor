@@ -88,7 +88,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       // v2.11 merges the former Handoff button into Export (badge + menu).
       // Asserted as a prefix, not an exact list: later phases append chrome
       // (v2.10's toolbar-collapse) that this end-to-end gate does not own.
-      expect(out.buttons.slice(0, 5)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
+      expect(out.buttons.slice(0, 6)).toEqual(['edit', 'overview', 'notes', 'export', 'undo', 'redo']);
       // Ink-glass surface (v2.10). The exact recipe is owned by
       // tests/v2-0-toolbar.spec.js and tests/v2-1-inspector.spec.js; this gate
       // only asserts the toolbar still carries the shared translucent surface.

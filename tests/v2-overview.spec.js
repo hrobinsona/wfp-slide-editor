@@ -45,7 +45,7 @@ test.describe('v2.1.0 — Overview activation', () => {
     // v2.11 merged Handoff into Export (badge + menu); v2.10 appended the
     // toolbar-collapse control. Asserted as a prefix so this spec stays about
     // Overview's position rather than the full toolbar inventory.
-    expect(buttons.map((b) => b.action).slice(0, 5)).toEqual(['edit', 'overview', 'export', 'undo', 'redo']);
+    expect(buttons.map((b) => b.action).slice(0, 6)).toEqual(['edit', 'overview', 'notes', 'export', 'undo', 'redo']);
     const overview = buttons.find((b) => b.action === 'overview');
     expect(overview.hasIcon).toBe(true);
     // v2.10 ink-glass made the toolbar icon-only; the label moved to

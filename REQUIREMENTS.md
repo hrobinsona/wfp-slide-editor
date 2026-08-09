@@ -330,7 +330,7 @@ These are not part of the current product contract. Add them to `ROADMAP.md` or 
 - Asset replacement.
 - Theme variable editing.
 - Overview search/filter or duplicate slide.
-- Text-range annotations, slide-level annotations, pins, comments panel, or hidden agent prompts.
+- Text-range annotations, slide-level annotations, pins, or hidden agent prompts. (The v2.5 "comments panel" non-goal was revisited: v2.21 ships a browsable agent-notes panel.)
 - Mobile/touch editing.
 
 ## Known Quality Work

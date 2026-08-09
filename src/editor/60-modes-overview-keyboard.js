@@ -11,6 +11,7 @@
       refreshInspector();
     }
     refreshAnnotationMarkers();
+    renderNotesPanel(); // v2.21 — panel stays populated in both modes
   }
 
   // ===========================================================================
@@ -58,6 +59,7 @@
     overviewBtn.dataset.mode = state.overviewMode ? 'on' : 'off';
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
     refreshAnnotationMarkers();
+    renderNotesPanel(); // v2.21 — panel stays populated in both modes
   }
 
   // ---------------------------------------------------------------------------
@@ -920,6 +922,19 @@
       return;
     }
 
+    // v2.21 — flick through agent notes: N next, Shift+N previous
+    // (noModifier permits Shift, which carries the direction). Works
+    // regardless of edit mode — the jump normalizes mode itself — and
+    // opens the panel on first press. With no notes the key is left
+    // alone so the host page keeps its normal meaning.
+    if ((e.key === 'n' || e.key === 'N') && noModifier) {
+      if (getAnnotatedElements(document).length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cycleAnnotation(e.shiftKey ? -1 : 1);
+      return;
+    }
+
     // Escape is the keyboard counterpart to clicking empty slide background:
     // it drops the selection so the ring and inspector go away and the
     // navigation keys revert to the deck. It only gets here once every
@@ -933,6 +948,16 @@
       e.stopPropagation();
       setSelected(null);
       refreshInspector();
+      return;
+    }
+
+    // v2.21 — with nothing selected, Escape closes the notes panel: the
+    // last layer of the Escape onion (menu → text edit → overview →
+    // deselect → notes panel).
+    if (e.key === 'Escape' && noModifier && state.notesPanelOpen) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNotesPanel();
       return;
     }
 

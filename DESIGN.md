@@ -330,6 +330,18 @@ pointer/touch input just like form controls. A closed dock immediately inherits
 the stack's `pointer-events: none`, preventing its natural-size folded content
 from intercepting the slide during the visibility transition.
 
+v2.21 adds a third grid-fold segment between the export dock and the inspector
+dock: the agent-notes panel (`45-notes-panel.js`), a browsable card list of
+every saved annotation across the deck with click-to-jump and N/Shift+N
+cycling. It is a browsing surface, not a menu — it does not close on
+click-away, and it is mutually exclusive with the export menu (opening either
+closes the other) so the seam rules stay a single chain. Jumps reuse the
+`navigateToSlide` activation contract (`state.deckMutated` +
+`synchronizeSlideState`), and the card list re-renders from the
+`refreshExportUi()` fan-out only — never from the per-tick marker refresh. A
+folded notes dock cancels one stack gap with a negative bottom margin so the
+permanent extra segment does not widen the ink-glass 1px seams.
+
 Agent note height is content-driven rather than user-resized:
 `autoGrowAnnotationTextarea()` measures `scrollHeight`, grows from 52px to a
 112px content bound, then enables textarea scrolling. Viewport pressure is not

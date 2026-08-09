@@ -21,6 +21,7 @@ const PARTS = [
   '20-dom-css.js',
   '30-ui-inspector-controls.js',
   '40-helpers-selection-inspector.js',
+  '45-notes-panel.js',
   '50-history.js',
   '60-modes-overview-keyboard.js',
   '70-selection-events.js',

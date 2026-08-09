@@ -32,6 +32,7 @@ tests/
 ├── v2-overview.spec.js            # Overview grid, reorder, delete, export.
 ├── v2-multi-select.spec.js        # Cmd/Ctrl-click multi-select and group movement.
 ├── v2-agent-annotations.spec.js   # Agent note authoring, visible circular markers, and handoff export.
+├── v2-21-notes-panel.spec.js      # Agent-notes panel: cross-slide card list, jump, N/Shift+N flicking. Public fixtures only.
 └── v2-10-ink-glass.spec.js        # Ink-glass instrument states (dock/collapse/minimise) + typography section. Runs against dev/harness.html, no private fixtures needed.
 ```
 

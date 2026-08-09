@@ -15,6 +15,7 @@ physical ownership boundaries before deeper dependency cleanup.
 - `20-dom-css.js` - editor root, scoped CSS, and root style mount.
 - `30-ui-inspector-controls.js` - icons, toolbar, the export action menu DOM and dispatch, inspector DOM, overlay DOM, and inspector control wiring.
 - `40-helpers-selection-inspector.js` - slide helpers, selection overlay refresh, export/badge UI refresh, inspector population, colour helpers, inspector visibility.
+- `45-notes-panel.js` - v2.21 agent-notes panel: cross-deck annotation card list, jump-to-annotation, prev/next cycling.
 - `50-history.js` - element transactions, inspector transaction isolation, undo/redo, slide-level history.
 - `60-modes-overview-keyboard.js` - edit mode, Overview mode, slide navigation takeover, overview reorder/delete, keyboard shortcuts.
 - `70-selection-events.js` - click selection and observers.

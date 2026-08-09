@@ -60,9 +60,11 @@
       align-items: flex-start;
     }
     #${ROOT_ID} .wfpe-toolbar {
-      width: 214px;              /* collapsed: 58px via [data-collapsed];
-                                    v2.11.1: 246 - 32 after Handoff merged
-                                    into Export (one 30px button + 2px gap) */
+      width: 246px;              /* collapsed: 58px via [data-collapsed];
+                                    v2.21: back to the full stack width —
+                                    the Agent-notes button restores the
+                                    30px + 2px gap that v2.11.1 removed
+                                    when Handoff merged into Export */
       flex: none;
       box-sizing: border-box;
       pointer-events: none;
@@ -385,6 +387,227 @@
       color: rgba(255,255,255,0.45);
       font-family: ui-monospace, Menlo, monospace;
     }
+    /* ----- v2.21 — Agent-notes dock: third stack segment (toolbar →
+       export menu → notes → inspector), same grid-fold recipe as the
+       export dock. Lists every saved annotation across the deck; the
+       inspector docking BELOW it keeps cards stationary as selection
+       changes. ----- */
+    #${ROOT_ID} .wfpe-notes-dock {
+      width: 246px;
+      pointer-events: none;
+      display: grid;
+      grid-template-rows: 0fr;
+      /* A zero-height segment still sits between two 1px stack gaps —
+         2px of dead seam that would break the ink-glass 1px contract
+         (inspector dockTop = 56, menu↔inspector gap = 1). The folded
+         dock cancels one gap with a negative margin; the open dock
+         restores it, animated with the same fold curve. */
+      margin-bottom: -1px;
+      transition:
+        grid-template-rows 380ms cubic-bezier(0.32,0.72,0,1),
+        margin-bottom 380ms cubic-bezier(0.32,0.72,0,1);
+    }
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="true"] {
+      grid-template-rows: 1fr;
+      margin-bottom: 0;
+    }
+    #${ROOT_ID} .wfpe-notes-dock-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+    #${ROOT_ID} .wfpe-notes-panel {
+      display: flex;
+      flex-direction: column;
+      /* Straight 6px top always (it sits below the bar); the bottom rounds
+         to 12px only while it is the last segment — an inspector docked
+         below squares it via [data-last="false"], mirroring the export
+         menu's [data-above-panel] rule. */
+      border-radius: 6px 6px 12px 12px;
+      background: linear-gradient(rgba(255,255,255,0.10), rgba(255,255,255,0.03)), rgba(22,25,31,0.32);
+      backdrop-filter: blur(24px) saturate(170%);
+      -webkit-backdrop-filter: blur(24px) saturate(170%);
+      border: 1px solid rgba(255,255,255,0.22);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);  /* no outer drop shadow */
+      overflow: hidden;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.28);
+      font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      user-select: none;
+      box-sizing: border-box;
+      transition:
+        border-radius 380ms cubic-bezier(0.32,0.72,0,1),
+        visibility 0s;
+    }
+    #${ROOT_ID} .wfpe-notes-panel[data-last="false"] { border-radius: 6px; }
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="true"] .wfpe-notes-panel {
+      pointer-events: auto;
+    }
+    /* Folded shut: hide for focus/AT once the fold completes, mirroring
+       the inspector dock's rule. */
+    #${ROOT_ID} .wfpe-notes-dock[data-visible="false"] .wfpe-notes-panel {
+      visibility: hidden;
+      transition: visibility 0s 380ms;
+    }
+    #${ROOT_ID} .wfpe-notes-header {
+      display: flex;
+      align-items: center;
+      height: 36px;
+      box-sizing: border-box;
+      padding: 0 6px 0 13px;
+      gap: 2px;
+    }
+    #${ROOT_ID} .wfpe-notes-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      opacity: 0.95;
+      margin-right: auto;
+    }
+    #${ROOT_ID} .wfpe-notes-nav-btn {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: rgba(255,255,255,0.8);
+      cursor: pointer;
+      transition: background-color 120ms ease;
+    }
+    #${ROOT_ID} .wfpe-notes-nav-btn:hover:not(:disabled) { background-color: rgba(255,255,255,0.14); }
+    #${ROOT_ID} .wfpe-notes-nav-btn:disabled { opacity: 0.35; cursor: default; }
+    #${ROOT_ID} .wfpe-notes-nav-btn .wfpe-icon {
+      width: 13px;
+      height: 13px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    /* The hard scroll cap is what keeps toolbar + export/notes + inspector
+       inside the viewport budget on short windows. */
+    #${ROOT_ID} .wfpe-notes-list {
+      min-height: 0;
+      max-height: 40vh;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 0 5px 5px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      /* Same thin translucent scrollbar recipe as .wfpe-inspector-body —
+         the default white scrollbar reads as a foreign object on glass. */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.28) transparent;
+    }
+    #${ROOT_ID} .wfpe-notes-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    #${ROOT_ID} .wfpe-notes-list::-webkit-scrollbar-thumb {
+      border-radius: 999px;
+      background: rgba(255,255,255,0.28);
+    }
+    #${ROOT_ID} .wfpe-notes-empty {
+      padding: 2px 9px 12px;
+      font-size: 10.5px;
+      color: rgba(255,255,255,0.60);
+    }
+    /* Card accent bar follows the marker status vocabulary: coral note,
+       amber needs-input, slate skipped. */
+    #${ROOT_ID} .wfpe-notes-card {
+      appearance: none;
+      -webkit-appearance: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      width: 100%;
+      padding: 7px 9px;
+      border: 0;
+      border-left: 2px solid #f0685b;
+      border-radius: 8px;
+      background: transparent;
+      color: #fff;
+      text-align: left;
+      cursor: pointer;
+      box-sizing: border-box;
+      font: inherit;
+    }
+    #${ROOT_ID} .wfpe-notes-card:hover { background: rgba(255,255,255,0.10); }
+    #${ROOT_ID} .wfpe-notes-card[data-active="true"] { background: rgba(240,104,91,0.20); }
+    #${ROOT_ID} .wfpe-notes-card[data-status="needs-input"] { border-left-color: #f0a83b; }
+    #${ROOT_ID} .wfpe-notes-card[data-status="skipped"] { border-left-color: #9aa6b2; }
+    #${ROOT_ID} .wfpe-notes-card-top {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    #${ROOT_ID} .wfpe-notes-card-chip {
+      flex: none;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.14);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.18);
+      font-size: 9px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    #${ROOT_ID} .wfpe-notes-card-snippet {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 9.5px;
+      color: rgba(255,255,255,0.60);
+    }
+    #${ROOT_ID} .wfpe-notes-card-instruction {
+      font-size: 11px;
+      font-weight: 500;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    #${ROOT_ID} .wfpe-notes-card-reply { font-size: 9.5px; }
+    #${ROOT_ID} .wfpe-notes-card-reply[data-status="needs-input"] { color: #ffd9a1; }
+    #${ROOT_ID} .wfpe-notes-card-reply[data-status="skipped"] { color: rgba(226,232,238,0.75); }
+    /* Notes count badge on the toolbar button — same recipe as the export
+       badge above. */
+    #${ROOT_ID} .wfpe-toolbar-btn[data-action="notes"] { position: relative; }
+    #${ROOT_ID} .wfpe-notes-badge {
+      position: absolute;
+      top: 0;
+      right: 0;
+      min-width: 12px;
+      height: 12px;
+      padding: 0 3px;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #ff9e8c, #f0685b 70%);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.35);
+      font-size: 7.5px;
+      font-weight: 600;
+      line-height: 1;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    #${ROOT_ID} .wfpe-notes-badge[data-count="0"] { display: none; }
     /* ----- Inspector — docked glass segment, 1px seam under the bar.
        The outer dock wrapper animates the whole segment in/out on
        select/deselect via grid-template-rows; the panel itself no longer

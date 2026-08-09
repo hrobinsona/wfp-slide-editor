@@ -38,7 +38,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
     });
 
     expect(buttons.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
     for (const b of buttons) {
       expect(b.hasIcon).toBe(true);
@@ -80,7 +80,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
     expect(recipe.boxShadow).toContain('inset');
     expect(recipe.color).toBe('rgb(255, 255, 255)');
     expect(recipe.radius).toBe('12px');
-    expect(recipe.width).toBe(214);
+    expect(recipe.width).toBe(246); // v2.21: full stack width again (sixth button)
   });
 
   test('ink glass is scheme-invariant: identical surface under prefers-color-scheme dark', async ({ page }) => {
@@ -137,7 +137,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
 
     expect(visibilityOn.every((b) => b.display !== 'none')).toBe(true);
     expect(visibilityOn.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
   });
 
@@ -153,7 +153,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
       });
     });
 
-    expect(iconStats).toHaveLength(5);
+    expect(iconStats).toHaveLength(6); // Edit + Overview + Notes + Export + Undo + Redo
     for (const s of iconStats) {
       expect(s.width).toBe('15px');
       expect(s.height).toBe('15px');

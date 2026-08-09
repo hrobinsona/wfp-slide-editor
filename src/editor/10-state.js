@@ -18,6 +18,8 @@
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
     exportMenuOpen: false, // v2.11 — export action menu (4b) open/closed
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
+    notesPanelOpen: false, // v2.21 — agent-notes panel (third stack segment) open/closed; toggled by toolbar button / hotkey N / Escape
+    notesCursorId: null, // v2.21 — annotation id of the last note jumped to; N/Shift+N flicking resumes here when nothing is selected
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
     overviewHoveredSlide: null, // v2.1.4 — slide whose thumb the cursor is over (Backspace/Delete target)
     deckMutated: false, // v2.1.0 hotfix — set after an editor-owned slide activation/mutation/refresh; flips arrow-nav to live-DOM when the fixture's cached cursor/list can be stale

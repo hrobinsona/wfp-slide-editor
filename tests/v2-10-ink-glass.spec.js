@@ -98,10 +98,10 @@ function chrome(page) {
 }
 
 test.describe('v2.10 — ink-glass instrument states', () => {
-  test('at rest the bar is a fully rounded 214px capsule and the inspector is hidden', async ({ page }) => {
+  test('at rest the bar is a fully rounded 246px capsule and the inspector is hidden', async ({ page }) => {
     await loadHarness(page);
     const c = await chrome(page);
-    expect(c.barWidth).toBe(214);
+    expect(c.barWidth).toBe(246);
     expect(c.barRadius).toBe('12px');
     expect(c.collapsed).toBe('false');
     expect(c.docked).toBe('false');
@@ -159,7 +159,7 @@ test.describe('v2.10 — ink-glass instrument states', () => {
 
     await page.click(`${ROOT} .wfpe-toolbar-collapse`);
     c = await chrome(page);
-    expect(c.barWidth).toBe(214);
+    expect(c.barWidth).toBe(246);
     expect(c.collapsed).toBe('false');
     await expect(page.locator(`${ROOT} .wfpe-toolbar-collapse`)).toHaveAttribute('aria-label', 'Collapse toolbar');
   });
@@ -210,7 +210,7 @@ test.describe('v2.10 — ink-glass instrument states', () => {
       }));
     });
     expect(buttons.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
     for (const b of buttons) {
       expect(b.hasIcon).toBe(true);
