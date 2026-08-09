@@ -67,7 +67,13 @@ npm run build:md-review
 # then open tools/md-review.html in Chrome (double-click it; no server needed)
 ```
 
-Click **Open .md**, pick a file, and the page renders it as a working surface with the editor already loaded. Select any block, write an agent note, and press `Cmd/Ctrl+S`. The note is written back into the Markdown as an Obsidian callout:
+Bookmark that page (a normal bookmark, not a bookmarklet — a `.md` file is not a web page, so there is nothing to inject into). Then:
+
+- **Open folder** once on your vault or repo root. Every `.md` beneath it appears in the dropdown, so switching notes is one click with no picker, and relative images resolve.
+- **Open .md** for a one-off file outside that folder.
+- Either way the last folder and file are remembered, and reappear as **Reopen** buttons next session (one click, which is also the gesture Chrome needs to re-grant write access).
+
+Edit mode is already on when the file opens — this surface exists only to annotate. Select any block, write an agent note, and press `Cmd/Ctrl+S`. The note is written back into the Markdown as an Obsidian callout:
 
 ```markdown
 > [!HARRY] this figure is from the old model
@@ -75,7 +81,9 @@ Click **Open .md**, pick a file, and the page renders it as a working surface wi
 
 That renders natively in Obsidian, greps cleanly, and needs no handoff protocol — Claude Code opens the file, sees the callout, and acts on it. Reopening the file turns those callouts back into live notes rather than showing them as content, so the notes panel (`N`) always reflects what is in the file.
 
-Markdown mode reduces the editor to what Markdown can represent: agent notes plus text edits to plain paragraphs and headings. Geometry controls are hidden, and a block containing inline markup (a link, bold, code) is never rewritten from its rendered text — it is reported as skipped instead of having its syntax silently flattened. Relative images and Obsidian-specific syntax (`[[wikilinks]]`, embeds, Dataview) are out of scope; the render is an anchoring surface, not an Obsidian replica.
+Markdown mode reduces the editor to what Markdown can represent: agent notes plus text edits to plain paragraphs and headings. Geometry controls are hidden, and a block containing inline markup (a link, bold, code) is never rewritten from its rendered text — it is reported as skipped instead of having its syntax silently flattened. Obsidian-specific syntax (`[[wikilinks]]`, embeds, Dataview) renders as literal text; the page is an anchoring surface, not an Obsidian replica.
+
+Nothing wakes the agent up: the note simply sits in the file until you next ask Claude to act on it. That is the trade for needing no server, no port, and no background process.
 
 ### Updating the editor
 

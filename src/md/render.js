@@ -214,10 +214,13 @@ function renderBlockHtml(block) {
       return `<blockquote${attrs(block)}>${renderInline(block.lines.join('\n'))}</blockquote>`;
     case 'list': {
       const tag = block.ordered ? 'ol' : 'ul';
+      // Newline-separated so the list's own textContent reads as separate
+      // items — note-card snippets are built from it, and joined markup would
+      // render "first item?second item?" with no break between them.
       const items = block.items
         .map((it) => `<li data-md-line="${it.line}" data-md-end="${it.line}">${renderInline(it.text)}</li>`)
-        .join('');
-      return `<${tag}${attrs(block)}>${items}</${tag}>`;
+        .join('\n');
+      return `<${tag}${attrs(block)}>\n${items}\n</${tag}>`;
     }
     default:
       return '';

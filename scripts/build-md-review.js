@@ -57,7 +57,23 @@ const PAGE_CSS = `
     cursor: pointer;
   }
   #md-chrome button:hover { background: #f4f2ec; }
+  #md-files {
+    font: inherit;
+    max-width: 320px;
+    padding: 4px 6px;
+    border-radius: 7px;
+    border: 1px solid #d8d5cb;
+    background: #fff;
+  }
   #md-name { font-weight: 600; }
+  /* A relative image the folder handle could not resolve stays visible as a
+     broken reference rather than vanishing silently. */
+  #md-doc img[data-md-unresolved] {
+    outline: 1px dashed #b3402f;
+    padding: 2px;
+    min-width: 24px;
+    min-height: 24px;
+  }
   #md-status { margin-left: auto; color: #6b6862; }
   #md-status[data-tone="ok"] { color: #2f7d4f; }
   #md-status[data-tone="error"] { color: #b3402f; }
@@ -79,7 +95,7 @@ const PAGE_CSS = `
   @media (prefers-color-scheme: dark) {
     body { background: #17161a; color: #e9e7e2; }
     #md-chrome { background: rgba(23,22,26,0.92); border-bottom-color: #2c2a31; }
-    #md-chrome button { background: #232128; border-color: #3a373f; color: inherit; }
+    #md-chrome button, #md-files { background: #232128; border-color: #3a373f; color: inherit; }
     #md-chrome button:hover { background: #2c2a31; }
     h2 { border-bottom-color: #2c2a31; }
     code, pre { background: #232128; }
@@ -111,6 +127,9 @@ function buildPage() {
 </head>
 <body>
 <header id="md-chrome">
+  <button id="md-open-dir" type="button">Open folder</button>
+  <button id="md-reopen-dir" type="button" hidden></button>
+  <select id="md-files" hidden aria-label="Markdown files in folder"></select>
   <button id="md-open" type="button">Open .md</button>
   <button id="md-reopen" type="button" hidden></button>
   <button id="md-save" type="button">Save</button>

@@ -184,10 +184,33 @@ async function loadHost(page, markdown) {
   await page.evaluate(() => { document.documentElement.dataset.wfpMarkdown = 'true'; });
   await page.addScriptTag({ path: EDITOR_PATH });
   await page.waitForFunction(() => window.__wfpEditorReady === true, null, { timeout: 10_000 });
-  await page.keyboard.press('e');
+  // No 'e' press: markdown mode enters edit mode on its own, and pressing it
+  // here would toggle it straight back off.
+  await page.waitForFunction(
+    () => document.querySelector('#wfp-editor-root .wfpe-toolbar')?.dataset.mode === 'on',
+    null,
+    { timeout: 5_000 },
+  );
 }
 
 test.describe('v2.22 — markdown mode in the browser', () => {
+  test('edit mode is already on — the surface exists only to annotate', async ({ page }) => {
+    await loadHost(page, SAMPLE);
+    await expect(page.locator('#wfp-editor-root .wfpe-toolbar')).toHaveAttribute('data-mode', 'on');
+    // And a block is immediately selectable without any mode toggle.
+    await page.locator('#md-doc p').first().click();
+    await expect(page.locator('#wfp-editor-root [data-wfpe-row="annotation"]')).toBeVisible();
+  });
+
+  test('the folder controls are present and the file list stays hidden until used', async ({ page }) => {
+    await page.goto(pathToFileURL(HOST_PAGE).href);
+    await page.waitForFunction(() => !!window.__wfpMarkdownHost, null, { timeout: 10_000 });
+    await expect(page.locator('#md-open-dir')).toBeVisible();
+    await expect(page.locator('#md-open')).toBeVisible();
+    await expect(page.locator('#md-files')).toBeHidden();
+    await expect(page.locator('#md-status')).toContainText('Open a folder');
+  });
+
   test('rendered markdown becomes an annotatable flat document', async ({ page }) => {
     await loadHost(page, SAMPLE);
     const state = await page.evaluate(() => ({
