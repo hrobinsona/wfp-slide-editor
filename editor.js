@@ -112,6 +112,7 @@
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
     exportMenuOpen: false, // v2.11 — export action menu (4b) open/closed
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
+    markdownMode: document.documentElement.dataset.wfpMarkdown === 'true', // v2.22 — the page is a rendered Markdown surface hosted by tools/md-review.html: geometry editing is meaningless here and the primary export writes Markdown through the host's sink instead of HTML
     notesPanelOpen: false, // v2.21 — agent-notes panel (third stack segment) open/closed; toggled by toolbar button / hotkey N / Escape
     notesCursorId: null, // v2.21 — annotation id of the last note jumped to; N/Shift+N flicking resumes here when nothing is selected
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder
@@ -772,6 +773,27 @@
       min-height: 0;
       overflow: hidden;
     }
+    /* v2.22 — Markdown mode: hide every control whose only output is an
+       inline style. What survives is the agent note, which is the whole
+       point of reviewing a Markdown file. Selection handles go too — a
+       resized paragraph has no Markdown representation. */
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="position"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="size"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="text-color"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="bg-color"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="opacity"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="font-size"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="font-weight"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="text-align"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="align-elements"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] [data-wfpe-row="actions"],
+    #${ROOT_ID} .wfpe-inspector-dock[data-md="true"] .wfpe-inspector-divider {
+      display: none !important;
+    }
+    /* Handles and the W × H bubble are geometry readouts with nothing to
+       report on a Markdown block. */
+    #${ROOT_ID}[data-md="true"] .wfpe-handle,
+    #${ROOT_ID}[data-md="true"] .wfpe-dim-bubble { display: none !important; }
     #${ROOT_ID} .wfpe-inspector {
       display: flex;
       flex-direction: column;
@@ -2936,6 +2958,13 @@
   // handler and must call the native picker within the same user gesture.
   function triggerPrimaryExport() {
     closeExportMenu();
+    // v2.22 — in Markdown mode the host owns persistence: it splices the
+    // notes back into the original Markdown. Writing HTML here would put
+    // markup into the user's .md file, so the sink fully replaces export.
+    if (state.markdownMode && typeof window.__wfpMarkdownSink === 'function') {
+      window.__wfpMarkdownSink();
+      return;
+    }
     if (!canSaveInPlace()) {
       // Safari/Firefox fallback — v2.5 download behaviour.
       if (getAnnotatedElements(document).length > 0) exportHandoffHTML();
@@ -3611,6 +3640,15 @@
   }
 
   function applyModeFeatureGating() {
+    // v2.22 — Markdown mode reduces the surface to what a Markdown file can
+    // actually represent: annotations and text. Every geometry control writes
+    // an inline style with no Markdown equivalent, so the rows are gated off
+    // in CSS (same mechanism as v2.18's data-multi) rather than left to write
+    // changes the writeback would silently discard.
+    if (state.markdownMode) {
+      inspectorDock.dataset.md = 'true';
+      root.dataset.md = 'true';
+    }
     if (!isFlatMode()) return;
     overviewBtn.hidden = true;
     overviewBtn.disabled = true;
@@ -7511,6 +7549,11 @@
     if (state.overviewMode) return;
     if (!state.editMode) return;
     if (e.button !== 0) return;
+    // v2.22 — Markdown mode has no geometry: a dragged paragraph would write
+    // an inline style the writeback cannot represent and would silently drop.
+    // Selection, text edit, and annotation all still run (they are owned by
+    // the click/dblclick paths, not this one).
+    if (state.markdownMode) return;
 
     // While a text edit is open, mousedowns INSIDE the editing element are
     // for caret/selection — let the browser handle them natively.
@@ -10013,6 +10056,24 @@
   // ===========================================================================
   // Ready
   // ===========================================================================
+  // v2.22 — Markdown mode. The host re-renders the document whenever the file
+  // is written, which detaches every node the editor may be holding. `reset`
+  // lets it drop the selection BEFORE that happens (a selection pointing at
+  // detached DOM is the exact hazard the history layer guards against), and
+  // `refresh` re-scans the freshly stamped annotations so markers and the
+  // notes panel match the new file.
+  if (state.markdownMode) {
+    window.__wfpMarkdownBridge = {
+      reset() {
+        if (state.editingText) endTextEdit();
+        setSelected(null);
+        refreshInspector();
+      },
+      refresh() {
+        refreshExportUi();
+      },
+    };
+  }
   if (canSaveInPlace()) {
     // Capture the promise so saveInPlace() can await this same rehydration
     // instead of racing it (see the handleRehydration check above).

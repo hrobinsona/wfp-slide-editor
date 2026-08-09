@@ -1,6 +1,24 @@
   // ===========================================================================
   // Ready
   // ===========================================================================
+  // v2.22 — Markdown mode. The host re-renders the document whenever the file
+  // is written, which detaches every node the editor may be holding. `reset`
+  // lets it drop the selection BEFORE that happens (a selection pointing at
+  // detached DOM is the exact hazard the history layer guards against), and
+  // `refresh` re-scans the freshly stamped annotations so markers and the
+  // notes panel match the new file.
+  if (state.markdownMode) {
+    window.__wfpMarkdownBridge = {
+      reset() {
+        if (state.editingText) endTextEdit();
+        setSelected(null);
+        refreshInspector();
+      },
+      refresh() {
+        refreshExportUi();
+      },
+    };
+  }
   if (canSaveInPlace()) {
     // Capture the promise so saveInPlace() can await this same rehydration
     // instead of racing it (see the handleRehydration check above).

@@ -9,6 +9,8 @@
     "dev": "http-server -p 8080 -c-1 .",
     "build:editor": "node scripts/build-editor.js",
     "check:editor": "node scripts/build-editor.js --check",
+    "build:md-review": "node scripts/build-md-review.js",
+    "check:md-review": "node scripts/build-md-review.js --check",
     "build:bookmarklet": "node scripts/build-editor.js --check && node scripts/build-bookmarklet.js"
   },
   "devDependencies": {

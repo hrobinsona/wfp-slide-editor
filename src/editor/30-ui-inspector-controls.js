@@ -1045,6 +1045,13 @@
   // handler and must call the native picker within the same user gesture.
   function triggerPrimaryExport() {
     closeExportMenu();
+    // v2.22 — in Markdown mode the host owns persistence: it splices the
+    // notes back into the original Markdown. Writing HTML here would put
+    // markup into the user's .md file, so the sink fully replaces export.
+    if (state.markdownMode && typeof window.__wfpMarkdownSink === 'function') {
+      window.__wfpMarkdownSink();
+      return;
+    }
     if (!canSaveInPlace()) {
       // Safari/Firefox fallback — v2.5 download behaviour.
       if (getAnnotatedElements(document).length > 0) exportHandoffHTML();

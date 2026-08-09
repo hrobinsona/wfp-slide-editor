@@ -27,10 +27,13 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 - `npm run dev` - serve the repo on port 8080 for local fixture testing.
 - `npm run build:editor` - assemble `editor.js` from `src/editor/` fragments.
 - `npm run build:bookmarklet` - generate `bookmarklet.txt` (fails if `editor.js` is out of sync with `src/editor/`).
+- `npm run build:md-review` - assemble `tools/md-review.html` from `src/md/` (Markdown review host).
 
 ## Conventions
 
 - `editor.js` is **generated** — it is assembled by concatenating `src/editor/*.js` in order. Edit the fragments, then run `npm run build:editor`. Never let the two drift; `build:bookmarklet --check` enforces sync.
+- `tools/md-review.html` is **generated** the same way from `src/md/*.js` (`npm run build:md-review`, `--check` verifies). It is inlined rather than importing modules because `file://` origins cannot fetch external ES modules.
+- Markdown mode keeps the editor Markdown-ignorant: the host owns all Markdown knowledge and the editor only reads `state.markdownMode` and calls `window.__wfpMarkdownSink`. Do not add Markdown parsing to `src/editor/`.
 - `editor.js` must work as a self-contained injected script.
 - Keep production runtime dependency-free.
 - All editor-injected DOM lives inside `#wfp-editor-root`.

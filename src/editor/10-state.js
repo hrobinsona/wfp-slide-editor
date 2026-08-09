@@ -18,6 +18,7 @@
     toolbarCollapsed: false, // ink-glass 3b — bar folded to Edit + chevron; session-only
     exportMenuOpen: false, // v2.11 — export action menu (4b) open/closed
     overviewMode: false, // v2.1.0 — bird's-eye grid of all slides; toggled by hotkey O / toolbar button / Escape
+    markdownMode: document.documentElement.dataset.wfpMarkdown === 'true', // v2.22 — the page is a rendered Markdown surface hosted by tools/md-review.html: geometry editing is meaningless here and the primary export writes Markdown through the host's sink instead of HTML
     notesPanelOpen: false, // v2.21 — agent-notes panel (third stack segment) open/closed; toggled by toolbar button / hotkey N / Escape
     notesCursorId: null, // v2.21 — annotation id of the last note jumped to; N/Shift+N flicking resumes here when nothing is selected
     overviewDrag: null, // v2.1.3 — { sourceSlide, sourceIndex, beforeOrder } during a drag-to-reorder

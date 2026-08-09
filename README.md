@@ -58,6 +58,25 @@ npm run build:bookmarklet -- --local
 5. Press `O` (or click `Overview`) for the slide grid. Click a slide to navigate, drag thumbnails to reorder, or delete slides with the thumbnail `x` button / Backspace / Delete.
 6. `Cmd/Ctrl+Z` undoes; `Cmd/Ctrl+Shift+Z` or `Cmd/Ctrl+Y` redoes. `Cmd/Ctrl+S` (or `Export`) downloads `<original-name>-edited.html`. Open that file anywhere; no editor required.
 
+### Reviewing Markdown files
+
+The same editor annotates Markdown — `context.md`, `plan.md`, vault notes — without converting them to HTML. Markdown stays the source of truth.
+
+```bash
+npm run build:md-review
+# then open tools/md-review.html in Chrome (double-click it; no server needed)
+```
+
+Click **Open .md**, pick a file, and the page renders it as a working surface with the editor already loaded. Select any block, write an agent note, and press `Cmd/Ctrl+S`. The note is written back into the Markdown as an Obsidian callout:
+
+```markdown
+> [!HARRY] this figure is from the old model
+```
+
+That renders natively in Obsidian, greps cleanly, and needs no handoff protocol — Claude Code opens the file, sees the callout, and acts on it. Reopening the file turns those callouts back into live notes rather than showing them as content, so the notes panel (`N`) always reflects what is in the file.
+
+Markdown mode reduces the editor to what Markdown can represent: agent notes plus text edits to plain paragraphs and headings. Geometry controls are hidden, and a block containing inline markup (a link, bold, code) is never rewritten from its rendered text — it is reported as skipped instead of having its syntax silently flattened. Relative images and Obsidian-specific syntax (`[[wikilinks]]`, embeds, Dataview) are out of scope; the render is an anchoring surface, not an Obsidian replica.
+
 ### Updating the editor
 
 When `editor.js` changes (you push a fix, you bump a version), the next bookmarklet click pulls the latest. The cache-buster in the bookmarklet's URL (`?<timestamp>`) bypasses any browser cache, so there's nothing to clear manually.
