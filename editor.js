@@ -1921,6 +1921,15 @@
 
   const overviewMeasureStyleEl = document.createElement('style');
   root.appendChild(overviewMeasureStyleEl);
+
+  // v2.24 — holds entrance rules re-scoped from the host deck's own
+  // stylesheets so every overview thumbnail renders, not just the active
+  // slide. Populated on enter, emptied on exit. See applyOverviewEntranceCss.
+  const overviewEntranceStyleEl = document.createElement('style');
+  // Stable hook so coverage can count exactly what this element holds rather
+  // than pattern-matching selector text across every editor sheet.
+  overviewEntranceStyleEl.dataset.wfpEditStyle = 'overview-entrance';
+  root.appendChild(overviewEntranceStyleEl);
   // Inline SVG icons — single-stroke, 18px, lucide aesthetic. Embedded
   // directly so the editor stays a self-contained file with no icon-font
   // or runtime dependency. `currentColor` lets the toolbar's text colour
@@ -6687,6 +6696,222 @@
     overviewMeasureStyleEl.textContent = '';
   }
 
+  // ── Entrance animations in Overview (v2.24) ─────────────────────────────
+  //
+  // Decks gate their entrance animations on the active slide:
+  //
+  //   .reveal                  { opacity: 0 }
+  //   .slide.is-active .reveal { opacity: 1 }
+  //
+  // Overview forces `opacity: 1 !important` on each `.slide`, but that reaches
+  // the slide box only, not its descendants. Exactly one slide is ever active,
+  // so every other thumbnail renders blank.
+  //
+  // The WFP template opts out of its own entrance rules when it sees
+  // `body[data-wfp-edit-overview="on"]`. That is a convention some decks
+  // follow, not a contract — a deck from any other generator gets a broken
+  // overview.
+  //
+  // Two approaches were tried and rejected before this one:
+  //
+  //   * Enumerating animation class names (.reveal, .table-row, .moment, …)
+  //     only re-breaks on the next generator.
+  //   * Lending the deck's own active class to every slide is actively
+  //     dangerous: cooperative decks watch that class to stay in sync with the
+  //     editor (Townhall's observeDeck() calls activate() on any external
+  //     .active it sees, deactivating the previous slide each time), so
+  //     stamping N slides drives the host's navigation N times and corrupts
+  //     its state.
+  //
+  // So: read the deck's OWN entrance rules out of its OWN stylesheets and
+  // re-emit them scoped to overview. Nothing in the DOM changes, so no host
+  // observer fires, and the editor still needs to know nothing about what the
+  // deck calls its animated elements.
+  //
+  // A rule qualifies when its selector uses the active-class token AND has a
+  // descendant part — `.slide.is-active .reveal` yes,
+  // `.slide.is-active { z-index: 1 }` no (that styles the slide box, which
+  // overview already governs, and re-scoping it would tell every slide it is
+  // active). The token is dropped and the selector prefixed, which also lifts
+  // specificity above the original so the rewrite wins.
+  const OVERVIEW_SCOPE = 'body[data-wfp-edit-overview="on"]';
+
+  // Split a selector list on TOP-LEVEL commas only. A comma inside `:is(a, b)`,
+  // `[attr="a,b"]` or a quoted string belongs to one selector, not between two;
+  // splitting on it strands an unclosed paren, and a single malformed prelude
+  // makes the CSS parser swallow every rule after it.
+  function splitSelectorList(selectorText) {
+    const parts = [];
+    let depth = 0;
+    let quote = null;
+    let start = 0;
+    for (let i = 0; i < selectorText.length; i += 1) {
+      const ch = selectorText[i];
+      if (quote) {
+        if (ch === '\\') i += 1;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { quote = ch; continue; }
+      if (ch === '(' || ch === '[') { depth += 1; continue; }
+      if (ch === ')' || ch === ']') { depth -= 1; continue; }
+      if (ch === ',' && depth === 0) {
+        parts.push(selectorText.slice(start, i));
+        start = i + 1;
+      }
+    }
+    parts.push(selectorText.slice(start));
+    return parts.map((part) => part.trim()).filter(Boolean);
+  }
+
+  // Every position where `token` appears as a WHOLE class name at top level.
+  // Depth-gating also means a token inside `:not(...)` / `:is(...)` is ignored:
+  // stripping it there would invert or empty the functional selector. The
+  // trailing-character test stops `.active` matching inside `.active-alt`, and
+  // the string/bracket skipping stops it matching inside `[data-x=".active"]`.
+  function findClassTokenIndices(part, token) {
+    const out = [];
+    let depth = 0;
+    let quote = null;
+    for (let i = 0; i < part.length; i += 1) {
+      const ch = part[i];
+      if (quote) {
+        if (ch === '\\') i += 1;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { quote = ch; continue; }
+      if (ch === '(' || ch === '[') { depth += 1; continue; }
+      if (ch === ')' || ch === ']') { depth -= 1; continue; }
+      if (depth !== 0 || ch !== '.') continue;
+      if (!part.startsWith(token, i + 1)) continue;
+      // Defence in depth: every longer-class shape (`.is-active-alt`,
+      // `.is-activeX`) currently also fails the descendant test below, since
+      // the extra characters sit between the token and any combinator. This
+      // check keeps the scanner correct on its own terms rather than relying
+      // on that. ASCII-only by design — a non-ASCII suffix is a safe false
+      // negative, and escapes outside quotes are likewise only ever rejected.
+      const after = part[i + 1 + token.length];
+      if (after === undefined || !/[\w-]/.test(after)) out.push(i);
+    }
+    return out;
+  }
+
+  function rescopeEntrancePart(part, token, slides) {
+    const hits = findClassTokenIndices(part, token);
+    // Zero occurrences: the rule does not gate on the active slide.
+    // More than one: stripping only the first would leave the rewrite one
+    // class BELOW the original, so the original keeps winning and the emitted
+    // rule is dead weight. A specificity guard, not a correctness one.
+    if (hits.length !== 1) return null;
+    const at = hits[0];
+    const end = at + 1 + token.length;
+    const tail = part.slice(end);
+    // Must have a descendant part. `.slide.is-active { z-index: 1 }` styles the
+    // slide box, which overview already governs — rescoping it would tell every
+    // slide it is active.
+    if (!/^[\s>+~]/.test(tail)) return null;
+    // And the gated thing must actually BE a slide. Without this check any
+    // `X.active Y` UI-state rule — nav tabs, agenda rows, accordions, progress
+    // steps — gets rescoped and paints every instance as selected.
+    const prefix = part.slice(0, end);
+    try {
+      if (!slides.some((slide) => slide.matches(prefix))) return null;
+    } catch (_) {
+      return null;
+    }
+    return `${OVERVIEW_SCOPE} ${part.slice(0, at)}${tail}`;
+  }
+
+  function collectEntranceRules(rules, token, slides, emit) {
+    for (const rule of rules) {
+      // Conditional groups keep their condition. Test by type, not by the
+      // presence of conditionText — CSSContainerRule has one too, and
+      // re-emitting an @container query as @media changes its meaning.
+      if (typeof CSSMediaRule !== 'undefined' && rule instanceof CSSMediaRule) {
+        collectEntranceRules(rule.cssRules, token, slides,
+          (inner) => emit(`@media ${rule.conditionText}{${inner}}`));
+        continue;
+      }
+      if (typeof CSSSupportsRule !== 'undefined' && rule instanceof CSSSupportsRule) {
+        collectEntranceRules(rule.cssRules, token, slides,
+          (inner) => emit(`@supports ${rule.conditionText}{${inner}}`));
+        continue;
+      }
+      // @layer is the ONLY grouping we may recurse into without re-wrapping:
+      // dropping a layer changes cascade order, which is harmless here because
+      // the rewrite is scoped to overview and injected last.
+      if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
+        collectEntranceRules(rule.cssRules, token, slides, emit);
+        continue;
+      }
+      // Every other grouping is skipped, deliberately. Lifting a rule out of a
+      // condition we do not understand is strictly worse than ignoring it:
+      // @container and @scope rules would start applying unconditionally, and
+      // @starting-style — the modern idiom for exactly the entrance animations
+      // this feature targets — holds the *hidden* value, so flattening it emits
+      // `opacity: 0` at winning specificity and blanks every thumbnail. A
+      // skipped grouping is a safe false negative; a flattened one is not.
+      if (!rule.selectorText) continue;
+      if (!rule.style || !rule.style.cssText) continue;
+      // Native CSS nesting: a style rule's own children are deliberately NOT
+      // visited. Their selectors are written relative to `&`, which has no
+      // meaning once the rule is lifted out of its parent. Documented as out
+      // of scope rather than guessed at.
+      const selector = splitSelectorList(rule.selectorText)
+        .map((part) => rescopeEntrancePart(part, token, slides))
+        .filter(Boolean)
+        .join(', ');
+      if (selector) emit(`${selector}{${rule.style.cssText}}`);
+    }
+  }
+
+  function applyOverviewEntranceCss() {
+    clearOverviewEntranceCss();
+    const sheet = overviewEntranceStyleEl.sheet;
+    if (!sheet) return;
+    const token = getActiveClass();
+    const slides = getSlides();
+    // insertRule per rule, each guarded: a selector this rewriter mangles is
+    // then dropped on its own instead of voiding every rule after it.
+    const emit = (text) => {
+      try {
+        sheet.insertRule(text, sheet.cssRules.length);
+      } catch (_) {
+        // Containment, not a path any current input reaches: the gates above
+        // reject everything this rewriter is known to mishandle. It exists so
+        // that a future gap costs one dropped rule instead of the whole sheet
+        // — the failure mode that made the naive comma split so damaging.
+      }
+    };
+    for (const source of document.styleSheets) {
+      // Skip the editor's own sheets — not deck entrance rules, and rescoping
+      // them would be circular.
+      if (source.ownerNode && root.contains(source.ownerNode)) continue;
+      let rules;
+      try {
+        rules = source.cssRules;
+      } catch (_) {
+        // Cross-origin sheet. Unreadable; whatever it contributes degrades to
+        // the pre-v2.24 behaviour.
+        continue;
+      }
+      if (!rules) continue;
+      try {
+        collectEntranceRules(rules, token, slides, emit);
+      } catch (_) { /* never let one sheet block entering overview */ }
+    }
+  }
+
+  // Rules are inserted through the CSSOM, so they are NOT reachable by
+  // clearing textContent — an element whose text is already empty takes no
+  // mutation and never reparses, leaving every rule live. Delete them.
+  function clearOverviewEntranceCss() {
+    const sheet = overviewEntranceStyleEl.sheet;
+    if (!sheet) return;
+    while (sheet.cssRules.length) sheet.deleteRule(sheet.cssRules.length - 1);
+  }
+
   function enterOverview() {
     // The body marker lives on <body> rather than #wfp-editor-root because
     // the CSS-override strategy needs a global selector hook above the
@@ -6695,6 +6920,7 @@
     // element) cleans it up automatically — no special-case needed.
     applyOverviewCellDimensions();
     document.body.dataset.wfpEditOverview = 'on';
+    applyOverviewEntranceCss();
     // Defer overlay build until the browser has applied the new grid
     // layout — getBoundingClientRect right now would still report the
     // pre-grid (stacked-absolute) positions. Save the rAF id so a quick
@@ -6731,6 +6957,7 @@
   function exitOverview() {
     document.body.removeAttribute('data-wfp-edit-overview');
     clearOverviewCellDimensions();
+    clearOverviewEntranceCss();
     // Overview enables document scroll for the grid; normal slide view should
     // always return to the top of the viewport.
     window.scrollTo(0, 0);

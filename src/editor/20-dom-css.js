@@ -1792,3 +1792,12 @@
 
   const overviewMeasureStyleEl = document.createElement('style');
   root.appendChild(overviewMeasureStyleEl);
+
+  // v2.24 — holds entrance rules re-scoped from the host deck's own
+  // stylesheets so every overview thumbnail renders, not just the active
+  // slide. Populated on enter, emptied on exit. See applyOverviewEntranceCss.
+  const overviewEntranceStyleEl = document.createElement('style');
+  // Stable hook so coverage can count exactly what this element holds rather
+  // than pattern-matching selector text across every editor sheet.
+  overviewEntranceStyleEl.dataset.wfpEditStyle = 'overview-entrance';
+  root.appendChild(overviewEntranceStyleEl);
