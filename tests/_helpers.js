@@ -103,6 +103,25 @@ export async function stampSlideIds(page) {
   });
 }
 
+// ── The active-slide token (v2.23) ──────────────────────────────────────────
+//
+// Which class marks the visible slide is a host authoring choice: the decks
+// this suite grew up with use `.slide.active`, a newer generator emits
+// `.slide.is-active`. The rotation pool exists precisely to run these tests
+// against decks the editor did not grow up with, so the harness must not
+// assume either token.
+// Probes `active` first so a deck carrying both keeps its legacy meaning —
+// page-side twin of the editor's own resolver.
+export async function activeClassToken(page) {
+  return page.evaluate(() => {
+    const slides = [...document.querySelectorAll('.deck > .slide, .presentation > .slide')];
+    for (const token of ['active', 'is-active']) {
+      if (slides.filter((s) => s.classList.contains(token)).length === 1) return token;
+    }
+    return 'active';
+  });
+}
+
 // Waits until nothing on the active slide is still animating.
 //
 // Decks run entrance transitions/keyframes on slide activation. A running CSS
@@ -114,7 +133,10 @@ export async function waitForSlideSettled(page) {
   await page
     .waitForFunction(
       () => {
-        const slide = document.querySelector('.slide.active');
+        // Which token marks the visible slide is a host authoring choice
+        // (v2.23) — match either rather than hanging for the full timeout on
+        // a deck that uses `is-active`.
+        const slide = document.querySelector('.slide.active, .slide.is-active');
         if (!slide) return false;
         return !document.getAnimations().some((a) => {
           const node = a.effect && a.effect.target;
@@ -189,7 +211,9 @@ const TARGET_DEFAULTS = { position: 'any', text: null, minWidth: 40, minHeight: 
 function collectTargetCandidates(page, opts) {
   return page.evaluate((o) => {
     const slides = [...document.querySelectorAll('.deck > .slide')];
-    const activeIndex = slides.findIndex((s) => s.classList.contains('active'));
+    const token = ['active', 'is-active']
+      .find((t) => slides.filter((s) => s.classList.contains(t)).length === 1) || 'active';
+    const activeIndex = slides.findIndex((s) => s.classList.contains(token));
     const out = [];
     slides.forEach((slide, index) => {
       for (const el of slide.querySelectorAll('*')) {
@@ -213,7 +237,7 @@ function collectTargetCandidates(page, opts) {
           (cs.transitionProperty === 'none' || parseFloat(cs.transitionDuration) === 0);
         out.push({
           index,
-          selector: `.slide.active .${unique}`,
+          selector: `.slide.${token} .${unique}`,
           // Prefer targets on the active slide (no navigation, no entrance
           // animation to wait out) and inert ones (an element with its own
           // transition re-animates every style the editor writes, so computed
@@ -229,11 +253,13 @@ function collectTargetCandidates(page, opts) {
 async function activateSlide(page, index) {
   const already = await page.evaluate((i) => {
     const slides = [...document.querySelectorAll('.deck > .slide')];
-    if (slides[i]?.classList.contains('active')) return true;
+    const token = ['active', 'is-active']
+      .find((t) => slides.filter((s) => s.classList.contains(t)).length === 1) || 'active';
+    if (slides[i]?.classList.contains(token)) return true;
     slides.forEach((s, n) => {
-      if (n !== i) s.classList.remove('active', 'visible');
+      if (n !== i) s.classList.remove(token, 'visible');
     });
-    slides[i].classList.add('active');
+    slides[i].classList.add(token);
     return false;
   }, index);
   if (already) return;
@@ -380,9 +406,12 @@ export async function dragResizeHandle(page, dir, dxView, dyView, opts = {}) {
 }
 
 function activeSlideIndex(page) {
-  return page.evaluate(() =>
-    [...document.querySelectorAll('.deck > .slide')].findIndex((s) => s.classList.contains('active')),
-  );
+  return page.evaluate(() => {
+    const slides = [...document.querySelectorAll('.deck > .slide')];
+    const token = ['active', 'is-active']
+      .find((t) => slides.filter((x) => x.classList.contains(t)).length === 1) || 'active';
+    return slides.findIndex((s) => s.classList.contains(token));
+  });
 }
 
 export async function findDeckTarget(page, options = {}) {

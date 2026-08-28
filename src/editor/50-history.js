@@ -238,8 +238,8 @@
       const ref = (op.nextSibling && op.nextSibling.parentElement === op.deck) ? op.nextSibling : null;
       op.deck.insertBefore(op.slide, ref);
       if (op.wasActive) {
-        if (op.fallbackSlide) op.fallbackSlide.classList.remove('active');
-        op.slide.classList.add('active');
+        if (op.fallbackSlide) setSlideActive(op.fallbackSlide, false);
+        setSlideActive(op.slide, true);
       }
     } else if (op.type === 'elementInsert') {
       if (op.insertedEl && op.insertedEl.parentElement === op.parentEl) {
@@ -270,14 +270,14 @@
       if (!deck || !inserted || inserted.parentElement !== deck) return;
       const slides = [...deck.querySelectorAll(':scope > .slide')];
       const idx = slides.indexOf(inserted);
-      const fallbackSlide = inserted.classList.contains('active')
+      const fallbackSlide = isActiveSlide(inserted)
         ? (slides[idx + 1] || slides[idx - 1] || null)
         : null;
       if (state.selected && inserted.contains(state.selected)) setSelected(null);
-      inserted.classList.remove('active');
+      setSlideActive(inserted, false);
       deck.removeChild(inserted);
-      if (!deck.querySelector(':scope > .slide.active') && fallbackSlide) {
-        fallbackSlide.classList.add('active');
+      if (!slides.some((slide) => slide !== inserted && isActiveSlide(slide)) && fallbackSlide) {
+        setSlideActive(fallbackSlide, true);
       }
     }
   }
@@ -286,7 +286,7 @@
       applySlideOrder(op.deck, op.afterOrder);
     } else if (op.type === 'delete') {
       op.deck.removeChild(op.slide);
-      if (op.wasActive && op.fallbackSlide) op.fallbackSlide.classList.add('active');
+      if (op.wasActive && op.fallbackSlide) setSlideActive(op.fallbackSlide, true);
     } else if (op.type === 'elementInsert') {
       if (!op.parentEl || !op.insertedEl) return;
       const ref = (
@@ -312,7 +312,7 @@
         op.beforeSibling &&
         op.beforeSibling.parentElement === deck
       ) ? op.beforeSibling : null;
-      op.insertedSlide.classList.remove('active');
+      setSlideActive(op.insertedSlide, false);
       deck.insertBefore(op.insertedSlide, ref);
       observeSlideClass(op.insertedSlide);
     }

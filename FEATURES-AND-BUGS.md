@@ -140,6 +140,37 @@ together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 
+### Editor was unusable on decks that mark the active slide `is-active` or page on `pointerup`
+
+- **Status:** fixed 2026-08-28, branch `fix/host-deck-active-class-and-pointer-nav`
+- **Raised:** 2026-08-28, real deck `pelvic-floor-confidence.html` from a colleague —
+  the editor loaded, `E` toggled edit mode, and every click just paged the deck
+
+Three independent defects, all rooted in host-shape assumptions the fixtures
+never exercised. See `feature-briefs/v2.23-host-deck-compat.md`.
+
+1. **Active-slide token hardcoded.** `getActiveSlide()` matched
+   `classList.contains('active')`; the deck marks its visible slide `is-active`,
+   so no active slide resolved and every selectable-target lookup returned null.
+   Now resolved once per deck and routed through `isActiveSlide()` /
+   `setSlideActive()` at fifteen call sites. `.progress-dot.active` stays literal
+   — different convention.
+2. **Host paged on `pointerup`, which fires before `click`.** Neither `onClick`
+   nor `state.suppressClickUntil` could observe it, so the slide changed before
+   selection ran. This dominated (1): fixing the token alone changed nothing
+   observable. Edit and overview mode now take `pointerdown`/`pointerup`/
+   `pointercancel`/`click` from the host in capture phase.
+3. **Overview blanked decks that wrap their canvas.** The rule hiding body-level
+   siblings of the deck root also caught `<main class="stage">`, collapsing the
+   deck to 0x0. Ancestors between deck root and `<body>` are now marked and
+   given `display: contents` while overview is on.
+
+The test harness carried assumption (1) too, which mattered because the rotation
+pool exists to run the end-to-end suites against unfamiliar decks. `_helpers.js`
+and the three rotation specs now resolve the deck's token, so
+`fixtures/pointer-nav-deck.html` joins the pool as real coverage.
+
+
 ### Handoff guidance under-specified how a user-intent edit gets absorbed into CSS
 
 - **Status:** fixed 2026-07-30

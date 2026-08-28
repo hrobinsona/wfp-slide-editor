@@ -1505,8 +1505,18 @@
        UI bits don't apply (no single "current" slide rendering); hide
        them visually without removing them from the DOM so export still
        round-trips them. */
-    body[data-wfp-edit-overview="on"] > *:not([data-wfp-edit-deck-root]):not(#${ROOT_ID}) {
+    body[data-wfp-edit-overview="on"] > *:not([data-wfp-edit-deck-root]):not([data-wfp-edit-deck-ancestor]):not(#${ROOT_ID}) {
       display: none !important;
+    }
+    /* v2.23 — a deck that wraps its canvas (<main class="stage"><section
+       class="deck">) must not be hidden by the rule above, and its wrapper
+       must stop constraining layout: the wrapper carries the fixed-canvas
+       sizing (100vw/100vh, overflow:hidden, position:relative) that would
+       clip the reflowed grid. display:contents removes it from layout while
+       leaving it in the DOM, so the deck root becomes a direct grid
+       participant. Normal mode is untouched. */
+    body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-ancestor] {
+      display: contents !important;
     }
     body[data-wfp-edit-overview="on"] [data-wfp-edit-deck-root]:not([data-wfp-edit-flat-root]) {
       /* Override the fixture's fixed 1920x1080 + scale() canvas. The grid

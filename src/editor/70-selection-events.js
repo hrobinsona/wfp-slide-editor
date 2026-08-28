@@ -39,6 +39,41 @@
 
   document.addEventListener('click', onClick, true);
 
+  // ── Host gesture takeover (v2.23) ────────────────────────────────────────
+  //
+  // Host decks page on pointer events as well as on click:
+  //
+  //   deck.addEventListener('pointerup', (e) => show(
+  //     e.clientX < innerWidth / 2 ? current - 1 : current + 1));
+  //
+  // `pointerup` fires BEFORE `click`, so neither onClick above nor
+  // state.suppressClickUntil can ever observe it — the slide has already
+  // changed by the time either runs, and the clicked element no longer belongs
+  // to the active slide. The result is a deck that pages on every attempted
+  // selection and cannot be edited at all.
+  //
+  // While edit or overview mode owns the canvas, take the whole gesture away
+  // from the host. Same capture-phase precedent as the keyboard takeover.
+  //
+  // stopPropagation only — preventDefault would break focus and the
+  // contenteditable caret during text edit. NOT stopImmediatePropagation: the
+  // editor's own document-level listeners are registered on this same node and
+  // must still run.
+  //
+  // Accepted consequence: genuinely interactive slide content goes inert while
+  // edit mode is on, for every deck. That is the intended reading of edit mode
+  // — the editor owns the canvas — and view mode is untouched, so presenting
+  // still behaves exactly as the deck author wrote it.
+  const HOST_GESTURE_EVENTS = ['pointerdown', 'pointerup', 'pointercancel', 'click'];
+  function suppressHostGesture(e) {
+    if (!state.editMode && !state.overviewMode) return;
+    if (isInsideEditorRoot(e.target)) return;
+    e.stopPropagation();
+  }
+  HOST_GESTURE_EVENTS.forEach((type) => {
+    document.addEventListener(type, suppressHostGesture, true);
+  });
+
   // Reposition the ring on scroll, resize, and DOM changes that move the target.
   window.addEventListener('scroll', refreshSelection, true);
   window.addEventListener('resize', refreshSelection);

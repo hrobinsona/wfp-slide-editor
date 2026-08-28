@@ -7,6 +7,7 @@ import {
   disableFsa,
   hitPointFor,
   EDITOR_MARKER_ATTR_RE,
+  activeClassToken,
 } from './_helpers.js';
 
 // v2.8 — end-to-end gate. Walk a representative v2 user journey
@@ -40,8 +41,9 @@ async function selectByMouse(page, selector) {
 async function findTextSelector(page) {
   // Walk the active slide for an element with a direct text-node child;
   // fixtures vary in structure so we discover one rather than hard-code.
-  return page.evaluate(() => {
-    const slide = document.querySelector('.slide.active');
+  const token = await activeClassToken(page);
+  return page.evaluate((t) => {
+    const slide = document.querySelector(`.slide.${t}`);
     if (!slide) return null;
     const isTextBearing = (el) => [...el.childNodes].some(
       (n) => n.nodeType === 3 && n.textContent.trim().length > 0
@@ -55,11 +57,11 @@ async function findTextSelector(page) {
         if (r.width < 30 || r.height < 16) continue;
         // Build a unique selector via index within the active slide.
         const all = [...slide.querySelectorAll(tag)];
-        return `.slide.active ${tag}:nth-of-type(${all.indexOf(el) + 1})`;
+        return `.slide.${t} ${tag}:nth-of-type(${all.indexOf(el) + 1})`;
       }
     }
     return null;
-  });
+  }, token);
 }
 
 for (const fixture of FIXTURES_TO_RUN) {

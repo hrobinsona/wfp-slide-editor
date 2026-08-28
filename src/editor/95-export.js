@@ -352,13 +352,14 @@
       if (!slides.length) return;
       if (!startupSlideCount) startupSlideCount = slides.length;
       slides.forEach((slide, index) => {
-        slide.classList.toggle('active', index === 0);
+        setSlideActive(slide, index === 0);
       });
     });
 
     root.querySelectorAll('.progress').forEach((progress) => {
       const dots = [...progress.querySelectorAll('.progress-dot')];
       if (!dots.length) return;
+      // Host dot convention, not the slide token — see setSlideActive (v2.23).
       dots.forEach((dot, index) => {
         dot.classList.toggle('active', index === 0);
       });
