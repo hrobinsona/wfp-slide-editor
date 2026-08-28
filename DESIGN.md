@@ -395,6 +395,63 @@ Current approach:
 
 Overview changes are real deck mutations. After reorder/delete, the editor cannot rely on the fixture's original slide index closure always matching the live DOM, so editor navigation paths must account for mutated order.
 
+### The active-slide token (v2.23)
+
+Which class marks the visible slide is a host authoring choice, not something
+the editor can dictate. The decks the editor grew up with use `.slide.active`;
+a newer generator hangs its whole visibility model on `.slide.is-active`.
+Matching one literally left the editor unable to resolve an active slide at
+all on such a deck, which silently disabled selection, drag, resize, text
+edit, notes and overview in one go.
+
+`resolveActiveClass()` runs alongside native/foreign/flat root resolution and
+records the token on `deckContext`. It probes `active` first, so a deck
+carrying both keeps its legacy meaning, and takes the first token carried by
+exactly one direct-child slide; `window.__WFP_ACTIVE_CLASS__` overrides, in
+the same spirit as `__WFP_EDIT_ROOT__`. Every slide-level read goes through
+`isActiveSlide()` and every write through `setSlideActive()`.
+
+Resolution happens once at bootstrap. Real decks activate a slide
+synchronously before an injected editor lands, and a deck with no active slide
+at that moment offers nothing to detect either way.
+
+`.progress-dot.active` is deliberately excluded: it is the host's own dot
+convention and has nothing to do with slide visibility.
+
+### Host gesture ownership (v2.23)
+
+Host decks drive navigation from pointer events as well as clicks —
+`deck.addEventListener('pointerup', …)` paging on which half of the screen was
+hit. `pointerup` fires *before* `click`, so neither the editor's `onClick` nor
+its `state.suppressClickUntil` guard can observe it: the slide has already
+changed by the time either runs, and the clicked element no longer belongs to
+the active slide.
+
+While edit or overview mode owns the canvas, the editor takes
+`pointerdown`, `pointerup`, `pointercancel` and `click` from the host in
+capture phase — the same precedent as the keyboard takeover.
+`stopPropagation()` only: `preventDefault()` would break focus and the
+contenteditable caret, and `stopImmediatePropagation()` would kill the
+editor's own document-level listeners on the same node. View mode is
+untouched, so presenting behaves exactly as the deck author wrote it.
+
+The accepted cost is that genuinely interactive slide content goes inert while
+edit mode is on, for every deck. That is the intended reading of edit mode.
+
+### Decks that wrap their canvas (v2.23)
+
+Overview hides body-level siblings of the deck root so host chrome (progress
+dots, nav hints) does not overlay the grid. That rule assumed `.deck` is a
+direct child of `<body>`, which every early deck satisfied. A deck shaped
+`<main class="stage"><section class="deck">` had its own wrapper hidden
+instead, collapsing the deck to 0x0 and rendering overview blank.
+
+`markDeckAncestors()` stamps `data-wfp-edit-deck-ancestor` on the chain
+between the deck root and `<body>`. The hide rule spares them, and a
+companion rule gives them `display: contents` while overview is on so their
+fixed-canvas sizing stops constraining the reflowed grid. The marker is swept
+by the existing `data-wfp-edit-*` export cleanup.
+
 ### Editor-owned slide-state synchronization
 
 `synchronizeSlideState` is the single activation boundary once the editor owns

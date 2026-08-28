@@ -11,6 +11,7 @@ import {
   hitPointFor,
   EDITOR_MARKER_ATTR_RE,
   parseSlideTags,
+  activeClassToken,
 } from './_helpers.js';
 
 // v2.1.6 — End-to-end pass for the v2.1 Overview release.
@@ -142,19 +143,20 @@ for (const fixture of FIXTURES) {
       await thumb.scrollIntoViewIfNeeded();
       await thumb.click({ force: true });
 
-      const after = await page.evaluate(() => ({
+      const token = await activeClassToken(page);
+      const after = await page.evaluate((t) => ({
         bodyAttr: document.body.getAttribute('data-wfp-edit-overview'),
-        activeIds: [...document.querySelectorAll('.slide.active')].map((s) => s.id),
-      }));
+        activeIds: [...document.querySelectorAll(`.slide.${t}`)].map((s) => s.id),
+      }), token);
       expect(after.bodyAttr).toBe(null);
       expect(after.activeIds.length).toBe(1);
       // The active slide should be the one we clicked (its id may or
       // may not be present depending on the fixture, but it should be
       // the slide at our target position).
-      const finalActiveIdx = await page.evaluate(() => {
+      const finalActiveIdx = await page.evaluate((t) => {
         const slides = [...document.querySelectorAll('.deck > .slide')];
-        return slides.findIndex((s) => s.classList.contains('active'));
-      });
+        return slides.findIndex((s) => s.classList.contains(t));
+      }, token);
       expect(finalActiveIdx).toBe(targetIdx);
       // If the slide had an id, it should match.
       if (targetId && !targetId.startsWith('_unnamed_')) {
@@ -231,12 +233,13 @@ for (const fixture of FIXTURES) {
 
     test('last-slide guard prevents deleting the only remaining slide and shows the toast', async ({ page }) => {
       // Trim the deck to a single slide before entering overview.
-      await page.evaluate(() => {
+      const trimToken = await activeClassToken(page);
+      await page.evaluate((t) => {
         const deck = document.querySelector('.deck');
         const slides = [...deck.querySelectorAll(':scope > .slide')];
         for (let i = 1; i < slides.length; i++) deck.removeChild(slides[i]);
-        slides[0].classList.add('active');
-      });
+        slides[0].classList.add(t);
+      }, trimToken);
 
       await page.keyboard.press('o');
       await page.waitForFunction(() =>
@@ -265,12 +268,14 @@ for (const fixture of FIXTURES) {
 
       await page.keyboard.press('e');
       // Find a text-bearing element on the active slide.
-      const target = page.locator('.slide.active h1, .slide.active h2, .slide.active p').first();
+      const token = await activeClassToken(page);
+      const activeSel = `.slide.${token} h1, .slide.${token} h2, .slide.${token} p`;
+      const target = page.locator(activeSel).first();
       const initialPx = await target.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
       // Click a point that hit-tests to the element itself: the geometric
       // centre of a headline lands on the accent span the current decks nest
       // inside it, which would select the span instead.
-      const point = await hitPointFor(page, '.slide.active h1, .slide.active h2, .slide.active p');
+      const point = await hitPointFor(page, activeSel);
       await page.mouse.click(point.x, point.y);
       await page.keyboard.press('ArrowUp');
       const nudged = await target.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));

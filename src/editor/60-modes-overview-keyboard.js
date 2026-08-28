@@ -102,7 +102,7 @@
       // :focus-within for keyboard users; arrow-key navigation between
       // thumbs is an explicit non-goal (BRIEF), but Tab focus is fine.
       thumb.tabIndex = 0;
-      if (slide.classList.contains('active')) thumb.dataset.active = 'true';
+      if (isActiveSlide(slide)) thumb.dataset.active = 'true';
       const badge = document.createElement('span');
       badge.className = 'wfpe-overview-badge';
       badge.textContent = String(i + 1);
@@ -475,13 +475,16 @@
 
     let activeIndex = activeSlide ? slides.indexOf(activeSlide) : -1;
     if (activeIndex < 0) {
-      activeIndex = slides.findIndex((slide) => slide.classList.contains('active'));
+      activeIndex = slides.findIndex((slide) => isActiveSlide(slide));
     }
     if (activeIndex < 0) activeIndex = 0;
 
     slides.forEach((slide, index) => {
-      slide.classList.toggle('active', index === activeIndex);
+      setSlideActive(slide, index === activeIndex);
     });
+    // `.progress-dot.active` is the host's own dot convention, unrelated to
+    // slide visibility — it stays literal and is not routed through
+    // setSlideActive() (v2.23).
     document.querySelectorAll('.progress-dot').forEach((dot, index) => {
       dot.classList.toggle('active', index === activeIndex);
     });
@@ -506,7 +509,7 @@
   function navigateRelativeInDeck(delta) {
     const slides = getSlides();
     if (slides.length === 0) return;
-    let cur = slides.findIndex((s) => s.classList.contains('active'));
+    let cur = slides.findIndex((s) => isActiveSlide(s));
     if (cur < 0) {
       // Recovery: no in-DOM slide is .active (e.g., the fixture's
       // stale handler set .active on an orphan before we took over).
@@ -721,7 +724,7 @@
       showToast(slide, "Can't delete the last slide.");
       return;
     }
-    const wasActive = slide.classList.contains('active');
+    const wasActive = isActiveSlide(slide);
     const idx = slides.indexOf(slide);
     const nextSibling = slide.nextElementSibling; // may be null if last
     // Per BRIEF: if deleted slide was active and not the last, promote
@@ -732,7 +735,7 @@
       fallbackSlide = slides[idx + 1] || slides[idx - 1] || null;
     }
     deck.removeChild(slide);
-    if (wasActive && fallbackSlide) fallbackSlide.classList.add('active');
+    if (wasActive && fallbackSlide) setSlideActive(fallbackSlide, true);
     pushSlideOpEntry({
       type: 'delete',
       deck,

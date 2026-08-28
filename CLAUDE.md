@@ -72,7 +72,9 @@ Project subagents may exist in `.claude/agents/`:
 ## Critical Gotchas
 
 - WFP slides apply `transform: scale()` to `.deck`. Pointer deltas are viewport pixels; style writes are slide pixels. Divide deltas by the current deck scale.
-- Only `.slide.active` is visible in normal slide view. Element editing operates on the active slide only.
+- Which class marks the visible slide is a host authoring choice, not a contract — `.slide.active` on older decks, `.slide.is-active` on newer ones. Never hardcode either: read with `isActiveSlide()`, write with `setSlideActive()`. `.progress-dot.active` is a separate convention and stays literal. Element editing operates on the active slide only.
+- Host decks also page on pointer events (`pointerup` on `.deck`), which fire *before* `click` — `onClick` and `state.suppressClickUntil` cannot see them. Edit and overview mode take the whole gesture in capture phase; view mode leaves it to the deck.
+- Do not assume `.deck` is a direct child of `<body>`. Decks that wrap their canvas (`<main class="stage">`) need the ancestor chain spared from overview's sibling-hiding rule — see `data-wfp-edit-deck-ancestor`.
 - Existing `keydown` listeners on `document` handle slide navigation. Editor-owned keys must run in capture phase and stop propagation when edit/overview mode owns them.
 - Overview reorder/delete mutates actual `.slide` order in `.deck`. After deck mutation, do not assume original fixture navigation closures still match live DOM order.
 - Overview state, editor root, `contenteditable`, and `data-wfp-edit-*` markers must not leak into exported HTML.

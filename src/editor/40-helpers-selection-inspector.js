@@ -35,6 +35,26 @@
     if (mode === 'flat') {
       resolvedRoot.setAttribute('data-wfp-edit-flat-root', 'true');
     }
+    markDeckAncestors(resolvedRoot);
+  }
+
+  // v2.23 — mark every element between the deck root and <body>.
+  //
+  // Overview mode hides body-level siblings of the deck root (progress dots,
+  // nav hints and similar chrome that has no meaning in a grid). Decks that
+  // mount `.deck` straight into <body> have no ancestors, so the rule was
+  // written as "not the deck root → hide". A deck that wraps its canvas —
+  // `<main class="stage"><section class="deck">` — then had its own wrapper
+  // hidden, collapsing the whole deck to 0x0 and rendering overview blank.
+  //
+  // Marking the chain lets the CSS spare these wrappers and neutralise their
+  // layout (they carry the fixed-canvas sizing) only while overview is on.
+  function markDeckAncestors(resolvedRoot) {
+    let node = resolvedRoot.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      node.setAttribute('data-wfp-edit-deck-ancestor', 'true');
+      node = node.parentElement;
+    }
   }
 
   function ensureFlatPositionContext(flatRoot) {
@@ -95,23 +115,27 @@
     return document.body;
   }
 
+  function describeDeck(root, mode) {
+    return { mode, root, activeClass: resolveActiveClass(root, mode) };
+  }
+
   function resolveDeckRoot() {
     const nativeRoot = resolveNativeDeckRoot();
     if (nativeRoot) {
       markResolvedRoot(nativeRoot, 'native');
-      return { mode: 'native', root: nativeRoot };
+      return describeDeck(nativeRoot, 'native');
     }
 
     const foreignRoot = resolveForeignDeckRoot();
     if (foreignRoot) {
       markResolvedRoot(foreignRoot, 'foreign');
-      return { mode: 'foreign', root: foreignRoot };
+      return describeDeck(foreignRoot, 'foreign');
     }
 
     const flatRoot = resolveFlatRoot();
     markResolvedRoot(flatRoot, 'flat');
     ensureFlatPositionContext(flatRoot);
-    return { mode: 'flat', root: flatRoot };
+    return describeDeck(flatRoot, 'flat');
   }
 
   function getDocumentMode() {
@@ -151,9 +175,86 @@
     return [...deckRoot.querySelectorAll(':scope > .slide')];
   }
 
+  // ── The active-slide token (v2.23) ──────────────────────────────────────
+  //
+  // Which class marks the visible slide is a host authoring choice, not a
+  // contract. The decks the editor grew up with all use `.slide.active`; a
+  // newer generator emits `.slide.is-active` and hangs its entire visibility
+  // model on it. Matching one token literally left the editor unable to
+  // resolve an active slide at all on such a deck, which silently disabled
+  // selection, drag, resize, text edit, notes and overview in one go.
+  //
+  // Resolve the token once from the live DOM and route every slide-level read
+  // and write through it. `active` is probed first so a deck carrying both
+  // keeps its legacy meaning. Detection runs at bootstrap: real decks activate
+  // a slide synchronously before an injected editor lands, and a deck with no
+  // active slide at that moment has nothing to detect either way.
+  //
+  // NOTE: `.progress-dot.active` is a separate host convention and is
+  // deliberately NOT routed through this — it has nothing to do with slide
+  // visibility and stays literal at its two call sites.
+  function getActiveClassOverride() {
+    const override = window.__WFP_ACTIVE_CLASS__;
+    if (typeof override !== 'string') return null;
+    const token = override.trim();
+    // A single class token only. classList.contains/toggle throw
+    // InvalidCharacterError on internal whitespace, which would brick the
+    // editor outright rather than degrading to the default.
+    if (!token || /\s/.test(token)) return null;
+    return token;
+  }
+
+  // Returns the resolved token, or null when the DOM cannot answer yet —
+  // never a guess. A null result leaves getActiveClass() free to re-probe on
+  // the next call, which matters because bootstrap is not always after the
+  // deck has activated a slide: the live-refresh path (96-live-refresh.js)
+  // re-injects the editor inline immediately after document.close(), which
+  // can run ahead of a deck that activates on DOMContentLoaded.
+  //
+  // The candidate list lives INSIDE the function on purpose.
+  // resolveDeckRoot() is called from 10-state.js, which is concatenated ahead
+  // of this fragment: function declarations hoist across the bundle, but a
+  // module-level `const` would still be in its temporal dead zone at that
+  // point and throw.
+  function resolveActiveClass(deckRoot, mode) {
+    const candidates = ['active', 'is-active'];
+    const override = getActiveClassOverride();
+    if (override) return override;
+    // Flat mode has no slides to read a token from, and nothing that reads one
+    // ever runs — getActiveSlide() short-circuits to the root. Settle it.
+    if (mode === 'flat') return 'active';
+    if (!deckRoot) return null;
+    const slides = [...deckRoot.querySelectorAll(':scope > .slide')];
+    if (!slides.length) return null;
+    for (const token of candidates) {
+      if (slides.filter((slide) => slide.classList.contains(token)).length === 1) return token;
+    }
+    return null;
+  }
+
+  // Caches only a confident answer. While resolution is still inconclusive the
+  // default is used but not recorded, so a deck that activates its first slide
+  // after the editor lands is picked up on the next call rather than being
+  // locked to the wrong token for the session.
+  function getActiveClass() {
+    if (!deckContext.activeClass) {
+      deckContext.activeClass = resolveActiveClass(getDeckRoot(), getDocumentMode());
+    }
+    return deckContext.activeClass || 'active';
+  }
+
+  function isActiveSlide(slide) {
+    return !!slide && slide.classList.contains(getActiveClass());
+  }
+
+  function setSlideActive(slide, on) {
+    if (!slide) return;
+    slide.classList.toggle(getActiveClass(), !!on);
+  }
+
   function getActiveSlide() {
     if (getDocumentMode() === 'flat') return getDeckRoot();
-    return getSlides().find((slide) => slide.classList.contains('active')) || null;
+    return getSlides().find((slide) => isActiveSlide(slide)) || null;
   }
 
   function findSelectableTarget(el) {

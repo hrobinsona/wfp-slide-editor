@@ -10,6 +10,7 @@ import {
   disableFsa,
   hitPointFor,
   requireAbsoluteTarget,
+  activeClassToken,
 } from './_helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,8 +64,10 @@ async function dragByViewportPx(page, selector, dx, dy) {
 }
 
 async function activeSlideIndex(page) {
+  const token = await activeClassToken(page);
   return page.evaluate(
-    () => [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains('active')),
+    (t) => [...document.querySelectorAll('.slide')].findIndex((s) => s.classList.contains(t)),
+    token,
   );
 }
 
@@ -96,12 +99,13 @@ for (const fixture of FIXTURES_TO_TEST) {
       await loadFixtureWithEditor(page, fixture);
       await page.keyboard.press('e');
       // First heading inside the active slide.
-      const sel = await page.evaluate(() => {
-        const h = document.querySelector('.slide.active h1, .slide.active h2');
+      const token = await activeClassToken(page);
+      const sel = await page.evaluate((t) => {
+        const h = document.querySelector(`.slide.${t} h1, .slide.${t} h2`);
         if (!h) return null;
         h.dataset.testHeading = 'yes';
         return '[data-test-heading="yes"]';
-      });
+      }, token);
       expect(sel).not.toBeNull();
       await clickToSelect(page, sel);
       const display = await page.evaluate(
@@ -113,12 +117,13 @@ for (const fixture of FIXTURES_TO_TEST) {
     test('4. Five ArrowUps grow font-size by 5px', async ({ page }) => {
       await loadFixtureWithEditor(page, fixture);
       await page.keyboard.press('e');
-      const sel = await page.evaluate(() => {
-        const h = document.querySelector('.slide.active h1, .slide.active h2');
+      const token = await activeClassToken(page);
+      const sel = await page.evaluate((t) => {
+        const h = document.querySelector(`.slide.${t} h1, .slide.${t} h2`);
         if (!h) return null;
         h.dataset.testHeading = 'yes';
         return '[data-test-heading="yes"]';
-      });
+      }, token);
       await clickToSelect(page, sel);
       const before = await page.evaluate(
         (s) => parseFloat(getComputedStyle(document.querySelector(s)).fontSize),
@@ -168,8 +173,9 @@ for (const fixture of FIXTURES_TO_TEST) {
     test('7. Double-click + edit + Escape changes text', async ({ page }) => {
       await loadFixtureWithEditor(page, fixture);
       await page.keyboard.press('e');
-      const sel = await page.evaluate(() => {
-        const slide = document.querySelector('.slide.active');
+      const token = await activeClassToken(page);
+      const sel = await page.evaluate((t) => {
+        const slide = document.querySelector(`.slide.${t}`);
         const cand = [...slide.querySelectorAll('p, h1, h2, h3, h4')].find((el) => {
           return [...el.childNodes].some(
             (n) => n.nodeType === 3 && n.textContent.trim().length > 0,
@@ -178,7 +184,7 @@ for (const fixture of FIXTURES_TO_TEST) {
         if (!cand) return null;
         cand.dataset.testText = 'yes';
         return '[data-test-text="yes"]';
-      });
+      }, token);
       expect(sel).not.toBeNull();
       await page.evaluate((s) => {
         const el = document.querySelector(s);
@@ -210,12 +216,13 @@ for (const fixture of FIXTURES_TO_TEST) {
       await setDeckScale(page, 1);
       await page.keyboard.press('e');
       // Make a tiny edit so the export contains something we can detect.
-      const sel = await page.evaluate(() => {
-        const h = document.querySelector('.slide.active h1, .slide.active h2');
+      const token = await activeClassToken(page);
+      const sel = await page.evaluate((t) => {
+        const h = document.querySelector(`.slide.${t} h1, .slide.${t} h2`);
         if (!h) return null;
         h.dataset.testHeading = 'yes';
         return '[data-test-heading="yes"]';
-      });
+      }, token);
       if (sel) {
         await clickToSelect(page, sel);
         await page.keyboard.press('ArrowUp');
@@ -252,12 +259,13 @@ for (const fixture of FIXTURES_TO_TEST) {
       await page.keyboard.press('e');
       // A live selection is what reserves the navigation keys for the
       // editor; edit mode alone hands them back to the deck (test 11).
-      const sel = await page.evaluate(() => {
-        const h = document.querySelector('.slide.active h1, .slide.active h2');
+      const token = await activeClassToken(page);
+      const sel = await page.evaluate((t) => {
+        const h = document.querySelector(`.slide.${t} h1, .slide.${t} h2`);
         if (!h) return null;
         h.dataset.testHeading = 'yes';
         return '[data-test-heading="yes"]';
-      });
+      }, token);
       expect(sel).not.toBeNull();
       await clickToSelect(page, sel);
       await expect(page.locator('#wfp-editor-root .wfpe-selection-ring')).toHaveCSS('display', 'block');

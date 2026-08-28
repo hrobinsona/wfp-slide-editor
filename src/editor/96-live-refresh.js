@@ -131,7 +131,7 @@
 
   function captureActiveSlideIndex() {
     const slides = getSlides();
-    return Math.max(0, slides.findIndex((s) => s.classList.contains('active')));
+    return Math.max(0, slides.findIndex((s) => isActiveSlide(s)));
   }
 
   async function performLiveRefresh(html, lastModified) {
