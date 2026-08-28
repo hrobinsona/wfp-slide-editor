@@ -77,6 +77,7 @@ Project subagents may exist in `.claude/agents/`:
 - Do not assume `.deck` is a direct child of `<body>`. Decks that wrap their canvas (`<main class="stage">`) need the ancestor chain spared from overview's sibling-hiding rule — see `data-wfp-edit-deck-ancestor`.
 - Existing `keydown` listeners on `document` handle slide navigation. Editor-owned keys must run in capture phase and stop propagation when edit/overview mode owns them.
 - Overview reorder/delete mutates actual `.slide` order in `.deck`. After deck mutation, do not assume original fixture navigation closures still match live DOM order.
+- Overview must not mutate slide classes. Cooperative decks watch their own active class to stay in sync with the editor (Townhall's `observeDeck()` calls `activate()` on any externally-moved `.active`), so writing that class onto several slides drives the host's navigation. Entrance animations are handled by re-scoping the deck's own CSS instead — see `applyOverviewEntranceCss`.
 - Overview state, editor root, `contenteditable`, and `data-wfp-edit-*` markers must not leak into exported HTML.
 - Flow unlock touches selected elements, siblings, and containers. Undo/redo must not leave `state.selected` pointing at detached DOM.
 - `editor.js` is now oversized. Prefer maintainability cleanup before large new features.

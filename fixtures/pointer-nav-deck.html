@@ -11,6 +11,9 @@
 
         1. the visible slide is marked `is-active`, not `active`
         2. navigation is driven by `pointerup` on the deck, not by `click`
+        3. entrance animations are gated on the active slide, and the deck does
+           NOT cooperate with the editor's overview attribute the way the WFP
+           template does
 
       Everything else deliberately follows the familiar native shape: a
       `.deck` root the editor resolves in native mode, direct-child `.slide`
@@ -74,6 +77,23 @@
       background: linear-gradient(140deg, #fcfbf8, #e9f1ef);
     }
 
+    /* Entrance animation gated on the active slide. Only one slide is ever
+       active, so in a grid overview every other slide's content stays at
+       opacity 0 unless something makes the deck's own rule fire. This deck
+       offers no `body[data-wfp-edit-overview]` opt-out — that convention is
+       the WFP template's, not a contract. */
+    .reveal {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 220ms ease, transform 220ms ease;
+      transition-delay: var(--delay, 0ms);
+    }
+
+    .slide.is-active .reveal {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
     .deck-title {
       position: absolute;
       left: 140px;
@@ -135,9 +155,9 @@
   <main class="stage">
     <section class="deck" id="deck">
       <section class="slide is-active" id="pointer-slide-1">
-        <h1 class="deck-title">Quarterly planning</h1>
-        <p class="deck-note">A synthetic deck whose visible slide is marked with is-active.</p>
-        <div class="deck-card" data-testid="pointer-card">
+        <h1 class="deck-title reveal">Quarterly planning</h1>
+        <p class="deck-note reveal">A synthetic deck whose visible slide is marked with is-active.</p>
+        <div class="deck-card reveal" data-testid="pointer-card" style="--delay:60ms">
           <strong>42%</strong>
           <span>Neutral sample metric for fixture testing.</span>
         </div>
@@ -145,23 +165,23 @@
       </section>
 
       <section class="slide" id="pointer-slide-2">
-        <h1 class="deck-title">Editorial calendar</h1>
-        <p class="deck-note">Hidden until this deck's own script activates it.</p>
-        <div class="deck-card"><strong>18</strong><span>Tasks completed in the sample workflow.</span></div>
+        <h1 class="deck-title reveal">Editorial calendar</h1>
+        <p class="deck-note reveal">Hidden until this deck's own script activates it.</p>
+        <div class="deck-card reveal" style="--delay:60ms"><strong>18</strong><span>Tasks completed in the sample workflow.</span></div>
         <div class="resize-target">Second resize target</div>
       </section>
 
       <section class="slide" id="pointer-slide-3">
-        <h1 class="deck-title">Production checkpoints</h1>
-        <p class="deck-note">Navigation here is driven by pointerup rather than click.</p>
-        <div class="deck-card"><strong>3</strong><span>Independent workstreams in a neutral scenario.</span></div>
+        <h1 class="deck-title reveal">Production checkpoints</h1>
+        <p class="deck-note reveal">Navigation here is driven by pointerup rather than click.</p>
+        <div class="deck-card reveal" style="--delay:60ms"><strong>3</strong><span>Independent workstreams in a neutral scenario.</span></div>
         <div class="resize-target">Third resize target</div>
       </section>
 
       <section class="slide" id="pointer-slide-4">
-        <h1 class="deck-title">Launch readiness</h1>
-        <p class="deck-note">The editor should not rewrite this deck's markup or script.</p>
-        <div class="deck-card"><strong>Q4</strong><span>Placeholder planning horizon.</span></div>
+        <h1 class="deck-title reveal">Launch readiness</h1>
+        <p class="deck-note reveal">The editor should not rewrite this deck's markup or script.</p>
+        <div class="deck-card reveal" style="--delay:60ms"><strong>Q4</strong><span>Placeholder planning horizon.</span></div>
         <div class="resize-target">Fourth resize target</div>
       </section>
     </section>

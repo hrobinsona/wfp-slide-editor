@@ -255,6 +255,147 @@ test.describe('v2.23 — overview on a deck that wraps its canvas', () => {
   });
 });
 
+// v2.24 — entrance animations in overview.
+//
+// The fixture gates `.reveal` on `.slide.is-active`, like the real deck. Only
+// one slide is ever active, so in a grid every other thumbnail renders empty
+// unless the deck's own rule is made to fire. The WFP template opts out via
+// `body[data-wfp-edit-overview="on"]`, but that is a convention, not a
+// contract — the editor must not depend on the host cooperating.
+test.describe('v2.24 — entrance-gated content renders in overview', () => {
+  async function openOverview(page) {
+    await page.keyboard.press('o');
+    await page.waitForFunction(
+      () => document.querySelectorAll('#wfp-editor-root .wfpe-overview-thumb').length === 4,
+    );
+    // Entrance rules are transitions; give them time to land.
+    await page.waitForTimeout(600);
+  }
+
+  const revealOpacities = (page) => page.evaluate(
+    () => [...document.querySelectorAll('.deck > .slide')].map((slide) => [
+      ...new Set([...slide.querySelectorAll('.reveal')].map((el) => getComputedStyle(el).opacity)),
+    ]),
+  );
+
+  test('reveal-gated content is visible on EVERY thumbnail, not just the active slide', async ({ page }) => {
+    await loadFixtureWithEditor(page, FIXTURE);
+    await openOverview(page);
+
+    const perSlide = await revealOpacities(page);
+    expect(perSlide).toHaveLength(4);
+    for (const opacities of perSlide) {
+      expect(opacities).toEqual(['1']);
+    }
+  });
+
+  test('leaving overview restores the entrance gating to the active slide alone', async ({ page }) => {
+    await loadFixtureWithEditor(page, FIXTURE);
+    await openOverview(page);
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+    await page.waitForTimeout(400);
+
+    const state = await page.evaluate(() => {
+      const slides = [...document.querySelectorAll('.deck > .slide')];
+      // Count what the entrance element actually holds. A selector-text
+      // pattern would miss any emission that does not match the pattern.
+      const entranceEl = document.querySelector(
+        '#wfp-editor-root style[data-wfp-edit-style="overview-entrance"]',
+      );
+      const injectedRules = entranceEl && entranceEl.sheet
+        ? entranceEl.sheet.cssRules.length
+        : -1;
+      return {
+        activeCount: slides.filter((s) => s.classList.contains('is-active')).length,
+        activeIndex: slides.findIndex((s) => s.classList.contains('is-active')),
+        injectedRules,
+        hiddenReveals: slides.slice(1).flatMap((s) =>
+          [...s.querySelectorAll('.reveal')].map((el) => getComputedStyle(el).opacity)),
+      };
+    });
+    expect(state.activeCount).toBe(1);
+    expect(state.activeIndex).toBe(0);
+    expect(state.injectedRules).toBe(0);
+    expect(new Set(state.hiddenReveals)).toEqual(new Set(['0']));
+  });
+
+  // The regression that killed the first attempt at this fix: lending the
+  // deck's own active class to every slide drives cooperative decks' own
+  // navigation (Townhall's observeDeck() calls activate() on any external
+  // .active it sees). Whatever mechanism renders the thumbnails, it must not
+  // touch slide classes at all.
+  test('overview does not mutate any slide class', async ({ page }) => {
+    await loadFixtureWithEditor(page, FIXTURE);
+
+    // Sampling before/after would miss a transient stamp that a host observer
+    // reacts to and reverts — which is exactly how the rejected approach
+    // failed. Record every class mutation across the whole cycle instead.
+    await page.evaluate(() => {
+      window.__slideClassMutations = [];
+      new MutationObserver((records) => {
+        for (const r of records) window.__slideClassMutations.push(r.target.id || '?');
+      }).observe(document.querySelector('.deck'), {
+        subtree: true, attributes: true, attributeFilter: ['class'],
+      });
+    });
+
+    await openOverview(page);
+    await page.keyboard.press('o');
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    const mutations = await page.evaluate(() => window.__slideClassMutations);
+    expect(mutations).toEqual([]);
+  });
+
+  test('a thumbnail click still activates the slide that was clicked', async ({ page }) => {
+    await loadFixtureWithEditor(page, FIXTURE);
+    await openOverview(page);
+
+    await page
+      .locator('#wfp-editor-root .wfpe-overview-thumb[data-wfp-edit-slide-index="2"]')
+      .click();
+    await page.waitForFunction(() => !document.body.hasAttribute('data-wfp-edit-overview'));
+
+    const state = await page.evaluate(() => {
+      const slides = [...document.querySelectorAll('.deck > .slide')];
+      return {
+        activeIndex: slides.findIndex((s) => s.classList.contains('is-active')),
+        activeCount: slides.filter((s) => s.classList.contains('is-active')).length,
+      };
+    });
+    expect(state.activeIndex).toBe(2);
+    expect(state.activeCount).toBe(1);
+  });
+
+  test('an export taken while overview is open still starts on the first slide', async ({ page }) => {
+    await disableFsa(page);
+    await loadFixtureWithEditor(page, FIXTURE);
+    await page.keyboard.press('e');
+    await page.evaluate(() => window.pointerFixtureShow(2));
+    await openOverview(page);
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 10_000 });
+    await page.keyboard.press('ControlOrMeta+s');
+    const download = await downloadPromise;
+
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const out = path.join(
+      OUTPUT_DIR,
+      `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`,
+    );
+    await download.saveAs(out);
+    const content = fs.readFileSync(out, 'utf8');
+
+    const slideTags = content.match(/<section[^>]*\bclass="slide[^"]*"[^>]*>/g) || [];
+    expect(slideTags).toHaveLength(4);
+    expect(slideTags.filter((t) => /\bis-active\b/.test(t))).toHaveLength(1);
+    expect(slideTags[0]).toContain('is-active');
+    // The re-scoped entrance rules are editor chrome and must not ship.
+    expect(content).not.toContain('data-wfp-edit-overview="on"] .slide');
+  });
+});
+
 test.describe('v2.23 — `.active` decks are unaffected', () => {
   test('selection still works on a deck that uses `active`', async ({ page }) => {
     await loadForeignDeck(page);

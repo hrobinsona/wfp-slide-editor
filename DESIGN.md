@@ -452,6 +452,37 @@ companion rule gives them `display: contents` while overview is on so their
 fixed-canvas sizing stops constraining the reflowed grid. The marker is swept
 by the existing `data-wfp-edit-*` export cleanup.
 
+### Entrance animations in Overview (v2.24)
+
+Decks gate entrance animations on the active slide (`.slide.is-active .reveal
+{ opacity: 1 }`). Overview forces `opacity: 1 !important` on each `.slide`, but
+that reaches the slide box only, so with one slide active every other thumbnail
+renders blank. The WFP template opts out of its own entrance rules on
+`body[data-wfp-edit-overview="on"]`; that is a convention, not a contract.
+
+Two approaches were rejected. Enumerating animation class names re-breaks on
+the next generator and flattens deliberate opacity/transform. Lending the
+deck's active class to every slide is worse than useless on exactly the decks
+that cooperate best: they observe that class to stay in sync with the editor,
+so stamping N slides drives their navigation N times.
+
+Instead `applyOverviewEntranceCss()` reads the deck's own rules out of its own
+stylesheets and re-emits them scoped to overview. A rule qualifies when its
+selector carries the resolved active-class token *and* has a descendant part —
+`.slide.is-active .reveal` yes, `.slide.is-active { z-index: 1 }` no, since
+that governs the slide box overview already controls. The token is stripped and
+`body[data-wfp-edit-overview="on"]` prefixed, which also raises specificity
+above the original. `@media` and `@supports` are recursed into and re-wrapped with their
+condition; `@layer` is recursed into unwrapped; every other grouping at-rule is
+skipped rather than flattened, because lifting a rule out of a condition we
+do not understand makes it apply unconditionally — and for `@starting-style`,
+which holds the hidden value, that would emit `opacity: 0` at winning
+specificity and blank the grid. Unreadable (cross-origin) sheets are skipped
+and degrade to the previous behaviour.
+
+The DOM is untouched, which is the property that matters: no host observer
+fires, and slide classes read exactly the same inside overview as outside.
+
 ### Editor-owned slide-state synchronization
 
 `synchronizeSlideState` is the single activation boundary once the editor owns
