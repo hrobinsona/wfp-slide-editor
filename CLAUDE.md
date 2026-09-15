@@ -37,7 +37,7 @@ Bookmarklet-activated visual editor for HTML presentations. It supports element 
 - `editor.js` must work as a self-contained injected script.
 - Keep production runtime dependency-free.
 - All editor-injected DOM lives inside `#wfp-editor-root`.
-- Editor markers on slide/user elements use the `data-wfp-edit-*` namespace.
+- Editor markers on slide/user elements use the `data-wfp-edit-*` namespace, which export sweeps. The one deliberate exception is `data-wfp-text-run` (v2.26): the text-run wrapper a flex/grid host keeps after formatting is structural markup the deck depends on, so it survives export and is recognised on the next load.
 - Fixtures in `fixtures/` are immutable inputs. Tests write artifacts to `tests/output/`.
 - Prefer small functions and plain objects over classes unless a new abstraction clearly earns its keep.
 - Do not alter how fixtures render when the editor is not loaded.

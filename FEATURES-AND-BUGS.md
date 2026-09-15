@@ -87,7 +87,10 @@ never started an edit — e.g. the `<li>` has no direct text node because its
 text sits in a child that the deck makes `pointer-events: none`, so
 `isTextBearing(li)` is false and the click merely selected it. Needs the real
 bullet markup (one `<li>` plus its CSS) from the deck where it happens before
-a fix can be targeted.
+a fix can be targeted. Lead (2026-09-15): the deck's bullets turned out to be
+`li { display: flex }` with a `::before` dot (see the v2.26 resolved entry);
+re-test the first-character deletion on that exact shape once the markup is
+in hand.
 
 ### Overview Backspace/Delete silently chain-deletes slides under a stationary cursor
 
@@ -164,6 +167,25 @@ already a non-auto inline/computed value — worth doing for drag and Align
 together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
+
+### Bolding one word of a flex bullet pushed the rest of the sentence into a second column
+
+- **Status:** fixed 2026-09-15, branch `claude/pensive-ride-l0ifc6` — see `feature-briefs/v2.26-flex-text-runs.md`
+- **Raised:** 2026-09-15, user report with screenshot after v2.25 shipped: bold "Rethink" in a bullet and the remaining text sits beside it, wrapping under itself instead of under the bullet
+
+v2.25 fixed a real defect (the `<b>` selecting and dragging as a box) but
+not the one in the screenshot. The bullet is `li { display: flex }` with a
+`::before` dot, so its text is one anonymous flex item; the browser's
+native Cmd/Ctrl+B wraps the word in `<b>`, and in a flex container every
+element child is its own flex item — two items side by side. Reproduced on
+`fixtures/pointer-nav-deck.html` with an injected flex `<li>`: the second
+line's left edge moved from the bullet's x to the right of the bold word,
+while the same bold in a block-flow `<li>` wrapped normally. The text edit
+now wraps each text run of a flex/grid host in a `<span data-wfp-text-run>`
+for the duration of the edit and unwraps it again when it ends up holding
+only text; a wrapper that holds formatting stays, marker included, and is
+treated as the host's own text by the inspector and the selection resolver.
+Covered by `tests/v2-26-flex-text-runs.spec.js`.
 
 ### Bolding words inside a paragraph created a second, draggable text box
 

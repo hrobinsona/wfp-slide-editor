@@ -130,6 +130,83 @@
     return span;
   }
 
+  // v2.26 — formatting inside a flex/grid host must not split the text run.
+  //
+  // A deck bullet is commonly `li { display: flex }` with a `::before` dot.
+  // Its text is one anonymous flex item. Every formatting shortcut the
+  // browser handles natively during the edit (Cmd/Ctrl+B/I/U) wraps the
+  // selected words in an element — and in a flex container every element
+  // child is a flex item of its own, so the sentence becomes two items side
+  // by side: the bold word in one column, the rest stacked beside it and
+  // wrapping under itself instead of under the bullet. The same <b> in a
+  // block-flow paragraph is inline and harmless.
+  //
+  // So for the duration of an edit on such a host, each run of text nodes
+  // is wrapped in a <span data-wfp-text-run>: the span is the flex item, and
+  // whatever the browser inserts lands inline inside it. A wrapper that ends
+  // the edit carrying nothing but text is removed again, so an edit that
+  // only types leaves the markup exactly as authored; one that formatted
+  // keeps the span AND its marker, because the layout needs the span and the
+  // editor needs to recognise it later (isTextBearing counts a wrapper as the
+  // host's own text; findSelectableTarget never selects one). Author element
+  // children (a dot <span>, an icon) bound the runs and keep their own item.
+  //
+  // This is a deliberate, scoped exception to "editor-injected DOM lives in
+  // #wfp-editor-root": the wrapper has to sit in slide content to affect
+  // layout. History stays wrapper-neutral — snapshots serialise through
+  // textRunNeutralHtml — so an inspector commit mid-edit (which ends and
+  // reopens the text-edit txn while wrappers are installed) records neither
+  // the wrapper nor a content-free entry.
+  const TEXT_RUN_HOST_DISPLAYS = new Set(['flex', 'inline-flex', 'grid', 'inline-grid']);
+
+  function isPlainTextRun(span) {
+    return [...span.childNodes].every((n) => n.nodeType === 3);
+  }
+
+  function unwrapTextRun(span) {
+    while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
+    span.remove();
+  }
+
+  function wrapTextRunsForEdit(el) {
+    if (!TEXT_RUN_HOST_DISPLAYS.has(getComputedStyle(el).display)) return;
+    let run = [];
+    const flush = () => {
+      if (run.some((n) => n.textContent.trim())) {
+        const span = document.createElement('span');
+        span.setAttribute(TEXT_RUN_ATTR, 'true');
+        el.insertBefore(span, run[0]);
+        for (const n of run) span.appendChild(n);
+      }
+      run = [];
+    };
+    for (const n of [...el.childNodes]) {
+      if (n.nodeType === 3) run.push(n);
+      else flush();
+    }
+    flush();
+  }
+
+  function unwrapPlainTextRuns(el) {
+    const wrappers = [...el.querySelectorAll(`[${TEXT_RUN_ATTR}]`)];
+    if (wrappers.length === 0) return;
+    for (const span of wrappers) {
+      if (isPlainTextRun(span)) unwrapTextRun(span);
+    }
+    // Typing splits text nodes; merge them back so an edit that changed
+    // nothing serialises identically to the authored markup.
+    el.normalize();
+  }
+
+  // innerHTML as it will read once plain wrappers are gone — what a history
+  // snapshot must capture while an edit (and its wrappers) is open.
+  function textRunNeutralHtml(el) {
+    if (!el.querySelector(`[${TEXT_RUN_ATTR}]`)) return el.innerHTML;
+    const clone = el.cloneNode(true);
+    unwrapPlainTextRuns(clone);
+    return clone.innerHTML;
+  }
+
   function startTextEdit(el, clickX, clickY) {
     if (state.editingText) return;
     if (!isTextBearing(el)) return;
@@ -142,6 +219,7 @@
 
     beginTxn({ captureHtml: true });
     touchElement(el);
+    wrapTextRunsForEdit(el); // after the snapshot, before the caret lands
 
     el.setAttribute('contenteditable', 'true');
     el.focus();
@@ -167,6 +245,7 @@
     const sel = window.getSelection();
     if (sel) sel.removeAllRanges();
 
+    unwrapPlainTextRuns(el); // before the "after" snapshot
     endTxn();
     refreshSelection();
     textEditFadeEnd(el); // v2.12 — release the edit-long fade hold

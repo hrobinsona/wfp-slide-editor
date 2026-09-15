@@ -154,6 +154,7 @@ fully click-through to the slide.
 - The selected element receives `contenteditable="true"` for the duration of the edit.
 - Escape, Tab, or clicking outside the edit target exits text-edit mode and commits the edit.
 - Existing inline HTML inside the element, such as `<br>` and nested spans, must be preserved.
+- Formatting applied during the edit with the browser's own shortcuts (Cmd/Ctrl+B/I/U) must not change the element's layout. On a flex or grid host (`li { display: flex }` with a `::before` bullet is the common case) each run of text is wrapped in a `<span data-wfp-text-run>` for the duration of the edit so the inserted `<b>`/`<i>`/`<u>` stays inline within one item instead of becoming a flex item of its own. A wrapper that ends the edit holding nothing but text is removed; one that holds formatting is kept, marker included, because the layout needs it. The marker sits outside the `data-wfp-edit-*` namespace on purpose: export keeps it, the host still counts as text-bearing for every inspector text control (during the edit and afterwards), the wrapper is never a selection target of its own, and history snapshots never record it. Block-flow hosts are never wrapped; author element children of the host keep their own item.
 - Text edits are undoable as a single history entry.
 
 ### Element Copy/Paste/Duplicate/Delete
