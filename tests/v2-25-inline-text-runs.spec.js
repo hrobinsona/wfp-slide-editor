@@ -14,10 +14,13 @@ test.use({ viewport: { width: 1600, height: 1000 } });
 // as "bolding created a new text box and shifted the words next to it".
 //
 // A run of inline formatting that sits among its parent's own text (<b>,
-// <strong>, <em>, <a>, a colour <span>) now resolves to the nearest ancestor
-// that is not such a run, so click, drag and double-click all address the
-// paragraph. Inline elements that are NOT mixed into text — a <strong> stat
-// sitting alone in a card, a <span> chip — stay selectable exactly as before.
+// <strong>, <em>, <a>, a colour <span>) now resolves to the block that owns
+// the text, so click, drag and double-click all address the paragraph. The
+// whole inline chain is walked first, so a run inside a run (the editor's
+// own colour <span> wrapping a <b>) is still one run. Inline elements that
+// are NOT mixed into text — a <strong> stat sitting alone in a card, a
+// <span> chip — stay selectable exactly as before, and replaced elements
+// (<img>, inline <svg>) never climb: they are boxes the user moves.
 
 const FIXTURE = 'pointer-nav-deck.html';
 const NOTE = '#pointer-slide-1 .deck-note';
@@ -88,13 +91,25 @@ test.describe('v2.25 — inline text runs resolve to their text block', () => {
     expect(ring.x).toBe(pRect.x);
   });
 
-  test('dragging the bolded word moves the paragraph and leaves the <b> in flow', async ({ page }) => {
+  test('dragging the bolded word unlocks the paragraph and leaves the <b> in flow', async ({ page }) => {
     await loadFixtureWithEditor(page, FIXTURE);
+    // The fixture's note is already position: absolute, which never reaches
+    // unlockToAbsolute. The harmful path needs an in-flow paragraph, so
+    // author one: a static column with two paragraphs, the first bolded.
+    await page.evaluate(() => {
+      const slide = document.querySelector('#pointer-slide-1');
+      const col = document.createElement('div');
+      col.className = 'probe-col';
+      col.style.cssText = 'position:absolute;left:120px;top:780px;width:700px;font-size:28px';
+      col.innerHTML = '<p class="probe-flow" style="margin:0">A <b>synthetic</b> deck note in flow.</p>' +
+        '<p class="probe-next" style="margin:0">The paragraph after it.</p>';
+      slide.appendChild(col);
+    });
     await page.keyboard.press('e');
-    await boldWordViaKeyboard(page, 'synthetic');
-
-    const before = await rect(page, NOTE);
-    const bRect = await rect(page, `${NOTE} b`);
+    const FLOW = '.probe-flow';
+    const before = await rect(page, FLOW);
+    const nextBefore = await rect(page, '.probe-next');
+    const bRect = await rect(page, `${FLOW} b`);
     const c = center(bRect);
     await page.mouse.move(c.x, c.y);
     await page.mouse.down();
@@ -106,20 +121,22 @@ test.describe('v2.25 — inline text runs resolve to their text block', () => {
       const p = document.querySelector(s);
       const b = p.querySelector('b');
       return {
-        pMoved: p.style.left !== '' && p.style.top !== '',
+        pPosition: p.style.position,
         bStyle: b.getAttribute('style'),
         bFrozen: b.getAttribute('data-wfp-edit-frozen'),
         html: p.innerHTML,
         rect: (({ x, y }) => ({ x: Math.round(x), y: Math.round(y) }))(p.getBoundingClientRect()),
       };
-    }, NOTE);
+    }, FLOW);
+    const nextAfter = await rect(page, '.probe-next');
 
-    expect(after.pMoved).toBe(true); // the paragraph is what the drag moved
+    expect(after.pPosition).toBe('absolute'); // the paragraph is what unlocked
     expect(after.bStyle).toBeNull(); // the run is untouched…
     expect(after.bFrozen).toBeNull(); // …and never pinned
-    expect(after.html).toBe('A <b>synthetic</b> deck whose visible slide is marked with is-active.');
+    expect(after.html).toBe('A <b>synthetic</b> deck note in flow.');
     expect(after.rect.x).toBeGreaterThan(before.x + 20);
     expect(after.rect.y).toBeGreaterThan(before.y + 10);
+    expect(nextAfter.y).toBe(nextBefore.y); // the sibling paragraph was pinned in place
   });
 
   test('double-clicking the bolded word edits the whole paragraph', async ({ page }) => {
@@ -139,31 +156,48 @@ test.describe('v2.25 — inline text runs resolve to their text block', () => {
 
   test('nested runs climb to the block; inline elements not mixed into text stay selectable', async ({ page }) => {
     await loadFixtureWithEditor(page, FIXTURE);
-    // Author-shaped markup the fixture does not carry: a paragraph with a
-    // nested run, and a wrapper whose only child is an inline element.
+    // Author-shaped markup the fixture does not carry.
     await page.evaluate(() => {
       const slide = document.querySelector('#pointer-slide-1');
-      const p = document.createElement('p');
-      p.className = 'probe-mixed';
-      p.style.cssText = 'position:absolute;left:120px;top:820px;font-size:28px;margin:0';
-      p.innerHTML = 'Lead <strong>bold <em>and italic</em></strong> tail';
-      const wrap = document.createElement('div');
-      wrap.className = 'probe-wrap';
-      wrap.style.cssText = 'position:absolute;left:900px;top:820px;font-size:28px';
-      wrap.innerHTML = '<span class="probe-solo">Solo span</span>';
-      slide.append(p, wrap);
+      const add = (cls, left, html) => {
+        const el = document.createElement('div');
+        el.className = cls;
+        el.style.cssText = `position:absolute;left:${left}px;top:820px;font-size:28px`;
+        el.innerHTML = html;
+        slide.appendChild(el);
+      };
+      // a paragraph with a run inside a run
+      add('probe-mixed', 120, '<p style="margin:0">Lead <strong>bold <em>and italic</em></strong> tail</p>');
+      // the editor's own colour span, then bold inside it
+      add('probe-colour', 620, '<p style="margin:0">Lead <span style="color:#c33"><b>coloured bold</b></span> tail</p>');
+      // a wrapper whose only child is an inline element, itself holding a run
+      add('probe-wrap', 1120, '<span class="probe-chip">Solo <b>chip</b></span>');
+      // an inline image sitting among text
+      add('probe-img-wrap', 1400, '<p style="margin:0">Icon <img class="probe-img" width="60" height="60" alt=""> here</p>');
     });
     await page.keyboard.press('e');
 
     const em = await rect(page, '.probe-mixed em');
     await page.mouse.click(center(em).x, center(em).y);
-    const pRect = await rect(page, '.probe-mixed');
+    const pRect = await rect(page, '.probe-mixed p');
     const ring1 = await ringRect(page);
     expect([ring1.x, ring1.w, ring1.h]).toEqual([pRect.x, pRect.w, pRect.h]);
 
-    const solo = await rect(page, '.probe-solo');
-    await page.mouse.click(center(solo).x, center(solo).y);
+    const cb = await rect(page, '.probe-colour b');
+    await page.mouse.click(center(cb).x, center(cb).y);
+    const cp = await rect(page, '.probe-colour p');
     const ring2 = await ringRect(page);
-    expect([ring2.x, ring2.w, ring2.h]).toEqual([solo.x, solo.w, solo.h]);
+    expect([ring2.x, ring2.w, ring2.h]).toEqual([cp.x, cp.w, cp.h]);
+
+    const chipB = await rect(page, '.probe-chip b');
+    await page.mouse.click(center(chipB).x, center(chipB).y);
+    const chip = await rect(page, '.probe-chip');
+    const ring3 = await ringRect(page);
+    expect([ring3.x, ring3.w, ring3.h]).toEqual([chip.x, chip.w, chip.h]);
+
+    const img = await rect(page, '.probe-img');
+    await page.mouse.click(center(img).x, center(img).y);
+    const ring4 = await ringRect(page);
+    expect([ring4.x, ring4.w, ring4.h]).toEqual([img.x, img.w, img.h]);
   });
 });
