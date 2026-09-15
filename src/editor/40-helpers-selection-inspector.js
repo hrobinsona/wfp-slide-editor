@@ -303,7 +303,19 @@
     if (el === slide) return null;
     if (el === getDeckRoot()) return null;
     if (!slide.contains(el)) return null;
-    return resolveInlineTextRun(el, slide);
+    el = resolveInlineTextRun(el, slide);
+    // v2.26 — a text-run wrapper is its host's text, never a box of its own:
+    // a <b> inside one resolves to the wrapper above, and the wrapper to the
+    // bullet that owns it.
+    if (
+      el.hasAttribute(TEXT_RUN_ATTR) &&
+      el.parentElement &&
+      el.parentElement !== slide &&
+      el.parentElement !== getDeckRoot()
+    ) {
+      el = el.parentElement;
+    }
+    return el;
   }
 
   function isSelectionToggleEvent(e) {

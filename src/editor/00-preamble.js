@@ -40,6 +40,14 @@
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
+  // v2.26 — marks the <span> the text edit wraps around each text run of a
+  // flex/grid host so formatting inserted by the browser stays inside one
+  // flex item. Deliberately OUTSIDE the data-wfp-edit-* namespace: a wrapper
+  // that ends an edit holding formatting must stay in the deck (the layout
+  // depends on it) and be recognisable on the next load, so export must not
+  // sweep it. It is structural author-content markup the editor introduced,
+  // not editor state. Wrappers holding nothing but text are removed on commit.
+  const TEXT_RUN_ATTR = 'data-wfp-text-run';
   const TOAST_DURATION_MS = 2000;
   const POST_DRAG_CLICK_GUARD_MS = 250;
   const RESIZE_MIN_PX = 8;

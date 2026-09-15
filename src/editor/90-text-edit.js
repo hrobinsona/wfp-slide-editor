@@ -142,16 +142,31 @@
   // block-flow paragraph is inline and harmless.
   //
   // So for the duration of an edit on such a host, each run of text nodes
-  // is wrapped in a <span>: the span is the flex item, and whatever the
-  // browser inserts lands inline inside it. A wrapper that ends the edit
-  // carrying nothing but text is removed again, so an edit that only types
-  // leaves the markup exactly as authored; one that formatted keeps the
-  // span, because the layout needs it. Author element children (a dot
-  // <span>, an icon) bound the runs and keep their own item. The marker is
-  // edit-scoped only; it never reaches history snapshots (the "before" is
-  // taken first, the "after" once unwrapped) or export (swept anyway).
+  // is wrapped in a <span data-wfp-text-run>: the span is the flex item, and
+  // whatever the browser inserts lands inline inside it. A wrapper that ends
+  // the edit carrying nothing but text is removed again, so an edit that
+  // only types leaves the markup exactly as authored; one that formatted
+  // keeps the span AND its marker, because the layout needs the span and the
+  // editor needs to recognise it later (isTextBearing counts a wrapper as the
+  // host's own text; findSelectableTarget never selects one). Author element
+  // children (a dot <span>, an icon) bound the runs and keep their own item.
+  //
+  // This is a deliberate, scoped exception to "editor-injected DOM lives in
+  // #wfp-editor-root": the wrapper has to sit in slide content to affect
+  // layout. History stays wrapper-neutral — snapshots serialise through
+  // textRunNeutralHtml — so an inspector commit mid-edit (which ends and
+  // reopens the text-edit txn while wrappers are installed) records neither
+  // the wrapper nor a content-free entry.
   const TEXT_RUN_HOST_DISPLAYS = new Set(['flex', 'inline-flex', 'grid', 'inline-grid']);
-  const TEXT_RUN_ATTR = 'data-wfp-edit-text-run';
+
+  function isPlainTextRun(span) {
+    return [...span.childNodes].every((n) => n.nodeType === 3);
+  }
+
+  function unwrapTextRun(span) {
+    while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
+    span.remove();
+  }
 
   function wrapTextRunsForEdit(el) {
     if (!TEXT_RUN_HOST_DISPLAYS.has(getComputedStyle(el).display)) return;
@@ -176,17 +191,20 @@
     const wrappers = [...el.querySelectorAll(`[${TEXT_RUN_ATTR}]`)];
     if (wrappers.length === 0) return;
     for (const span of wrappers) {
-      const plain = [...span.childNodes].every((n) => n.nodeType === 3);
-      if (!plain) {
-        span.removeAttribute(TEXT_RUN_ATTR);
-        continue;
-      }
-      while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
-      span.remove();
+      if (isPlainTextRun(span)) unwrapTextRun(span);
     }
     // Typing splits text nodes; merge them back so an edit that changed
     // nothing serialises identically to the authored markup.
     el.normalize();
+  }
+
+  // innerHTML as it will read once plain wrappers are gone — what a history
+  // snapshot must capture while an edit (and its wrappers) is open.
+  function textRunNeutralHtml(el) {
+    if (!el.querySelector(`[${TEXT_RUN_ATTR}]`)) return el.innerHTML;
+    const clone = el.cloneNode(true);
+    unwrapPlainTextRuns(clone);
+    return clone.innerHTML;
   }
 
   function startTextEdit(el, clickX, clickY) {

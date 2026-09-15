@@ -1024,6 +1024,9 @@
     if (!el) return false;
     for (const node of el.childNodes) {
       if (node.nodeType === 3 && node.textContent.trim().length > 0) return true;
+      // v2.26 — a text-run wrapper (installed by the text edit on a flex/grid
+      // host, kept when it holds formatting) is the host's own text.
+      if (node.nodeType === 1 && node.hasAttribute(TEXT_RUN_ATTR) && isTextBearing(node)) return true;
     }
     return false;
   }

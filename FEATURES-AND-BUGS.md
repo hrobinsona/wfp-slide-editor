@@ -181,9 +181,11 @@ element child is its own flex item — two items side by side. Reproduced on
 `fixtures/pointer-nav-deck.html` with an injected flex `<li>`: the second
 line's left edge moved from the bullet's x to the right of the bold word,
 while the same bold in a block-flow `<li>` wrapped normally. The text edit
-now wraps each text run of a flex/grid host in a `<span>` for the duration
-of the edit and unwraps it again when it ends up holding only text;
-covered by `tests/v2-26-flex-text-runs.spec.js`.
+now wraps each text run of a flex/grid host in a `<span data-wfp-text-run>`
+for the duration of the edit and unwraps it again when it ends up holding
+only text; a wrapper that holds formatting stays, marker included, and is
+treated as the host's own text by the inspector and the selection resolver.
+Covered by `tests/v2-26-flex-text-runs.spec.js`.
 
 ### Bolding words inside a paragraph created a second, draggable text box
 

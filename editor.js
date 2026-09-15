@@ -40,6 +40,14 @@
   const HISTORY_MAX = 50;
   const FONT_SIZE_MIN_PX = 8;
   const DRAG_DEADZONE_PX = 5;
+  // v2.26 — marks the <span> the text edit wraps around each text run of a
+  // flex/grid host so formatting inserted by the browser stays inside one
+  // flex item. Deliberately OUTSIDE the data-wfp-edit-* namespace: a wrapper
+  // that ends an edit holding formatting must stay in the deck (the layout
+  // depends on it) and be recognisable on the next load, so export must not
+  // sweep it. It is structural author-content markup the editor introduced,
+  // not editor state. Wrappers holding nothing but text are removed on commit.
+  const TEXT_RUN_ATTR = 'data-wfp-text-run';
   const TOAST_DURATION_MS = 2000;
   const POST_DRAG_CLICK_GUARD_MS = 250;
   const RESIZE_MIN_PX = 8;
@@ -3847,7 +3855,19 @@
     if (el === slide) return null;
     if (el === getDeckRoot()) return null;
     if (!slide.contains(el)) return null;
-    return resolveInlineTextRun(el, slide);
+    el = resolveInlineTextRun(el, slide);
+    // v2.26 — a text-run wrapper is its host's text, never a box of its own:
+    // a <b> inside one resolves to the wrapper above, and the wrapper to the
+    // bullet that owns it.
+    if (
+      el.hasAttribute(TEXT_RUN_ATTR) &&
+      el.parentElement &&
+      el.parentElement !== slide &&
+      el.parentElement !== getDeckRoot()
+    ) {
+      el = el.parentElement;
+    }
+    return el;
   }
 
   function isSelectionToggleEvent(e) {
@@ -6118,7 +6138,10 @@
       style: el.getAttribute('style'),
       editorAttrs: collectEditorDataAttributes(el),
     };
-    if (options.captureHtml) snap.html = el.innerHTML;
+    // v2.26 — serialise as the markup will read once the text edit's plain
+    // run wrappers are gone, so an inspector commit mid-edit (endTxn +
+    // beginTxn while wrappers are installed) never records the wrapper.
+    if (options.captureHtml) snap.html = textRunNeutralHtml(el);
     return snap;
   }
 
@@ -7526,6 +7549,9 @@
     if (!el) return false;
     for (const node of el.childNodes) {
       if (node.nodeType === 3 && node.textContent.trim().length > 0) return true;
+      // v2.26 — a text-run wrapper (installed by the text edit on a flex/grid
+      // host, kept when it holds formatting) is the host's own text.
+      if (node.nodeType === 1 && node.hasAttribute(TEXT_RUN_ATTR) && isTextBearing(node)) return true;
     }
     return false;
   }
@@ -9236,16 +9262,31 @@
   // block-flow paragraph is inline and harmless.
   //
   // So for the duration of an edit on such a host, each run of text nodes
-  // is wrapped in a <span>: the span is the flex item, and whatever the
-  // browser inserts lands inline inside it. A wrapper that ends the edit
-  // carrying nothing but text is removed again, so an edit that only types
-  // leaves the markup exactly as authored; one that formatted keeps the
-  // span, because the layout needs it. Author element children (a dot
-  // <span>, an icon) bound the runs and keep their own item. The marker is
-  // edit-scoped only; it never reaches history snapshots (the "before" is
-  // taken first, the "after" once unwrapped) or export (swept anyway).
+  // is wrapped in a <span data-wfp-text-run>: the span is the flex item, and
+  // whatever the browser inserts lands inline inside it. A wrapper that ends
+  // the edit carrying nothing but text is removed again, so an edit that
+  // only types leaves the markup exactly as authored; one that formatted
+  // keeps the span AND its marker, because the layout needs the span and the
+  // editor needs to recognise it later (isTextBearing counts a wrapper as the
+  // host's own text; findSelectableTarget never selects one). Author element
+  // children (a dot <span>, an icon) bound the runs and keep their own item.
+  //
+  // This is a deliberate, scoped exception to "editor-injected DOM lives in
+  // #wfp-editor-root": the wrapper has to sit in slide content to affect
+  // layout. History stays wrapper-neutral — snapshots serialise through
+  // textRunNeutralHtml — so an inspector commit mid-edit (which ends and
+  // reopens the text-edit txn while wrappers are installed) records neither
+  // the wrapper nor a content-free entry.
   const TEXT_RUN_HOST_DISPLAYS = new Set(['flex', 'inline-flex', 'grid', 'inline-grid']);
-  const TEXT_RUN_ATTR = 'data-wfp-edit-text-run';
+
+  function isPlainTextRun(span) {
+    return [...span.childNodes].every((n) => n.nodeType === 3);
+  }
+
+  function unwrapTextRun(span) {
+    while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
+    span.remove();
+  }
 
   function wrapTextRunsForEdit(el) {
     if (!TEXT_RUN_HOST_DISPLAYS.has(getComputedStyle(el).display)) return;
@@ -9270,17 +9311,20 @@
     const wrappers = [...el.querySelectorAll(`[${TEXT_RUN_ATTR}]`)];
     if (wrappers.length === 0) return;
     for (const span of wrappers) {
-      const plain = [...span.childNodes].every((n) => n.nodeType === 3);
-      if (!plain) {
-        span.removeAttribute(TEXT_RUN_ATTR);
-        continue;
-      }
-      while (span.firstChild) span.parentNode.insertBefore(span.firstChild, span);
-      span.remove();
+      if (isPlainTextRun(span)) unwrapTextRun(span);
     }
     // Typing splits text nodes; merge them back so an edit that changed
     // nothing serialises identically to the authored markup.
     el.normalize();
+  }
+
+  // innerHTML as it will read once plain wrappers are gone — what a history
+  // snapshot must capture while an edit (and its wrappers) is open.
+  function textRunNeutralHtml(el) {
+    if (!el.querySelector(`[${TEXT_RUN_ATTR}]`)) return el.innerHTML;
+    const clone = el.cloneNode(true);
+    unwrapPlainTextRuns(clone);
+    return clone.innerHTML;
   }
 
   function startTextEdit(el, clickX, clickY) {

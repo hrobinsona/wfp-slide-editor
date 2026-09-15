@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { EDITOR_PATH } from './_helpers.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { EDITOR_PATH, EDITOR_MARKER_ATTR_RE, disableFsa } from './_helpers.js';
+
+const OUTPUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'output');
 
 test.use({ viewport: { width: 1600, height: 1000 } });
 
@@ -13,11 +18,14 @@ test.use({ viewport: { width: 1600, height: 1000 } });
 // of the sentence stacked beside it, wrapping under itself instead of under
 // the bullet. In a block-flow paragraph the same <b> is inline and harmless.
 //
-// The editor now wraps each text run of a flex/grid host in a <span> for the
-// duration of the edit, so formatting lands inside a single item, and
-// removes any wrapper that ends the edit carrying nothing but text. Block
-// hosts are untouched; author element children (a dot <span>) keep their
-// own item.
+// The editor now wraps each text run of a flex/grid host in a
+// <span data-wfp-text-run> for the duration of the edit, so formatting
+// lands inside a single item, and removes any wrapper that ends the edit
+// carrying nothing but text. A wrapper that holds formatting stays, marker
+// included (outside the data-wfp-edit-* namespace so export keeps it): it
+// counts as the host's own text for the inspector and is never a selection
+// target of its own. Block hosts are untouched; author element children (a
+// dot <span>) keep their own item. History stays wrapper-neutral.
 
 const FIXTURE = 'pointer-nav-deck.html';
 const FLEX_CSS =
@@ -130,16 +138,16 @@ test.describe('v2.26 — formatting inside a flex host keeps one text run', () =
         bIsDirectChild: b.parentElement === li,
         bDisplay: getComputedStyle(b).display,
         itemChildren: li.children.length,
-        markers: li.querySelectorAll('[data-wfp-edit-text-run]').length,
-        ce: li.querySelectorAll('[contenteditable]').length,
+        markers: li.querySelectorAll('[data-wfp-text-run]').length,
+        editMarkers: li.querySelectorAll('[data-wfp-edit-text-run], [contenteditable]').length,
       };
     }, LI);
     expect(shape.text).toBe(SENTENCE);
     expect(shape.bIsDirectChild).toBe(false); // the bold sits inside the run, not beside it
     expect(shape.bDisplay).toBe('inline');
     expect(shape.itemChildren).toBe(1); // exactly one flex item carries the text
-    expect(shape.markers).toBe(0); // the edit-time marker never survives the commit
-    expect(shape.ce).toBe(0);
+    expect(shape.markers).toBe(1); // the kept wrapper stays recognisable
+    expect(shape.editMarkers).toBe(0);
   });
 
   test('a plain edit in a flex bullet leaves no wrapper behind', async ({ page }) => {
@@ -163,12 +171,19 @@ test.describe('v2.26 — formatting inside a flex host keeps one text run', () =
 
   test('an untouched flex bullet is restored byte-for-byte and records no history', async ({ page }) => {
     await loadWithList(page, FLEX_CSS, SENTENCE);
+    // A deliberate prior edit: select the bullet and nudge its font size,
+    // so exactly one history entry exists before the text edit opens.
+    await page.locator(LI).click();
+    await page.keyboard.press('ArrowUp');
+    const nudged = await page.evaluate((s) => document.querySelector(s).getAttribute('style'), LI);
+    expect(nudged).toContain('font-size');
+
     await startEdit(page);
     const during = await page.evaluate((s) => {
       const li = document.querySelector(s);
       const sel = getSelection();
       return {
-        wrapped: li.querySelectorAll('[data-wfp-edit-text-run]').length,
+        wrapped: li.querySelectorAll('[data-wfp-text-run]').length,
         caretInside: !!sel.anchorNode && li.contains(sel.anchorNode),
       };
     }, LI);
@@ -177,9 +192,91 @@ test.describe('v2.26 — formatting inside a flex host keeps one text run', () =
     await page.keyboard.press('Escape');
     expect(await html(page)).toBe(SENTENCE); // …and gone again
 
-    // Nothing changed, so Cmd+Z has nothing to undo: the item is unchanged.
+    // One undo must reach the font-size nudge: the untouched edit recorded
+    // nothing in between.
     await page.keyboard.press('Control+z');
+    expect(await page.evaluate((s) => document.querySelector(s).getAttribute('style'), LI)).toBeNull();
     expect(await html(page)).toBe(SENTENCE);
+  });
+
+  test('inspector text controls still apply to the flex host during the edit', async ({ page }) => {
+    await loadWithList(page, FLEX_CSS, SENTENCE);
+    await page.locator(LI).click(); // select first, as a user does — shows the inspector
+    await startEdit(page);
+    // The wrapper moved the host's text nodes; the host must still count as
+    // text-bearing or every inspector text control silently no-ops.
+    const bold = page.locator('#wfp-editor-root .wfpe-seg-item[data-wfpe-value="700"]');
+    await expect(bold).toBeVisible();
+    await bold.click();
+    // Focus is on the inspector button now, where Escape means "revert the
+    // field", so commit the way a user does: click empty canvas.
+    await page.mouse.click(1500, 950);
+    const after = await page.evaluate((s) => {
+      const li = document.querySelector(s);
+      return { style: li.getAttribute('style'), html: li.innerHTML };
+    }, LI);
+    expect(after.style).toContain('font-weight: 700');
+    expect(after.html).toBe(SENTENCE); // the plain wrapper is gone…
+
+    // …and the mid-edit commit recorded exactly one entry, wrapper-free:
+    // one undo removes the weight and leaves the markup pristine.
+    await page.keyboard.press('Control+z');
+    const undone = await page.evaluate((s) => {
+      const li = document.querySelector(s);
+      return { style: li.getAttribute('style'), html: li.innerHTML };
+    }, LI);
+    expect(undone.style).toBeNull();
+    expect(undone.html).toBe(SENTENCE);
+  });
+
+  test('clicking the bold word after a formatted edit selects the bullet, not the wrapper', async ({ page }) => {
+    await loadWithList(page, FLEX_CSS, SENTENCE);
+    await startEdit(page);
+    await boldWord(page, 'Rethink');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape'); // drop the selection left by the edit
+
+    const b = await page.evaluate((s) => document.querySelector(`${s} b`).getBoundingClientRect().toJSON(), LI);
+    await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    const geometry = await page.evaluate((s) => {
+      const li = document.querySelector(s).getBoundingClientRect();
+      const ring = document.querySelector('#wfp-editor-root .wfpe-selection-ring').getBoundingClientRect();
+      return { li: [Math.round(li.x), Math.round(li.width)], ring: [Math.round(ring.x), Math.round(ring.width)] };
+    }, LI);
+    expect(geometry.ring).toEqual(geometry.li);
+
+    // And the bullet is still editable as a whole: double-clicking the bold
+    // word edits the <li>, not the wrapper.
+    await page.evaluate((s) => {
+      const el = document.querySelector(`${s} b`);
+      const r = el.getBoundingClientRect();
+      el.dispatchEvent(new MouseEvent('dblclick', {
+        bubbles: true, cancelable: true, view: window,
+        clientX: r.left + 4, clientY: r.top + r.height / 2, detail: 2,
+      }));
+    }, LI);
+    expect(await page.evaluate((s) => document.querySelector(s).getAttribute('contenteditable'), LI)).toBe('true');
+    await page.keyboard.press('Escape');
+  });
+
+  test('export keeps the formatted wrapper and sweeps every editor marker', async ({ page }) => {
+    await disableFsa(page);
+    await loadWithList(page, FLEX_CSS, SENTENCE);
+    await startEdit(page);
+    await boldWord(page, 'Rethink');
+    await page.keyboard.press('Escape');
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 5_000 });
+    await page.keyboard.press('ControlOrMeta+s');
+    const download = await downloadPromise;
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const out = path.join(OUTPUT_DIR, `${Date.now()}-${Math.random().toString(16).slice(2)}-${download.suggestedFilename()}`);
+    await download.saveAs(out);
+    const exported = fs.readFileSync(out, 'utf8');
+
+    expect(exported).toContain(`<span data-wfp-text-run="true"><b>Rethink</b>${SENTENCE.slice('Rethink'.length)}</span>`);
+    expect(exported).not.toMatch(EDITOR_MARKER_ATTR_RE);
+    expect(exported).not.toContain('contenteditable');
   });
 
   test('an author dot element keeps its own flex item; only the text run is wrapped', async ({ page }) => {
@@ -211,7 +308,7 @@ test.describe('v2.26 — formatting inside a flex host keeps one text run', () =
   test('a block-flow bullet is never wrapped', async ({ page }) => {
     await loadWithList(page, BLOCK_CSS, SENTENCE);
     await startEdit(page);
-    const wrapped = await page.evaluate((s) => document.querySelector(s).querySelectorAll('[data-wfp-edit-text-run]').length, LI);
+    const wrapped = await page.evaluate((s) => document.querySelector(s).querySelectorAll('[data-wfp-text-run]').length, LI);
     expect(wrapped).toBe(0);
     await boldWord(page, 'Rethink');
     await page.keyboard.press('Escape');

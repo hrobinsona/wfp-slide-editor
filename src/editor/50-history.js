@@ -14,7 +14,10 @@
       style: el.getAttribute('style'),
       editorAttrs: collectEditorDataAttributes(el),
     };
-    if (options.captureHtml) snap.html = el.innerHTML;
+    // v2.26 — serialise as the markup will read once the text edit's plain
+    // run wrappers are gone, so an inspector commit mid-edit (endTxn +
+    // beginTxn while wrappers are installed) never records the wrapper.
+    if (options.captureHtml) snap.html = textRunNeutralHtml(el);
     return snap;
   }
 
