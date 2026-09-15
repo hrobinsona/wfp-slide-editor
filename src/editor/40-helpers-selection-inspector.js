@@ -257,6 +257,26 @@
     return getSlides().find((slide) => isActiveSlide(slide)) || null;
   }
 
+  // v2.25 — an inline formatting run (<b>, <strong>, <em>, <a>, a colour
+  // <span>) that sits AMONG its parent's own text is part of that text, not a
+  // box of its own. Cmd/Ctrl+B during an inline edit is the browser's native
+  // bold, which wraps the words in <b>; selecting that <b> as an element gave
+  // it a ring, its own X/Y/W/H, and — on drag — unlockToAbsolute pulled the
+  // run out of the paragraph's flow while dimension-pinning the paragraph
+  // around it, which the user sees as "bolding created a new text box".
+  //
+  // Only runs mixed into text climb: the test is computed `display: inline`
+  // (never inline-block/flex — those are boxes an author positions) AND a
+  // parent that carries text of its own. A lone <strong> stat in a card or a
+  // <span> chip has a whitespace-only parent and stays selectable as before.
+  function isInlineTextRun(el, slide) {
+    if (!el || el === slide) return false;
+    const parent = el.parentElement;
+    if (!parent || parent === slide || parent === getDeckRoot()) return false;
+    if (getComputedStyle(el).display !== 'inline') return false;
+    return isTextBearing(parent);
+  }
+
   function findSelectableTarget(el) {
     if (!el || isInsideEditorRoot(el)) return null;
     const slide = getActiveSlide();
@@ -264,6 +284,9 @@
     if (el === slide) return null;
     if (el === getDeckRoot()) return null;
     if (!slide.contains(el)) return null;
+    // Nested runs (<strong><em>…</em></strong>) climb one level at a time
+    // until the element is a block or a run its parent does not mix with text.
+    while (isInlineTextRun(el, slide)) el = el.parentElement;
     return el;
   }
 

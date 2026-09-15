@@ -64,6 +64,31 @@ specified the inspector buttons.
 
 ## Open — bugs
 
+### Deleting the first character of a bullet point reportedly deletes the bullet
+
+- **Status:** open, not yet reproduced
+- **Raised:** 2026-09-15, user report alongside the inline-run selection bug
+
+Reported as: in inline text edit on a list item, the first character cannot be
+deleted without the bullet point going with it. Could not be reproduced on the
+public fixtures with an injected `<ul>` (`tests/output` scratch runs, not
+committed): Backspace after the first glyph deletes only that glyph, Backspace
+at offset 0 is a no-op at the `contenteditable` host boundary, and Delete at
+offset 0 deletes the glyph — across plain `::marker` lists,
+`list-style-position: inside`, `display: flex`/`grid` items with `::before`
+dots, a leading empty `<span class="dot">`, text wrapped in a child `<span>`,
+and pretty-printed whitespace. Markdown mode is also ruled out: `collectEdits`
+(`src/md/host.js`) never writes list items back at all.
+
+The one editor path that removes a whole item is `deleteSelectedElement()` on
+Backspace/Delete when the `<li>` is *selected but not being edited*
+(`src/editor/60-modes-overview-keyboard.js`). That happens if the double-click
+never started an edit — e.g. the `<li>` has no direct text node because its
+text sits in a child that the deck makes `pointer-events: none`, so
+`isTextBearing(li)` is false and the click merely selected it. Needs the real
+bullet markup (one `<li>` plus its CSS) from the deck where it happens before
+a fix can be targeted.
+
 ### Overview Backspace/Delete silently chain-deletes slides under a stationary cursor
 
 - **Status:** open (UX hazard, downgraded from bug — the user confirmed the
@@ -139,6 +164,21 @@ already a non-auto inline/computed value — worth doing for drag and Align
 together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
+
+### Bolding words inside a paragraph created a second, draggable text box
+
+- **Status:** fixed 2026-09-15, branch `claude/pensive-ride-l0ifc6` — see `feature-briefs/v2.25-inline-text-runs.md`
+- **Raised:** 2026-09-15, user report: "if I bold text it messes up the positioning of the text around it, like it creates a new text box"
+
+Cmd/Ctrl+B during an inline edit is the browser's native bold and wraps the
+words in `<b>`. `findSelectableTarget()` accepted every element in the active
+slide, so the next click on those words selected the `<b>`: a ring around one
+run of text with its own X/Y/W/H, and a drag that sent it through
+`unlockToAbsolute` — the run became `position: absolute` inside the
+paragraph while the paragraph was dimension-pinned around it, which reflows
+the words on either side. Reproduced on `fixtures/pointer-nav-deck.html`.
+The resolver now climbs out of inline runs mixed into their parent's text;
+covered by `tests/v2-25-inline-text-runs.spec.js`.
 
 ### Editor was unusable on decks that mark the active slide `is-active` or page on `pointerup`
 
