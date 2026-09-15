@@ -257,6 +257,45 @@
     return getSlides().find((slide) => isActiveSlide(slide)) || null;
   }
 
+  // v2.25 — an inline formatting run (<b>, <strong>, <em>, <a>, a colour
+  // <span>) that sits AMONG its parent's own text is part of that text, not a
+  // box of its own. Cmd/Ctrl+B during an inline edit is the browser's native
+  // bold, which wraps the words in <b>; selecting that <b> as an element gave
+  // it a ring, its own X/Y/W/H, and — on drag — unlockToAbsolute pulled the
+  // run out of the paragraph's flow while dimension-pinning the paragraph
+  // around it, which the user sees as "bolding created a new text box".
+  //
+  // Resolution walks the whole inline chain first — a run inside a run
+  // (<span style="color"><b>…</b></span>, exactly what colouring then
+  // bolding a phrase produces) is still one run — and decides at the first
+  // non-inline ancestor: if that block carries text of its own, the chain is
+  // mixed into its text and the block is the target; otherwise the outermost
+  // run is a box the author placed (a <span> chip in a whitespace-only row)
+  // and is selected as before. Only computed `display: inline` counts;
+  // inline-block and flex/grid items are boxes. Replaced elements (<img>, an
+  // inline <svg>, <video>…) also compute to `inline` but are boxes the user
+  // moves and resizes, so they never climb.
+  const REPLACED_INLINE_TAGS = new Set([
+    'IMG', 'SVG', 'VIDEO', 'AUDIO', 'CANVAS', 'IFRAME', 'EMBED', 'OBJECT', 'PICTURE',
+  ]);
+
+  function isInlineRun(el) {
+    return !!el && !REPLACED_INLINE_TAGS.has(el.tagName) && getComputedStyle(el).display === 'inline';
+  }
+
+  function resolveInlineTextRun(el, slide) {
+    if (!isInlineRun(el)) return el;
+    const deckRoot = getDeckRoot();
+    let outermost = el;
+    let parent = el.parentElement;
+    while (parent && parent !== slide && parent !== deckRoot && isInlineRun(parent)) {
+      outermost = parent;
+      parent = parent.parentElement;
+    }
+    if (!parent || parent === slide || parent === deckRoot) return outermost;
+    return isTextBearing(parent) ? parent : outermost;
+  }
+
   function findSelectableTarget(el) {
     if (!el || isInsideEditorRoot(el)) return null;
     const slide = getActiveSlide();
@@ -264,7 +303,7 @@
     if (el === slide) return null;
     if (el === getDeckRoot()) return null;
     if (!slide.contains(el)) return null;
-    return el;
+    return resolveInlineTextRun(el, slide);
   }
 
   function isSelectionToggleEvent(e) {

@@ -838,10 +838,11 @@ function normalizeText(value) {
 function collectNotes() {
   return [...els.doc.querySelectorAll('[data-wfp-edit-annotation-id]')]
     .map((el) => {
-      // The editor lets you select any descendant, so a note can land on a
-      // <strong> or <a>, which carries no source range. Resolve up to the
-      // owning block — commenting on a bold figure should anchor to its
-      // paragraph, not fail.
+      // The editor resolves inline runs mixed into text to their block
+      // (v2.25), but a descendant that is not such a run — an inline element
+      // alone in its parent — can still be selected, and it carries no source
+      // range. Resolve up to the owning block — commenting on a bold figure
+      // should anchor to its paragraph, not fail.
       const block = el.closest('[data-md-line]');
       return {
         text: el.getAttribute('data-wfp-edit-annotation-text') || '',

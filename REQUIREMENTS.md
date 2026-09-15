@@ -46,6 +46,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 ### Element Selection
 
 - Click any selectable descendant of `.slide.active` to select it.
+- An inline formatting run mixed into a block's own text (`<b>`, `<strong>`, `<em>`, `<a>`, a colour `<span>` — computed `display: inline`, including a run nested inside another run) is not a selectable element. Click, drag, and double-click on it resolve to the block that owns the text, so bolding words never creates a second box inside the paragraph. Inline elements that are not mixed into text (a lone `<strong>` stat in a card, a chip `<span>`) stay selectable, and replaced elements (`<img>`, inline `<svg>`, `<video>`) are always selectable.
 - A visible selection ring, resize handles, dimension bubble, and inspector bind to the selected element.
 - Clicking the slide canvas deselects.
 - The editor does not select `.deck`, `.slide`, or anything inside `#wfp-editor-root`.
