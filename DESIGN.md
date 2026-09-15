@@ -694,6 +694,7 @@ The editor coexists with slide-level keyboard listeners:
 - Slide navigation keys (`ArrowLeft` / `ArrowRight` / `Space`) are a single decision point, resolved before the edit/overview gate: an open export menu, Overview mode, a live selection, or an open text edit keeps them; otherwise they reach the deck, whether or not edit mode is on. Once they are the deck's, `state.deckMutated` picks the route — editor-owned `navigateRelativeInDeck` when the host's cached cursor may be stale, plain pass-through to the host's own handler when it is not.
 - Overview mode on: capture overview keys for exit/delete/undo/redo/navigation actions.
 - Inline text edit: allow text input while still handling commit/cancel keys.
+- Inline text edit on a flex/grid host (v2.26): the browser's native formatting shortcuts insert elements, and every element child of a flex container is a flex item, so a `<b>` around one word turned a bullet's sentence into two columns. `startTextEdit` wraps each run of text nodes in a `<span data-wfp-edit-text-run>` after the history snapshot is taken and before the caret lands; `endTextEdit` unwraps any wrapper still holding only text (and normalises the split text nodes) before the after-snapshot, so an edit that only types leaves the markup byte-identical, and an edit that formatted keeps the span the layout now depends on. The marker is edit-scoped and never reaches history or export.
 
 Existing slide decks often register keyboard listeners on `document`, so editor handlers must run in capture phase for keys they own.
 
