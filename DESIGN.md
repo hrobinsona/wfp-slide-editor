@@ -90,7 +90,7 @@ The editor keeps session state in plain objects. The central state currently inc
 - `inspectorMinimised` for session-only inspector UI state.
 - `deckMutated` for cases where Overview has reordered or deleted slides and the editor must own navigation state.
 
-This state is intentionally session-only. Reloading the page discards it unless the user exported HTML.
+History, selection, and clipboard remain session-only. The recovery module separately persists an annotated document snapshot; restoring it starts fresh history.
 
 Agent annotations are deliberately stored on target elements as `data-wfp-edit-annotation-*` attributes rather than as a detached state map. That keeps undo/redo, delete/restore, selection refresh, and export cleanup aligned with the existing live-DOM source of truth.
 
@@ -619,7 +619,7 @@ Each boot increments `window.__wfpEditorGeneration`. A refresh is a generation b
 
 ### Watch discipline
 
-The watcher polls `getFile().lastModified` (~1.2s). Three rules keep it predictable. The editor's own saves pause the watcher and rebase its baseline afterwards, so a save never reads as an agent write. The baseline advances only on a successful swap, so a refresh deferred by an open interaction (transaction, text edit, drag, resize, Overview, export menu) retries on the next idle tick instead of being dropped. Permission failures announce "paused" exactly once and the next successful save announces "resumed" — the dormant flag gates the announcements, not the mechanism, so a silently recovered handle still refreshes.
+The watcher polls `getFile().lastModified` (~1.2s). Three rules keep it predictable. The editor's own saves pause the watcher and rebase its baseline after verifying that disk content equals the written HTML, so a save never reads as an agent write. The baseline advances only on a successful swap, so a refresh deferred by an open interaction (transaction, text edit, drag, resize, Overview, export menu, unfinished note draft) retries on the next idle tick instead of being dropped. Permission failures announce "paused" exactly once and the next successful save announces "resumed" — the dormant flag gates the announcements, not the mechanism, so a silently recovered handle still refreshes.
 
 ### Results reconciliation
 
@@ -747,3 +747,67 @@ The split gave each area physical ownership. The next step is dependency cleanup
 - Heavy-DOM performance beyond typical slide decks.
 - Offline hosted-editor use.
 - A general-purpose slide authoring environment.
+
+
+## Product workflow modules
+
+`65-authoring.js` owns Add text, image replacement, and slide duplication. Text
+placement converts the visible viewport intersection into the actual containing
+block's slide coordinates. Image replacement decodes before changing the DOM and
+captures src/srcset/sizes plus picture source attributes in one transaction.
+Duplicate maps all IDs and rewrites local links, SVG references and accessible
+stylesheet rules; copied rules are scoped to the new slide. Cross-origin stylesheet
+rules that the browser cannot read are not rewritten. Copies exclude scripts and
+note identities. These operations use the existing structural/element history.
+
+Scoped notes extend `45-notes-panel.js` and the annotation helpers. The actual slide
+or deck root holds `data-wfp-edit-annotation-scope`; handoff entries expose `scope`
+and structural anchors, without element geometry. Legacy missing scope means
+`element`. Drafts stay in memory until Save note; pending drafts defer live refresh
+and protect navigation with beforeunload. They are not part of recovery snapshots.
+
+`97-recovery.js` owns a separate IndexedDB database (`wfp-editor-recovery`), keyed
+by full source URL, plus a `:previous` slot for local work displaced by an explicit
+apply/restore. Versioned annotated HTML snapshots inline assets. A cached normalized
+export fingerprint tracks source versus current content; history hooks and filtered
+MutationObserver records invalidate it. Debounced writes serialize and only claim
+completion for the fingerprint stored. Editor-only navigation does not mark dirty.
+
+External updates while dirty are held pending. Identical polls do not rebuild or
+reopen a dismissed conflict panel. Applying backs up the current document before
+using the existing document-swap lifecycle, with a recovery handover payload.
+Save compares timestamps before and after HTML preparation, captures its baseline
+with the synchronous clone after asynchronous asset collection, and verifies file
+content after close before accepting its timestamp. This prevents adopting an
+intervening external write as our own. File System Access has no compare-and-swap,
+so another process can still race the final pre-write read and close. Storage
+failure stays visible and never prevents editing or direct source save.
+
+
+## Rectangle selection and group notes
+
+`75-marquee-selection.js` uses a temporary fixed rectangle under the editor root.
+A four-pixel dead zone preserves ordinary clicks. Fully enclosed boxes resolve
+through the existing text-run selection helper, with ancestor visibility checks
+and ancestor/descendant deduplication. Selection uses viewport coordinates;
+existing group drag converts movement into deck coordinates. The watcher treats
+an active rectangle as an interaction. Cancellation removes all temporary event
+listeners, restores the prior valid selection, and suppresses the release click.
+
+`47-group-notes.js` stores shared notes in `data-wfp-edit-annotation-groups` on
+the owning slide or flat canvas. Separate `data-wfp-edit-annotation-target-id`
+identities anchor the owner and members without modifying scalar individual,
+slide or deck notes. Existing transaction snapshots capture registry and anchor
+changes together. Deletion prunes only anchors unused by remaining groups.
+The annotation namespace also makes group edits visible to recovery fingerprints.
+
+Handoff exports serialize each logical group once, with ownerId, memberIds,
+per-member targets/measurements and missingMemberIds. Independent
+`data-wfp-agent-group-target` anchors survive annotated exports and are removed
+by clean export/reimport cleanup. Import resolves unique identities within the
+owner; missing or duplicate members remain unresolved, never substituted.
+Logical note counts drive badges and every primary Save/download path. Group
+results reconcile independently of overlapping groups and individual notes.
+The editor keeps group drafts tied to their original members, includes them in
+the pending-draft refresh guard, and hides inactive editors without discarding
+unfinished drafts when browsing another kind of note.

@@ -1054,7 +1054,7 @@
     }
     if (!canSaveInPlace()) {
       // Safari/Firefox fallback — v2.5 download behaviour.
-      if (getAnnotatedElements(document).length > 0) exportHandoffHTML();
+      if (getAgentNoteCount() > 0) exportHandoffHTML();
       else exportHTML();
       return;
     }

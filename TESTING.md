@@ -39,6 +39,47 @@ tests/
 
 Use `rg --files tests` for the exact current file list.
 
+## Latest validation (2026-09-22)
+
+The full Chromium suite passed **658/658** with shared group notes and rectangle
+selection. Visual inspection then caught a short-window overflow; a new regression
+reproduced it before the CSS fix. All affected suites passed **48/48**, including
+all **13** cases in `multi-selection-notes.spec.js`. Coverage includes scale-aware
+movement, additive/reverse selection, cancellation, invisible descendants, shared
+and overlapping notes, draft targeting, result reconciliation, missing members,
+undo/redo, recovery, duplicate identity cleanup and clean export. The independent
+code review approved; generated runtime and whitespace checks pass.
+
+## Previous validation (2026-09-19)
+
+Against GitHub main `1310413` plus the product-workflow branch, Chromium exercised
+646 tests: 638 passed and eight old toolbar inventory/visibility assertions failed.
+After updating them for Add text, all four affected suites and the full new-feature
+set passed **116/116**, including **28/28** new workflow cases. No failures remain
+unresolved. Generated-runtime and whitespace checks pass; independent code review
+approved the fixes. Logs/screenshots stay local under ignored `tests/output/`.
+
+## Product workflow coverage
+
+The four `product-workflow-*.spec.js` files exercise real user controls on public
+fixtures: duplicate and navigate slides; type new content on scaled and scrolled
+canvases; choose/cancel/replace image files; author all note scopes; undo/redo;
+handoff and clean-export reopening; recover after reload; and handle external
+file changes. Save tests use controlled file handles to reproduce permission,
+write and watcher races without touching a user's source file. IndexedDB coverage
+includes storage failure and a snapshot beyond typical localStorage limits.
+
+The independent code review's post-close overwrite, unsaved draft, repeated
+conflict panel and copied SVG stylesheet findings each have regression coverage.
+A mixed journey combines authoring, notes, recovery and clean-copy sharing.
+Visual checks at 1280×720 and 1024×768 verify the new desktop controls remain
+reachable. These tests run in Chromium; they do not claim Safari/Firefox coverage.
+
+Before implementation, the unchanged GitHub base had 605 passing and 13 failing
+tests on this Mac. Existing tests were corrected for macOS formatting shortcuts,
+a selection target behind editor chrome, Reset preserving authored inline styles,
+and paste counts relative to the destination's existing elements.
+
 ## Fixture Strategy
 
 Primary fixtures, declared as `PINNED_PRIMARIES` in `tests/_helpers.js`, are tested on every relevant run:
@@ -95,7 +136,7 @@ When a deck genuinely has nothing of the required shape, these skip with a reaso
 
 The Playwright config starts the local static server for fixture loading.
 
-## Current Reliability Note
+## Historical Reliability Note
 
 After the fixture refresh, a full `npm test` with the private decks installed reports **511 passed, 2 skipped, 1 failed out of 514**, and without them **221 passed, 274 skipped, 0 failed**.
 
@@ -138,6 +179,26 @@ Before declaring a feature or refactor done:
 8. Toggle Overview with `O`, navigate by clicking a thumbnail, reorder slides, delete a slide, and undo/redo both operations.
 9. Export, open the exported HTML in a fresh tab, and confirm edits persist with no editor UI visible.
 10. Add an Agent note, confirm the Saved state and peach circular marker appear, export handoff HTML, re-open it with the editor, and confirm the annotation reloads.
+
+## Presentation User Journey
+
+`tests/user-presentation-journey.spec.js` exercises the synthetic dev harness
+through mouse and keyboard interaction: selecting three visible cards, moving
+and undoing them, saving a shared agent note, downloading a clean copy, and
+reopening it to verify navigation and removal of editor metadata. It also covers
+cancelled individual-note drafts, initial source status, and painted/border-only
+selection targets. Export waits until the menu row is fully exposed by its dock
+animation before clicking; an element's nominal bounding box alone can include
+content still clipped by the folding dock.
+
+The interactive QA pass also covers title editing, font changes, adding and
+moving text, alignment, slide duplication, and image replacement with undo/redo.
+The authoring suite verifies replacement images remain embedded after export.
+
+Use clean Chromium for recovery-baseline and clean-export assertions. The Codex
+in-app browser may append its own comments root after page load; this is an
+external DOM mutation and can legitimately change the editor's source status.
+Do not exclude arbitrary external mutations from recovery to hide test tooling.
 
 ## Output Artifacts
 

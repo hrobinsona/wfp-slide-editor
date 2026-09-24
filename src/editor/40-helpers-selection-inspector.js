@@ -784,6 +784,11 @@
     return el ? (el.getAttribute(ANNOTATION_ID_ATTR) || '') : '';
   }
 
+  function getAnnotationScope(el) {
+    const scope = el && el.getAttribute('data-wfp-edit-annotation-scope');
+    return scope === 'slide' || scope === 'deck' ? scope : 'element';
+  }
+
   function getAnnotationText(el) {
     return normalizeAnnotationText(el ? el.getAttribute(ANNOTATION_TEXT_ATTR) : '');
   }
@@ -863,7 +868,7 @@
   }
 
   function isAnnotationMarkerVisibleFor(el, activeSlide) {
-    if (!el || !el.isConnected || isInsideEditorRoot(el)) return false;
+    if (!el || !el.isConnected || isInsideEditorRoot(el) || getAnnotationScope(el) !== 'element') return false;
     const slide = el.closest('.slide');
     if (activeSlide && slide && slide !== activeSlide) return false;
     const rect = el.getBoundingClientRect();
@@ -935,9 +940,10 @@
     }
   }
 
-  function saveAnnotation(targetEl, rawText) {
+  function saveAnnotation(targetEl, rawText, scope = 'element') {
     const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
-    if (!el || hasMultiSelection() || state.overviewMode) return false;
+    if (!el || (scope === 'element' && (hasMultiSelection() || state.overviewMode))) return false;
+    if (scope !== 'element' && (state.markdownMode || isFlatMode())) return false;
     const nextText = normalizeAnnotationText(rawText);
     const currentText = getAnnotationText(el);
     const currentId = getAnnotationId(el);
@@ -949,9 +955,12 @@
     if (!nextText) {
       el.removeAttribute(ANNOTATION_ID_ATTR);
       el.removeAttribute(ANNOTATION_TEXT_ATTR);
+      el.removeAttribute('data-wfp-edit-annotation-scope');
     } else {
       el.setAttribute(ANNOTATION_ID_ATTR, currentId || generateAnnotationId());
       el.setAttribute(ANNOTATION_TEXT_ATTR, nextText);
+      if (scope !== 'element') el.setAttribute('data-wfp-edit-annotation-scope', scope);
+      else el.removeAttribute('data-wfp-edit-annotation-scope');
     }
     // A changed or deleted instruction supersedes the agent's reply to the
     // old one (v2.13). Same transaction, so undo restores them together.
@@ -976,6 +985,7 @@
     touchElement(el);
     el.removeAttribute(ANNOTATION_ID_ATTR);
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    el.removeAttribute('data-wfp-edit-annotation-scope');
     el.removeAttribute(ANNOTATION_STATUS_ATTR);
     el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
@@ -1034,7 +1044,7 @@
   }
 
   function refreshExportUi() {
-    const count = getAnnotatedElements(document).length;
+    const count = getAgentNoteCount();
     exportBadge.dataset.count = String(count);
     exportBadge.textContent = count > 0 ? String(count) : '';
     // v2.21 — the notes-panel toolbar badge tracks the same count.
@@ -1061,6 +1071,8 @@
     // no-op while the panel is closed. Deliberately NOT hooked into
     // refreshAnnotationMarkers(), which runs on every scroll/resize tick.
     renderNotesPanel();
+    if (state.authoringReady) refreshAuthoringUi();
+    refreshGroupNoteUi();
   }
 
   function parseHandoffPayload() {
@@ -1087,6 +1099,7 @@
     rootEl.querySelectorAll(`script[${HANDOFF_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
+      if (el.hasAttribute && el.hasAttribute(GROUP_HANDOFF_ATTR)) el.removeAttribute(GROUP_HANDOFF_ATTR);
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
       // v2.14 — edit-ledger anchors left behind by agent-processed files.
       // The handoff build re-stamps fresh ids on the clone after this pass.
@@ -1133,8 +1146,10 @@
     const results = parseAgentResults();
     if (results) state.agentResultsSummary = results.counts;
     if (!payload && !results) return;
+    reimportGroupNotes(payload, results);
     if (payload) {
       for (const annotation of payload.annotations) {
+        if (!annotation || typeof annotation !== 'object') continue;
         const id = typeof annotation.id === 'string' ? annotation.id : '';
         const instruction = normalizeAnnotationText(annotation.instruction);
         if (!id || !instruction) continue;
@@ -1142,14 +1157,23 @@
         // A done result resolves the note even if the agent left the
         // metadata in place — stale annotations must not re-import.
         if (result && result.status === 'done') continue;
-        const targets = getHandoffTargetsById(document, id);
+        const scope = annotation.scope || 'element';
+        if (!['element', 'slide', 'deck'].includes(scope)) continue;
+        const targets = getHandoffTargetsById(document, id).filter((target) => {
+          if (scope === 'slide') return !isFlatMode() && getSlides().includes(target);
+          if (scope === 'deck') return !isFlatMode() && target === getDeckRoot();
+          return target !== getDeckRoot() && !target.matches('.slide');
+        });
         if (!targets.length) continue;
         for (const target of targets) {
           target.setAttribute(ANNOTATION_ID_ATTR, id);
           target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
-          if (result) {
-            target.setAttribute(ANNOTATION_STATUS_ATTR, result.status);
-            if (result.note) target.setAttribute(ANNOTATION_REPLY_ATTR, result.note);
+          if (scope !== 'element') target.setAttribute('data-wfp-edit-annotation-scope', scope);
+          const reply = result || (['skipped', 'needs-input'].includes(annotation.status)
+            ? { status: annotation.status, note: normalizeAnnotationText(annotation.reply) } : null);
+          if (reply) {
+            target.setAttribute(ANNOTATION_STATUS_ATTR, reply.status);
+            if (reply.note) target.setAttribute(ANNOTATION_REPLY_ATTR, reply.note);
           }
         }
       }

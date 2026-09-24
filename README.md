@@ -55,8 +55,12 @@ npm run build:bookmarklet -- --local
 2. Click the bookmarklet. The editor's "Edit: OFF" pill appears top-right.
 3. Press `E` (or click the pill) to toggle edit mode.
 4. Click an element to select it. Drag to move, resize with handles, edit text by double-clicking, or use the inspector for position, size, font size, colour, opacity, and reset styles.
-5. Press `O` (or click `Overview`) for the slide grid. Click a slide to navigate, drag thumbnails to reorder, or delete slides with the thumbnail `x` button / Backspace / Delete.
-6. `Cmd/Ctrl+Z` undoes; `Cmd/Ctrl+Shift+Z` or `Cmd/Ctrl+Y` redoes. `Cmd/Ctrl+S` (or `Export`) downloads `<original-name>-edited.html`. Open that file anywhere; no editor required.
+5. Drag empty canvas space to select several items, or **Shift-drag** over content. Hold **Cmd/Ctrl** to add to the selection. Drag any selected item to move the set; choose **Note selected items** to write one shared instruction. Existing individual notes stay intact.
+6. Press `O` (or click `Overview`) for the slide grid. Click a slide to navigate, drag thumbnails to reorder, or delete slides with the thumbnail `x` button / Backspace / Delete.
+7. Use Overview's **Duplicate slide**, Edit mode's **Add text**, or **Replace image** when an image is selected. `Cmd/Ctrl+Z` undoes; `Cmd/Ctrl+Shift+Z` or `Cmd/Ctrl+Y` redoes.
+8. Open **Notes** to add instructions for the current slide or whole deck; selected elements also have their own note field. Click **Save note** to include a draft in recovery and handoff.
+9. `Cmd/Ctrl+S` or **Export → Save** writes to your chosen HTML file in supported Chromium browsers; other browsers download a copy. **Clean copy** downloads without agent notes.
+10. Watch the bottom-left status: local recovery is separate from saving the source. After reload, activate the editor again to Restore or Discard local work. If an agent updates a file while you have edits, keep/download local work or apply the newer file; the prior local version stays recoverable.
 
 ### Reviewing Markdown files
 

@@ -58,27 +58,29 @@ Handoff exports now carry an `edits` ledger — one entry per user-touched eleme
 
 Feature brief: `feature-briefs/v2.14-handoff-ground-truth.md`.
 
+### Product Workflow Improvements
+
+Local IndexedDB recovery, visible source-save status and external-update conflict
+protection; element/slide/deck agent notes; Overview Duplicate slide, Add text,
+and Replace image. Undo/redo, handoff/reimport and clean export are covered.
+
+Briefs: `feature-briefs/product-workflow-recovery.md`,
+`feature-briefs/product-workflow-scoped-notes.md`, and
+`feature-briefs/product-workflow-authoring.md`.
+
 ## Active Engineering Track
 
 ### Maintainability Refactor
 
-The editor is now feature-rich but structurally heavy: about 8k lines carrying element editing, inspector, history, overview, and export. The source has since been split into 14 ordered fragments in `src/editor/`, concatenated into the generated `editor.js` (see Source Split With Stable Deployment below). What remains on this track is dependency cleanup between those fragments, not further splitting.
+The editor is now feature-rich but structurally heavy: about 8k lines carrying element editing, inspector, history, overview, and export. The source has since been split into ordered fragments in `src/editor/`, concatenated into the generated `editor.js` (see Source Split With Stable Deployment below). What remains on this track is dependency cleanup between those fragments, not further splitting.
 
 Executable brief: `REFACTOR-MAINTAINABILITY.md`.
 
 ## v2.x Candidates
 
-### Slide- and Deck-scoped Agent Notes
-
-Raised 2026-07-24, same review. Partially addressed by v2.21 (`feature-briefs/v2.21-agent-notes-panel.md`): a browsable panel now lists every element-scoped note across the deck with jump and prev/next flicking. Slide- and deck-scoped note *authoring* remains open, as below. Notes attach only to a single selected element in the active slide (`saveAnnotation` refuses multi-select and Overview mode), so deck-scoped intent — the stated main purpose of annotations — gets smuggled through an arbitrary element's note. Candidate: a `scope` field in the handoff payload (`element` | `slide` | `deck`), a note affordance on Overview slide cards, and a single deck-level note reachable from the export menu. Revisits the v2.5 "slide-level annotations" non-goal. Deliberately excludes typed/relational annotations — freeform text plus scope covers the gap.
-
-### Persistence
-
-Autosave to localStorage so closing a tab does not lose edits. Key by URL plus a slide/deck hash. Must define restore UX and stale-source behaviour before implementation. The v2.11 file-handle store (IndexedDB `wfp-editor`/`handles`, keyed by `location.href`) is a candidate foundation for this — it already solves per-URL persistence and reload rehydration — though today it holds only the bound save-file handle, not edit history or a change hash.
-
 ### Multi-select Follow-ups
 
-Marquee/lasso selection, group copy/delete/duplicate, group resize, group inspector edits, and persistent group/ungroup operations.
+Rectangle selection and shared group notes are delivered (see `feature-briefs/multi-selection-notes.md`). Freeform lasso, group copy/delete/duplicate, group resize, and persistent group/ungroup operations remain candidates.
 
 ### Snap-to-grid and Alignment Guides
 
@@ -94,7 +96,7 @@ Bring forward/send backward shortcuts and possibly a compact layers view.
 
 ### Add New Elements
 
-Insert text, image, divider, or simple shape elements. This moves the editor closer to authoring, so scope carefully.
+Add text and replacement of selected images are delivered. New image insertion, dividers, and simple shapes remain candidates. This moves the editor closer to authoring, so scope carefully.
 
 ### Agent Handoff Evals
 

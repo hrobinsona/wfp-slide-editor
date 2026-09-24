@@ -18,6 +18,9 @@
     // run wrappers are gone, so an inspector commit mid-edit (endTxn +
     // beginTxn while wrappers are installed) never records the wrapper.
     if (options.captureHtml) snap.html = textRunNeutralHtml(el);
+    if (options.captureAttributes) {
+      snap.attributes = Object.fromEntries(options.captureAttributes.map((name) => [name, el.getAttribute(name)]));
+    }
     return snap;
   }
 
@@ -30,6 +33,10 @@
     if (snap.style === null) el.removeAttribute('style');
     else el.setAttribute('style', snap.style);
     applyEditorDataAttributes(el, snap.editorAttrs || {});
+    for (const [name, value] of Object.entries(snap.attributes || {})) {
+      if (value === null) el.removeAttribute(name);
+      else el.setAttribute(name, value);
+    }
     if (Object.prototype.hasOwnProperty.call(snap, 'html') && el.innerHTML !== snap.html) {
       el.innerHTML = snap.html;
     }
@@ -40,6 +47,7 @@
     const bHasHtml = Object.prototype.hasOwnProperty.call(b, 'html');
     return (
       a.style === b.style &&
+      JSON.stringify(a.attributes || {}) === JSON.stringify(b.attributes || {}) &&
       editorDataAttributesEqual(a.editorAttrs, b.editorAttrs) &&
       ((!aHasHtml && !bHasHtml) || a.html === b.html)
     );
@@ -99,6 +107,7 @@
     state.txn = {
       snapshots: new Map(),
       captureHtml: !!options.captureHtml,
+      captureAttributes: options.captureAttributes || null,
       flowGroupStates: new Map(),
     };
   }
@@ -209,6 +218,7 @@
       state.historyIndex--;
     }
     pruneInactiveFlowUnlockGroups();
+    recoveryContentChanged();
   }
 
   // The single funnel for "an element was attached to or detached from the
@@ -366,6 +376,7 @@
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
+    recoveryContentChanged();
   }
 
   function redo() {
@@ -398,4 +409,5 @@
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
+    recoveryContentChanged();
   }

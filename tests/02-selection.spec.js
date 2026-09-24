@@ -140,6 +140,14 @@ test.describe('Phase 2 — Selection', () => {
   test('selecting another element moves the ring', async ({ page }) => {
     await loadFixtureWithEditor(page, 'Townhall-1.html');
     const target = await requireAbsoluteTarget(page);
+    // Keep the second test target clear of the editor's dock. A synthetic
+    // click behind the inspector is correctly ignored by its input guard.
+    await page.locator(target).evaluate(el => {
+      el.style.left = '700px';
+      el.style.top = '700px';
+      el.style.right = 'auto';
+      el.style.bottom = 'auto';
+    });
     await page.keyboard.press('e');
 
     await clickElement(page, '.slide.active h1');

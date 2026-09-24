@@ -52,6 +52,11 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - The editor does not select `.deck`, `.slide`, or anything inside `#wfp-editor-root`.
 - Selection only operates on the active slide.
 - Cmd/Ctrl-click toggles active-slide elements into or out of a multi-selection.
+- Drag empty canvas space in Edit mode to select fully enclosed visible boxes;
+  Shift-drag can start over content, and Cmd/Ctrl-drag adds enclosed items.
+  The selection excludes hidden descendants and ancestor/descendant pairs.
+  Escape, pointer cancellation, blur, scroll/resize or changing slides cancels
+  the rectangle safely. Dragging a selected member still moves the group.
 - Multi-selection displays one group box plus per-element outlines.
 - Plain click returns to single-element selection.
 - Selection clears when the slide canvas is clicked, edit mode exits, Overview mode starts, or the active slide changes.
@@ -69,7 +74,7 @@ This file is the current product contract. `TASKS.md` and `feature-briefs/` are 
 - Unlocking protects affected siblings and layout containers so nearby content does not shift unexpectedly.
 - Unlock protection includes direct children of the slide/page root: their siblings are pinned without writing inline styles on the root itself.
 - Unlock conversion and the drag/resize operation are undoable.
-- Resize handles and the dimension bubble are hidden while multiple elements are selected. The inspector stays open with a reduced multi-select surface (v2.18): font size, opacity, colour, bring-to-front, align, and Reset apply to every member; Duplicate/Delete render disabled; geometry and annotation rows hide.
+- Resize handles and the dimension bubble are hidden while multiple elements are selected. The inspector stays open with a reduced multi-select surface (v2.18): font size, opacity, colour, bring-to-front, align, and Reset apply to every member; Duplicate/Delete render disabled; geometry and individual annotation rows hide; Note selected items opens a shared group note.
 
 ### Inspector
 
@@ -317,22 +322,63 @@ javascript:(function(){var s=document.createElement('script');s.src='https://[us
 
 The cache-buster ensures the next bookmarklet click fetches the latest hosted editor.
 
+## Shared group notes
+
+- Note selected items creates one instruction for two or more selected elements,
+  preserving each member's individual notes. Groups may overlap; they are note
+  targets, not permanent movement groups. The draft retains its original targets
+  if selection changes. Save/Delete are atomic history entries.
+- Notes cards show the member count and missing-target count. Clicking a group
+  card selects its surviving members. Missing members are never silently dropped
+  from the instruction; deleting and undoing a member restores its association.
+- Handoff entries use `scope: group`, an owner anchor, stable `memberIds`, per-member
+  measurements, and `missingMemberIds`. Agent guidance requires needs-input when
+  any target is missing or ambiguous. Replies and done results apply to that note
+  alone. Handoff/reimport and recovery retain groups; clean export strips them.
+- Copied elements and duplicated slides do not inherit group-note identities.
+  Deleting a group removes unused anchors while retaining overlapping groups.
+- Geometry selection and group notes are unavailable in Markdown review.
+
+## Recovery, scoped notes, and authoring
+
+- Debounced local IndexedDB recovery retains document content and saved annotations,
+  including replies and embedded images. Reopen the same URL and activate the editor
+  to Restore or Discard; a changed source is explicitly flagged. History is not restored.
+- The status distinguishes unchanged/saved source, unsaved work, pending or completed
+  local recovery, and recovery storage failures. Local recovery is not a source save.
+- External file updates preserve dirty local work and offer Keep local work, Download
+  local copy, or Apply newer file. Applying first backs up the prior local document.
+  Save is blocked until the conflict is resolved; unfinished note drafts defer refresh.
+- Save checks the file before and after building HTML, then verifies the written content
+  before accepting its timestamp. Edits during the write stay dirty. The native file API
+  cannot guarantee an atomic transaction against concurrent external writers.
+- Notes can target an element, current slide, or whole deck. Slide/deck authoring is in
+  the notes panel, including Overview; it is absent for flat documents and Markdown.
+  Save/Delete are undoable, cards show scope, and handoff/reimport preserves scope and
+  replies. Old entries without scope remain element notes. Clean copies remove notes.
+- Overview Duplicate slide inserts after the source, remaps IDs and local references,
+  preserves accessible stylesheet rules, and excludes scripts and annotation identities.
+- Edit mode offers Add text on the visible canvas, with immediate inline editing; a
+  selected image offers Replace image with a local PNG/JPEG/GIF/WebP/AVIF/BMP. Its box
+  and object-fit stay unchanged; Undo restores responsive image sources. These controls
+  are unavailable in Markdown. All three authoring actions undo/redo and clean-export.
+
 ## Current Non-goals
 
 These are not part of the current product contract. Add them to `ROADMAP.md` or a feature brief before building.
 
-- Marquee/lasso selection.
+- Freeform lasso selection.
 - Layers panel or z-order controls.
 - Snap-to-grid or alignment guides.
 - Aspect-ratio locking on resize.
-- Persistence across reloads or localStorage autosave.
+- Restoring undo history across reloads or merging conflicting documents.
 - Group/ungroup operations.
 - Animation or transition editing.
-- Adding new elements.
-- Asset replacement.
+- Inserting shapes, dividers, or new images.
+- Replacing assets other than selected raster images.
 - Theme variable editing.
-- Overview search/filter or duplicate slide.
-- Text-range annotations, slide-level annotations, pins, or hidden agent prompts. (The v2.5 "comments panel" non-goal was revisited: v2.21 ships a browsable agent-notes panel.)
+- Overview search/filter.
+- Text-range annotations, pins, or hidden agent prompts.
 - Mobile/touch editing.
 
 ## Known Quality Work
