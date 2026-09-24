@@ -36,6 +36,10 @@
   // instance across a document.write refresh, then watch the bound file
   // for external (agent) writes.
   adoptLiveRefreshState();
+  initScopedNotes();
+  initGroupNotes();
+  initAuthoring();
+  initRecovery();
   if (canSaveInPlace()) startAgentWatch();
   consumeAgentResultsSummaryToast();
   window.__wfpEditorReady = true;

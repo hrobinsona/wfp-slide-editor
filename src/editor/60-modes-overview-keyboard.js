@@ -2,6 +2,7 @@
   // Edit mode
   // ===========================================================================
   function setEditMode(value) {
+    if (state.marquee) finishMarquee(true);
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
     toolbar.dataset.mode = state.editMode ? 'on' : 'off';
@@ -12,6 +13,7 @@
     }
     refreshAnnotationMarkers();
     renderNotesPanel(); // v2.21 — panel stays populated in both modes
+    refreshAuthoringUi();
   }
 
   // ===========================================================================
@@ -34,6 +36,7 @@
   // drag-to-reorder, and delete affordances on top of this state flag.
   // ===========================================================================
   function setOverviewMode(value) {
+    if (state.marquee) finishMarquee(true);
     if (isFlatMode()) {
       state.overviewMode = false;
       overviewBtn.dataset.mode = 'off';
@@ -60,6 +63,7 @@
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
     refreshAnnotationMarkers();
     renderNotesPanel(); // v2.21 — panel stays populated in both modes
+    refreshAuthoringUi();
   }
 
   // ---------------------------------------------------------------------------
@@ -124,6 +128,7 @@
       del.setAttribute('aria-label', `Delete slide ${i + 1}`);
       del.innerHTML = ICONS.closeSmall;
       thumb.appendChild(del);
+      addOverviewDuplicateButton(thumb, i);
       overviewOverlay.appendChild(thumb);
     }
     for (let i = 0; i <= slides.length; i++) {
@@ -564,7 +569,7 @@
     // its job (capture-phase stopPropagation here would otherwise kill
     // it). v2.1.4 added the × button inside each thumb; the navigate
     // path's editor-root + thumb-walk would otherwise intercept it.
-    if (e.target.closest('.wfpe-overview-delete')) return;
+    if (e.target.closest('.wfpe-overview-delete, .wfpe-overview-duplicate')) return;
     // Editor-root clicks normally flow to their own bubble handlers
     // (toolbar Edit / Export / etc.), but the overview thumbs ALSO live
     // under #wfp-editor-root in v2.1.3 — they need to navigate. Filter
@@ -1070,6 +1075,12 @@
   }
 
   function onKeyDown(e) {
+    if (state.marquee) {
+      if (e.key === 'Escape') finishMarquee(true);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // v2.11 — while the export menu is open it owns Enter/Escape.
     if (state.exportMenuOpen) {
       if (e.key === 'Enter') {
@@ -1152,7 +1163,7 @@
     // opens the panel on first press. With no notes the key is left
     // alone so the host page keeps its normal meaning.
     if ((e.key === 'n' || e.key === 'N') && noModifier) {
-      if (getAnnotatedElements(document).length === 0) return;
+      if (getAgentNoteCount() === 0) return;
       e.preventDefault();
       e.stopPropagation();
       cycleAnnotation(e.shiftKey ? -1 : 1);

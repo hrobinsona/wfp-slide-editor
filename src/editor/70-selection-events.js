@@ -90,6 +90,7 @@
       }
     }
     if (!activeChanged) return;
+    if (state.marquee && state.marquee.slide !== getActiveSlide()) finishMarquee(true);
     if (state.editingText) {
       const slide = getActiveSlide();
       if (!slide || !slide.contains(state.editingText.el)) endTextEdit();

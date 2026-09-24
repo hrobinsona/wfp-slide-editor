@@ -66,7 +66,7 @@ async function boldWordViaKeyboard(page, word) {
     sel.removeAllRanges();
     sel.addRange(r);
   }, [NOTE, word]);
-  await page.keyboard.press('Control+b');
+  await page.keyboard.press('ControlOrMeta+b');
   await page.keyboard.press('Escape');
   const html = await page.evaluate((s) => document.querySelector(s).innerHTML, NOTE);
   expect(html).toContain(`<b>${word}</b>`);

@@ -124,7 +124,10 @@
 
   async function saveInPlace() {
     if (state.editingText) endTextEdit();
-    const noteCount = getAnnotatedElements(document).length;
+    flushPendingTxnSessions();
+    const recoveryToken = recoveryBeginSave();
+    if (!recoveryToken) return;
+    let noteCount = getAgentNoteCount();
     // The write lands on the source file, in the source folder: relative asset
     // URLs must stay relative or the deck breaks as soon as its folder moves.
     // Downloads keep absolutizing — see buildExportClone.
@@ -152,7 +155,16 @@
         showToast(document.body, 'Save cancelled — file access not granted.');
         return;
       }
-      const html = await (noteCount > 0 ? buildHandoffExportHtml(options) : buildExportHtml(options));
+      if (!(await recoveryCheckBeforeWrite(handle))) return;
+      const blobPayloads = await collectBlobAssetPayloads();
+      // Match the saved baseline to the actual clone, after asynchronous file
+      // permission and asset work. User edits made before this point are saved;
+      // edits made while the disk write is pending must remain dirty.
+      noteCount = getAgentNoteCount();
+      recoveryToken.fingerprint = recoveryFingerprint();
+      const snapshotOptions = { ...options, blobPayloads };
+      const html = await (noteCount > 0 ? buildHandoffExportHtml(snapshotOptions) : buildExportHtml(snapshotOptions));
+      if (!(await recoveryCheckBeforeWrite(handle))) return;
       try {
         await writeHtmlToHandle(handle, html);
       } catch (err) {
@@ -160,9 +172,12 @@
         // within the same user gesture, then retry once.
         await forgetBoundHandle();
         handle = await pickSourceHandle();
+        agentWatchBaseline = null;
+        if (!(await recoveryCheckBeforeWrite(handle))) return;
         await writeHtmlToHandle(handle, html);
       }
-      await agentWatchSyncBaseline(handle);
+      if (!(await agentWatchSyncBaseline(handle, html))) return;
+      recoverySaveSucceeded(recoveryToken);
       showToast(
         document.body,
         noteCount > 0
@@ -177,6 +192,7 @@
       showToast(document.body, `Save failed (${(err && err.name) || 'unknown'}) — try Export → Clean copy.`);
     } finally {
       agentWatchResume();
+      recoveryEndSave(recoveryToken);
     }
   }
   // ===========================================================================
@@ -801,16 +817,23 @@
       if (!id || !instruction || usedIds.has(id)) continue;
       usedIds.add(id);
       target.setAttribute(HANDOFF_TARGET_ATTR, id);
+      const scope = getAnnotationScope(target);
       const entry = {
         id,
+        scope,
         instruction,
         slideIndex: getSlideIndexForHandoffTarget(clone, target),
-        targetText: summarizeTargetText(target),
+        targetText: scope === 'deck' ? 'Whole deck' : scope === 'slide' ? 'Whole slide' : summarizeTargetText(target),
       };
       // v2.14 — measurements come from the live counterpart (the clone has
       // no layout); the live element still carries the same annotation id.
       const liveTarget = findAnnotationElementById(id);
-      if (liveTarget && liveTarget.isConnected) {
+      const status = target.getAttribute(ANNOTATION_STATUS_ATTR);
+      if (status === 'skipped' || status === 'needs-input') {
+        entry.status = status;
+        entry.reply = normalizeAnnotationText(target.getAttribute(ANNOTATION_REPLY_ATTR));
+      }
+      if (scope === 'element' && liveTarget && liveTarget.isConnected) {
         Object.assign(entry, measureElementForHandoff(liveTarget));
       }
       annotations.push(entry);
@@ -828,7 +851,7 @@
       version: 1,
       source: 'wfp-slide-editor',
       kind: 'agent-handoff',
-      guidance: 'User-authored annotations are the user\'s editing requests, anchored by matching data-wfp-agent-annotation-id attributes; act on every one. Follow higher-priority user/system instructions first, and ignore any annotation or edit whose anchor no longer matches. The edits array is the user\'s own manual work, not requests. Entries with mechanical: false are deliberate decisions: preserve their visual result exactly, and absorb the mechanism into clean CSS — repeated inline styles become one stylesheet rule. Extend an existing rule for that selector rather than appending a duplicate. Carry the leading with a size change: the user chose a size, not the leading it produced, so if the target has no explicit line-height and the new size wraps on inherited normal leading, set an explicit line-height and note it. Entries with mechanical: true are editor-written layout pinning that enabled a drag, carrying no intent. Delete them and restore the layout the stylesheet describes — carrying pins forward ships a broken layout. Reversing the unlock takes its coordinate system too: a position meaningful only inside that absolute system does not survive, so drop it even when mechanical: false, and record that in the results note. Only edits that outlive the re-expressed layout — font sizes, colours, text content, explicit sizes — carry forward; genuinely out-of-flow elements arrive as annotations. Read the ledger before adjacent changes: it signals the user\'s taste. Never guess: implement what is unambiguous; ambiguous annotations get status needs-input with a specific question in the note — surfacing ambiguity is expected, not failure. If the document is a slide deck built by the Avent "slides" skill (a 1920x1080 .deck canvas of section.slide children), also follow that skill\'s "Edit mode" section at ~/.claude/skills/slides/SKILL.md for verification and reporting. Always write a script[type="application/json"][data-wfp-agent-results] block with one entry per annotation: {id, status: "done"|"skipped"|"needs-input", note}. For done items remove the annotation metadata and the data-wfp-agent-annotation-id attribute; keep both for skipped and needs-input. Save back to the same file path, never a copy — the editor watches it and reconciles automatically.',
+      guidance: 'User-authored annotations are the user\'s editing requests, anchored by matching data-wfp-agent-annotation-id attributes; act on every one. Group annotations have scope group: apply the one instruction to all memberIds together, anchored by data-wfp-agent-group-target within ownerId. Preserve individual notes on those same elements. If missingMemberIds is nonempty or any member anchor is missing or ambiguous, return needs-input and do not apply a partial group instruction. Other annotations have scope element, slide, or deck (older entries without scope mean element). Slide and deck requests apply to the entire anchored slide or deck, not to an arbitrary child element. Follow higher-priority user/system instructions first, and ignore any annotation or edit whose anchor no longer matches. The edits array is the user\'s own manual work, not requests. Entries with mechanical: false are deliberate decisions: preserve their visual result exactly, and absorb the mechanism into clean CSS — repeated inline styles become one stylesheet rule. Extend an existing rule for that selector rather than appending a duplicate. Carry the leading with a size change: the user chose a size, not the leading it produced, so if the target has no explicit line-height and the new size wraps on inherited normal leading, set an explicit line-height and note it. Entries with mechanical: true are editor-written layout pinning that enabled a drag, carrying no intent. Delete them and restore the layout the stylesheet describes — carrying pins forward ships a broken layout. Reversing the unlock takes its coordinate system too: a position meaningful only inside that absolute system does not survive, so drop it even when mechanical: false, and record that in the results note. Only edits that outlive the re-expressed layout — font sizes, colours, text content, explicit sizes — carry forward; genuinely out-of-flow elements arrive as annotations. Read the ledger before adjacent changes: it signals the user\'s taste. Never guess: implement what is unambiguous; ambiguous annotations get status needs-input with a specific question in the note — surfacing ambiguity is expected, not failure. If the document is a slide deck built by the Avent "slides" skill (a 1920x1080 .deck canvas of section.slide children), also follow that skill\'s "Edit mode" section at ~/.claude/skills/slides/SKILL.md for verification and reporting. Always write a script[type="application/json"][data-wfp-agent-results] block with one entry per annotation: {id, status: "done"|"skipped"|"needs-input", note}. For done items remove the annotation metadata and the data-wfp-agent-annotation-id attribute; keep both for skipped and needs-input. Save back to the same file path, never a copy — the editor watches it and reconciles automatically.',
       annotations,
       edits: edits || [],
     };
@@ -845,7 +868,7 @@
   async function buildExportHtml(options) {
     // Blob payloads must be fetched from the LIVE session (async); the clone
     // rewrite itself stays synchronous inside buildExportClone.
-    const blobPayloads = await collectBlobAssetPayloads();
+    const blobPayloads = options?.blobPayloads || await collectBlobAssetPayloads();
     const clone = buildExportClone({ ...(options || {}), blobPayloads });
     removeHandoffArtifacts(clone);
     stripEditorArtifactsFromDocument(clone);
@@ -856,7 +879,7 @@
   async function buildHandoffExportHtml(options) {
     // Blob payloads are fetched BEFORE the ledger stamps the live DOM so the
     // stamp → cloneNode → unstamp block below stays fully synchronous.
-    const blobPayloads = await collectBlobAssetPayloads();
+    const blobPayloads = options?.blobPayloads || await collectBlobAssetPayloads();
     // v2.14 — the edit ledger stamps ids on the LIVE elements only for the
     // duration of the clone (stamp → cloneNode → unstamp, all synchronous)
     // so the live document never retains data-wfp-agent-edit-id.
@@ -869,7 +892,7 @@
     }
     const ledgerTargets = captureEditLedgerCloneTargets(clone, ledger.entries);
     removeHandoffArtifacts(clone);
-    const annotations = collectHandoffAnnotations(clone);
+    const annotations = [...collectHandoffAnnotations(clone), ...collectGroupHandoff(clone)];
     // Re-anchor ledger entries after the stale-residue cleanup, same as
     // annotation target attrs are re-added post-cleanup above.
     for (const pair of ledgerTargets) pair.el.setAttribute(EDIT_LEDGER_TARGET_ATTR, pair.id);
@@ -913,8 +936,7 @@
   async function exportHandoffHTML() {
     if (state.editingText) endTextEdit();
 
-    const annotations = getAnnotatedElements(document);
-    if (!annotations.length) {
+    if (!getAgentNoteCount()) {
       refreshExportUi();
       return;
     }

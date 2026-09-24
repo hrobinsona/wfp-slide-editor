@@ -15,15 +15,19 @@ physical ownership boundaries before deeper dependency cleanup.
 - `20-dom-css.js` - editor root, scoped CSS, and root style mount.
 - `30-ui-inspector-controls.js` - icons, toolbar, the export action menu DOM and dispatch, inspector DOM, overlay DOM, and inspector control wiring.
 - `40-helpers-selection-inspector.js` - slide helpers, selection overlay refresh, export/badge UI refresh, inspector population, colour helpers, inspector visibility.
-- `45-notes-panel.js` - v2.21 agent-notes panel: cross-deck annotation card list, jump-to-annotation, prev/next cycling.
+- `45-notes-panel.js` - v2.21 agent-notes panel: cross-deck annotation card list, jump-to-annotation, prev/next cycling, slide/deck note authoring and drafts.
+- `47-group-notes.js` - shared multi-item instructions, member identities, drafts and handoff/reimport.
 - `50-history.js` - element transactions, inspector transaction isolation, undo/redo, slide-level history.
 - `60-modes-overview-keyboard.js` - edit mode, Overview mode, slide navigation takeover, overview reorder/delete, keyboard shortcuts.
+- `65-authoring.js` - Add text, selected-image replacement, slide duplication and reference/style remapping.
 - `70-selection-events.js` - click selection and observers.
+- `75-marquee-selection.js` - rectangle selection, additive selection and gesture cancellation.
 - `80-drag-resize-unlock.js` - scale-aware drag/resize and flow unlock.
 - `85-adaptive-fade.js` - adaptive chrome fade, live value tag, and the font-field scrub gesture.
 - `90-text-edit.js` - inline text edit lifecycle.
 - `95-export.js` - clean/handoff HTML export pipelines and the v2.11 save-in-place engine (File System Access + IndexedDB handle store).
 - `96-live-refresh.js` - v2.13 live agent round-trip: save-file watch, in-place document swap, editor re-injection, and cross-generation state adoption.
+- `97-recovery.js` - local snapshots, source fingerprints, recovery/conflict UI and save guards.
 - `99-ready.js` - restore adoption, watch start, results summary toast, ready flag, and startup log.
 
 `scripts/build-editor.js` owns the build order in its `PARTS` array — add a new

@@ -210,7 +210,7 @@ test.describe('v2.10 — ink-glass instrument states', () => {
       }));
     });
     expect(buttons.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'add-text', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
     for (const b of buttons) {
       expect(b.hasIcon).toBe(true);

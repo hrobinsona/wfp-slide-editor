@@ -112,7 +112,7 @@ async function boldWord(page, word) {
     }
     throw new Error(`word not found: ${w}`);
   }, [LI, word]);
-  await page.keyboard.press('Control+b');
+  await page.keyboard.press('ControlOrMeta+b');
 }
 
 test.describe('v2.26 — formatting inside a flex host keeps one text run', () => {

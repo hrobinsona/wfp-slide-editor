@@ -75,6 +75,7 @@
       return;
     }
     const target = findSelectableTarget(e.target);
+    if (startMarquee(e, target)) return;
     if (!target) return;
 
     if (isSelectionToggleEvent(e)) {

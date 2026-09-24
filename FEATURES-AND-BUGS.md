@@ -168,6 +168,34 @@ together rather than one at a time, since they share the same write pattern.
 
 ## Resolved
 
+### Presentation user journey: rectangle selection and cancelled notes
+
+- **Status:** fixed 2026-09-23 (branch `feat/product-workflow`, presentation QA follow-up)
+- **Raised:** 2026-09-22, interactive browser testing of a generated HTML presentation
+
+Drawing around a row of cards selected the transparent flex wrapper instead of
+the visible cards. Marquee selection now ignores unpainted structural wrappers,
+while retaining text runs, images, painted boxes, and border-only shapes. It
+still selects an enclosed visible container once, without also moving its
+children. Regression cases include empty red, black, and black-bordered cards.
+
+Cancelling a marquee gesture also cleared an unfinished individual agent note.
+The gesture now restores that draft with the original selection on cancellation.
+
+### Preview falsely reported changes on first load
+
+- **Status:** fixed 2026-09-23 (branch `feat/product-workflow`, presentation QA follow-up)
+- **Raised:** 2026-09-22, interactive browser testing
+
+The harness loaded the editor synchronously before the HTML parser finished.
+Trailing markup changed the recovery fingerprint after its baseline was taken.
+The harness now defers the editor script until parsing has finished. Opening a
+fresh presentation reports “Source unchanged” in clean Chromium.
+
+Both fixes are covered by `tests/user-presentation-journey.spec.js`, including
+an end-to-end card-selection, group-move, undo, shared-note, clean-download,
+and exported-deck navigation journey.
+
 ### Bolding one word of a flex bullet pushed the rest of the sentence into a second column
 
 - **Status:** fixed 2026-09-15, branch `claude/pensive-ride-l0ifc6` — see `feature-briefs/v2.26-flex-text-runs.md`

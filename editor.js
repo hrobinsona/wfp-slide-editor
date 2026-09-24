@@ -76,6 +76,9 @@
   // inline height on the clone. Shared between the unlock engine and the
   // export scrubber.
   const FLAT_ROOT_HEIGHT_ATTR = 'data-wfp-edit-flat-root-height';
+  const GROUP_NOTES_ATTR = 'data-wfp-edit-annotation-groups';
+  const GROUP_TARGET_ATTR = 'data-wfp-edit-annotation-target-id';
+  const GROUP_HANDOFF_ATTR = 'data-wfp-agent-group-target';
   const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';
@@ -2994,7 +2997,7 @@
     }
     if (!canSaveInPlace()) {
       // Safari/Firefox fallback — v2.5 download behaviour.
-      if (getAnnotatedElements(document).length > 0) exportHandoffHTML();
+      if (getAgentNoteCount() > 0) exportHandoffHTML();
       else exportHTML();
       return;
     }
@@ -4336,6 +4339,11 @@
     return el ? (el.getAttribute(ANNOTATION_ID_ATTR) || '') : '';
   }
 
+  function getAnnotationScope(el) {
+    const scope = el && el.getAttribute('data-wfp-edit-annotation-scope');
+    return scope === 'slide' || scope === 'deck' ? scope : 'element';
+  }
+
   function getAnnotationText(el) {
     return normalizeAnnotationText(el ? el.getAttribute(ANNOTATION_TEXT_ATTR) : '');
   }
@@ -4415,7 +4423,7 @@
   }
 
   function isAnnotationMarkerVisibleFor(el, activeSlide) {
-    if (!el || !el.isConnected || isInsideEditorRoot(el)) return false;
+    if (!el || !el.isConnected || isInsideEditorRoot(el) || getAnnotationScope(el) !== 'element') return false;
     const slide = el.closest('.slide');
     if (activeSlide && slide && slide !== activeSlide) return false;
     const rect = el.getBoundingClientRect();
@@ -4487,9 +4495,10 @@
     }
   }
 
-  function saveAnnotation(targetEl, rawText) {
+  function saveAnnotation(targetEl, rawText, scope = 'element') {
     const el = (targetEl && targetEl.isConnected) ? targetEl : state.selected;
-    if (!el || hasMultiSelection() || state.overviewMode) return false;
+    if (!el || (scope === 'element' && (hasMultiSelection() || state.overviewMode))) return false;
+    if (scope !== 'element' && (state.markdownMode || isFlatMode())) return false;
     const nextText = normalizeAnnotationText(rawText);
     const currentText = getAnnotationText(el);
     const currentId = getAnnotationId(el);
@@ -4501,9 +4510,12 @@
     if (!nextText) {
       el.removeAttribute(ANNOTATION_ID_ATTR);
       el.removeAttribute(ANNOTATION_TEXT_ATTR);
+      el.removeAttribute('data-wfp-edit-annotation-scope');
     } else {
       el.setAttribute(ANNOTATION_ID_ATTR, currentId || generateAnnotationId());
       el.setAttribute(ANNOTATION_TEXT_ATTR, nextText);
+      if (scope !== 'element') el.setAttribute('data-wfp-edit-annotation-scope', scope);
+      else el.removeAttribute('data-wfp-edit-annotation-scope');
     }
     // A changed or deleted instruction supersedes the agent's reply to the
     // old one (v2.13). Same transaction, so undo restores them together.
@@ -4528,6 +4540,7 @@
     touchElement(el);
     el.removeAttribute(ANNOTATION_ID_ATTR);
     el.removeAttribute(ANNOTATION_TEXT_ATTR);
+    el.removeAttribute('data-wfp-edit-annotation-scope');
     el.removeAttribute(ANNOTATION_STATUS_ATTR);
     el.removeAttribute(ANNOTATION_REPLY_ATTR);
     endInspectorTxn(ctx);
@@ -4586,7 +4599,7 @@
   }
 
   function refreshExportUi() {
-    const count = getAnnotatedElements(document).length;
+    const count = getAgentNoteCount();
     exportBadge.dataset.count = String(count);
     exportBadge.textContent = count > 0 ? String(count) : '';
     // v2.21 — the notes-panel toolbar badge tracks the same count.
@@ -4613,6 +4626,8 @@
     // no-op while the panel is closed. Deliberately NOT hooked into
     // refreshAnnotationMarkers(), which runs on every scroll/resize tick.
     renderNotesPanel();
+    if (state.authoringReady) refreshAuthoringUi();
+    refreshGroupNoteUi();
   }
 
   function parseHandoffPayload() {
@@ -4639,6 +4654,7 @@
     rootEl.querySelectorAll(`script[${HANDOFF_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     rootEl.querySelectorAll(`script[${RESULTS_SCRIPT_ATTR}]`).forEach((script) => script.remove());
     [rootEl, ...rootEl.querySelectorAll('*')].forEach((el) => {
+      if (el.hasAttribute && el.hasAttribute(GROUP_HANDOFF_ATTR)) el.removeAttribute(GROUP_HANDOFF_ATTR);
       if (el.hasAttribute && el.hasAttribute(HANDOFF_TARGET_ATTR)) el.removeAttribute(HANDOFF_TARGET_ATTR);
       // v2.14 — edit-ledger anchors left behind by agent-processed files.
       // The handoff build re-stamps fresh ids on the clone after this pass.
@@ -4685,8 +4701,10 @@
     const results = parseAgentResults();
     if (results) state.agentResultsSummary = results.counts;
     if (!payload && !results) return;
+    reimportGroupNotes(payload, results);
     if (payload) {
       for (const annotation of payload.annotations) {
+        if (!annotation || typeof annotation !== 'object') continue;
         const id = typeof annotation.id === 'string' ? annotation.id : '';
         const instruction = normalizeAnnotationText(annotation.instruction);
         if (!id || !instruction) continue;
@@ -4694,14 +4712,23 @@
         // A done result resolves the note even if the agent left the
         // metadata in place — stale annotations must not re-import.
         if (result && result.status === 'done') continue;
-        const targets = getHandoffTargetsById(document, id);
+        const scope = annotation.scope || 'element';
+        if (!['element', 'slide', 'deck'].includes(scope)) continue;
+        const targets = getHandoffTargetsById(document, id).filter((target) => {
+          if (scope === 'slide') return !isFlatMode() && getSlides().includes(target);
+          if (scope === 'deck') return !isFlatMode() && target === getDeckRoot();
+          return target !== getDeckRoot() && !target.matches('.slide');
+        });
         if (!targets.length) continue;
         for (const target of targets) {
           target.setAttribute(ANNOTATION_ID_ATTR, id);
           target.setAttribute(ANNOTATION_TEXT_ATTR, instruction);
-          if (result) {
-            target.setAttribute(ANNOTATION_STATUS_ATTR, result.status);
-            if (result.note) target.setAttribute(ANNOTATION_REPLY_ATTR, result.note);
+          if (scope !== 'element') target.setAttribute('data-wfp-edit-annotation-scope', scope);
+          const reply = result || (['skipped', 'needs-input'].includes(annotation.status)
+            ? { status: annotation.status, note: normalizeAnnotationText(annotation.reply) } : null);
+          if (reply) {
+            target.setAttribute(ANNOTATION_STATUS_ATTR, reply.status);
+            if (reply.note) target.setAttribute(ANNOTATION_REPLY_ATTR, reply.note);
           }
         }
       }
@@ -6005,14 +6032,16 @@
       const deckIndex = slide ? slides.indexOf(slide) : -1;
       return {
         id: getAnnotationId(el),
+        scope: getAnnotationScope(el),
         el,
         slideIndex: deckIndex >= 0 ? deckIndex : (slide ? allSlides.indexOf(slide) : -1),
-        snippet: summarizeTargetText(el).slice(0, 60),
+        snippet: getAnnotationScope(el) === 'deck' ? 'Whole deck'
+          : getAnnotationScope(el) === 'slide' ? 'Whole slide' : summarizeTargetText(el).slice(0, 60),
         instruction: getAnnotationText(el),
         status: el.getAttribute(ANNOTATION_STATUS_ATTR) || '',
         reply: normalizeAnnotationText(el.getAttribute(ANNOTATION_REPLY_ATTR)),
       };
-    });
+    }).concat(groupPanelEntries());
   }
 
   function makeNotesCard(entry, selectedId) {
@@ -6020,6 +6049,7 @@
     card.type = 'button';
     card.className = 'wfpe-notes-card';
     card.dataset.annotationId = entry.id;
+    card.dataset.scope = entry.scope;
     if (entry.status) card.dataset.status = entry.status;
     card.dataset.active = (selectedId && entry.id === selectedId) ? 'true' : 'false';
     card.setAttribute('aria-label', 'Go to agent note');
@@ -6058,12 +6088,15 @@
   function renderNotesPanel() {
     if (!state.notesPanelOpen) return;
     const entries = collectNotesPanelEntries();
-    const selectedId = getAnnotationId(state.selected);
+    const selectedId = (state.groupNotesUi && !state.groupNotesUi.editor.hidden && state.groupNotesUi.id) || getAnnotationId(state.selected) || getAnnotationId(state.scopedNotesUi && state.scopedNotesUi.target);
+    refreshScopedNoteEditor();
     notesList.replaceChildren();
     if (entries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'wfpe-notes-empty';
-      empty.textContent = 'No agent notes yet. Select an element and add one in the inspector.';
+      empty.textContent = state.scopedNotesUi
+        ? 'No agent notes yet. Add a slide or deck note above, or select an element.'
+        : 'No agent notes yet. Select an element and add one in the inspector.';
       notesList.appendChild(empty);
     } else {
       for (const entry of entries) notesList.appendChild(makeNotesCard(entry, selectedId));
@@ -6074,6 +6107,8 @@
   }
 
   function jumpToAnnotation(id) {
+    if (jumpToGroupNote(id)) return;
+    if (state.groupNotesUi) state.groupNotesUi.editor.hidden = true;
     const el = findAnnotationElementById(id);
     if (!el) {
       // Stale card (note deleted between fan-outs) — degrade to a
@@ -6082,6 +6117,23 @@
       return;
     }
     closeExportMenu();
+    const scope = getAnnotationScope(el);
+    if (scope !== 'element') {
+      if (scope === 'slide') {
+        if (state.overviewMode) setOverviewMode(false);
+        state.deckMutated = true;
+        synchronizeSlideState(el);
+      }
+      setSelected(null);
+      state.notesCursorId = id;
+      openNotesPanel();
+      openScopedNoteEditor(el, scope);
+      return;
+    }
+    if (state.scopedNotesUi) {
+      state.scopedNotesUi.target = null;
+      state.scopedNotesUi.editor.hidden = true;
+    }
     if (state.overviewMode) setOverviewMode(false);
     // Selection machinery requires edit mode; a jump from edit-off is an
     // explicit "take me to this note", so turning it on is the intent.
@@ -6110,7 +6162,7 @@
     const entries = collectNotesPanelEntries();
     if (entries.length === 0) return;
     if (!state.notesPanelOpen) openNotesPanel();
-    const selectedId = getAnnotationId(state.selected);
+    const selectedId = (state.groupNotesUi && !state.groupNotesUi.editor.hidden && state.groupNotesUi.id) || getAnnotationId(state.selected) || getAnnotationId(state.scopedNotesUi && state.scopedNotesUi.target);
     let index = selectedId
       ? entries.findIndex((entry) => entry.id === selectedId)
       : -1;
@@ -6121,6 +6173,388 @@
       ? (delta > 0 ? 0 : entries.length - 1)
       : (index + delta + entries.length) % entries.length;
     jumpToAnnotation(entries[next].id);
+  }
+
+  // Structural scopes share annotation IDs and attribute history with element
+  // notes. They are never selectable canvas elements or floating element pins.
+  function initScopedNotes() {
+    if (state.scopedNotesUi || state.markdownMode || isFlatMode()) return;
+    const style = document.createElement('style');
+    style.textContent = `
+      #wfp-editor-root .wfpe-notes-panel { max-height:calc(100vh - 76px); overflow-y:auto; overscroll-behavior:contain; }
+      #wfp-editor-root .wfpe-scoped-note-actions { display:flex; gap:6px; padding:8px; }
+      #wfp-editor-root .wfpe-scoped-note-actions button { flex:1; border:1px solid rgba(255,255,255,.2); border-radius:6px; background:rgba(255,255,255,.08); color:inherit; font:inherit; padding:6px; cursor:pointer; }
+      #wfp-editor-root .wfpe-scoped-note-actions button:disabled { opacity:.4; cursor:default; }
+      #wfp-editor-root .wfpe-scoped-note-editor { padding:0 8px 8px; }
+      #wfp-editor-root .wfpe-scoped-note-editor[hidden] { display:none; }
+      #wfp-editor-root .wfpe-scoped-note-label { display:block; margin:3px 0 6px; font-weight:600; }
+      #wfp-editor-root .wfpe-scoped-note-input { display:block; box-sizing:border-box; width:100%; min-height:76px; max-height:130px; resize:vertical; border:1px solid rgba(255,255,255,.25); border-radius:6px; background:rgba(0,0,0,.18); color:inherit; font:12px/1.4 system-ui; padding:8px; }
+      #wfp-editor-root .wfpe-scoped-note-status { font-size:10px; opacity:.8; }
+      #wfp-editor-root .wfpe-scoped-note-reply { font-size:11px; margin:5px 0; }
+    `;
+    root.appendChild(style);
+    const actions = document.createElement('div');
+    actions.className = 'wfpe-scoped-note-actions';
+    const editor = document.createElement('div');
+    editor.className = 'wfpe-scoped-note-editor';
+    editor.hidden = true;
+    const label = document.createElement('label');
+    label.className = 'wfpe-scoped-note-label';
+    label.htmlFor = 'wfpe-scoped-note-input';
+    const input = document.createElement('textarea');
+    input.id = 'wfpe-scoped-note-input';
+    input.className = 'wfpe-scoped-note-input';
+    input.placeholder = 'What should the agent change?';
+    const status = document.createElement('div');
+    status.className = 'wfpe-scoped-note-status';
+    status.setAttribute('aria-live', 'polite');
+    const reply = document.createElement('div');
+    reply.className = 'wfpe-scoped-note-reply';
+    const buttons = document.createElement('div');
+    buttons.className = 'wfpe-scoped-note-actions';
+    const ui = { editor, label, input, status, reply, target:null, scope:null, dirty:false, drafts:new Map() };
+    state.scopedNotesUi = ui;
+    function button(parent, action, text, callback) {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.dataset.action = action;
+      el.textContent = text;
+      el.addEventListener('click', callback);
+      parent.appendChild(el);
+      return el;
+    }
+    button(actions, 'note-slide', 'Current slide note', () => openScopedNoteEditor(getActiveSlide(), 'slide'));
+    button(actions, 'note-deck', 'Whole deck note', () => openScopedNoteEditor(getDeckRoot(), 'deck'));
+    ui.save = button(buttons, 'scoped-note-save', 'Save note', () => {
+      if (!ui.target || !ui.target.isConnected) return;
+      const target = ui.target;
+      const text = input.value;
+      ui.drafts.delete(target);
+      ui.dirty = false;
+      saveAnnotation(target, text, ui.scope);
+      refreshScopedNoteEditor();
+    });
+    ui.remove = button(buttons, 'scoped-note-delete', 'Delete note', () => {
+      if (!ui.target || !ui.target.isConnected) return;
+      ui.drafts.delete(ui.target);
+      ui.dirty = false;
+      deleteAnnotation(ui.target);
+      refreshScopedNoteEditor();
+    });
+    button(buttons, 'scoped-note-close', 'Close', () => {
+      ui.target = null;
+      editor.hidden = true;
+      renderNotesPanel();
+    });
+    input.addEventListener('input', () => {
+      if (!ui.target) return;
+      ui.dirty = normalizeAnnotationText(input.value) !== getAnnotationText(ui.target);
+      if (ui.dirty) ui.drafts.set(ui.target, input.value);
+      else ui.drafts.delete(ui.target);
+      status.textContent = ui.dirty ? 'Unsaved' : (hasAnnotation(ui.target) ? 'Saved' : '');
+    });
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        ui.drafts.delete(ui.target);
+        ui.dirty = false;
+        refreshScopedNoteEditor();
+        input.blur();
+      } else if (event.key === 'Enter' && event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        ui.save.click();
+      }
+    });
+    editor.append(label, input, status, reply, buttons);
+    notesPanel.insertBefore(actions, notesList);
+    notesPanel.insertBefore(editor, notesList);
+  }
+
+  function openScopedNoteEditor(target, scope) {
+    if (state.groupNotesUi) state.groupNotesUi.editor.hidden = true;
+    const ui = state.scopedNotesUi;
+    if (!ui || !target || !target.isConnected) return;
+    if (state.editingText) endTextEdit();
+    setSelected(null);
+    ui.target = target;
+    ui.scope = scope;
+    ui.dirty = ui.drafts.has(target);
+    ui.input.value = ui.dirty ? ui.drafts.get(target) : getAnnotationText(target);
+    ui.editor.hidden = false;
+    state.notesCursorId = getAnnotationId(target) || null;
+    refreshExportUi();
+  }
+
+  function refreshScopedNoteEditor() {
+    const ui = state.scopedNotesUi;
+    if (!ui || !ui.target) return;
+    if (!ui.target.isConnected) {
+      ui.editor.hidden = true;
+      return;
+    }
+    ui.editor.hidden = false;
+    const index = getSlides().indexOf(ui.target);
+    ui.label.textContent = ui.scope === 'deck' ? 'Whole deck' : `Whole slide ${index + 1}`;
+    if (!ui.dirty) ui.input.value = getAnnotationText(ui.target);
+    ui.status.textContent = ui.dirty ? 'Unsaved' : (hasAnnotation(ui.target) ? 'Saved' : '');
+    ui.remove.disabled = !hasAnnotation(ui.target);
+    const result = ui.target.getAttribute(ANNOTATION_STATUS_ATTR);
+    const reply = normalizeAnnotationText(ui.target.getAttribute(ANNOTATION_REPLY_ATTR));
+    ui.reply.textContent = result ? `${result === 'needs-input' ? 'Agent needs input' : 'Agent skipped'}${reply ? ': ' + reply : '.'}` : '';
+    positionInspectorStack();
+  }
+
+  function hasPendingNoteDraft() {
+    if (state.groupNotesUi?.dirty && state.groupNotesUi.owner?.isConnected) return true;
+    const drafts = state.scopedNotesUi?.drafts;
+    if (drafts) {
+      for (const target of drafts.keys()) {
+        if (!target.isConnected) drafts.delete(target);
+      }
+      if (drafts.size) return true;
+    }
+    return annotationRow.dataset.dirty === 'true';
+  }
+  // Shared instructions have their own slide-owned records. Individual notes
+  // stay untouched, and overlapping groups can share stable member identities.
+  function readGroupNotes(owner) {
+    try {
+      const records = JSON.parse(owner.getAttribute(GROUP_NOTES_ATTR) || '[]');
+      return Array.isArray(records) ? records.filter(record => record && typeof record.id === 'string' &&
+        typeof record.instruction === 'string' && Array.isArray(record.memberIds) &&
+        record.memberIds.length >= 2 && record.memberIds.every(id => typeof id === 'string' && id) &&
+        new Set(record.memberIds).size === record.memberIds.length) : [];
+    } catch (_) { return []; }
+  }
+
+  function writeGroupNotes(owner, records) {
+    if (records.length) owner.setAttribute(GROUP_NOTES_ATTR, JSON.stringify(records));
+    else owner.removeAttribute(GROUP_NOTES_ATTR);
+  }
+
+  function resolveGroupMembers(owner, record, attribute = GROUP_TARGET_ATTR) {
+    const candidates = [...owner.querySelectorAll(`[${attribute}]`)];
+    const members = [], missing = [];
+    for (const id of record.memberIds) {
+      const matches = candidates.filter(el => el.getAttribute(attribute) === id &&
+        (!el.closest('.slide') || el.closest('.slide') === owner));
+      if (matches.length === 1) members.push(matches[0]);
+      else missing.push(id);
+    }
+    return { members, missing };
+  }
+
+  function collectGroupNotes(rootNode = document) {
+    const rootEl = rootNode.documentElement || rootNode;
+    const owners = [rootEl, ...rootEl.querySelectorAll(`[${GROUP_NOTES_ATTR}]`)].filter(el => el.hasAttribute(GROUP_NOTES_ATTR));
+    return owners.flatMap(owner => readGroupNotes(owner).map(record => ({ owner, record, ...resolveGroupMembers(owner, record) })));
+  }
+
+  function getAgentNoteCount() {
+    return getAnnotatedElements(document).length + collectGroupNotes().length;
+  }
+
+  function groupPanelEntries() {
+    return collectGroupNotes().map(({owner, record, members, missing}) => ({
+      id:record.id, scope:'group', el:owner, slideIndex:getSlides().indexOf(owner),
+      snippet:`Group of ${record.memberIds.length} items${missing.length ? ` · ${missing.length} missing` : ''}`,
+      instruction:record.instruction, status:record.status || '', reply:record.reply || '', members,
+    }));
+  }
+
+  function initGroupNotes() {
+    if (state.markdownMode) return;
+    const action = document.createElement('button');
+    action.type = 'button';
+    action.className = 'wfpe-group-note-action';
+    action.hidden = true;
+    const hint = document.createElement('p');
+    hint.className = 'wfpe-selection-hint';
+    hint.textContent = 'Drag empty space to select items. Shift-drag over content; Cmd/Ctrl adds items.';
+    inspectorBody.append(action, hint);
+    const editor = document.createElement('div');
+    editor.className = 'wfpe-group-note-editor';
+    editor.hidden = true;
+    const label = document.createElement('label');
+    label.htmlFor = 'wfpe-group-note-input';
+    const input = document.createElement('textarea');
+    input.id = 'wfpe-group-note-input';
+    input.className = 'wfpe-group-note-input';
+    input.placeholder = 'What should the agent change for these items together?';
+    const status = document.createElement('div');
+    status.setAttribute('aria-live','polite');
+    const buttons = document.createElement('div');
+    buttons.className = 'wfpe-group-note-buttons';
+    editor.append(label, input, status, buttons);
+    notesPanel.insertBefore(editor, notesList);
+    const style = document.createElement('style');
+    style.textContent = `
+      #wfp-editor-root .wfpe-group-note-action, #wfp-editor-root .wfpe-group-note-editor button { pointer-events:auto; background:#ffffff18; color:inherit; border:1px solid #ffffff40; border-radius:5px; padding:7px; font:inherit; cursor:pointer; }
+      #wfp-editor-root .wfpe-group-note-action { margin:8px 12px; }
+      #wfp-editor-root .wfpe-group-note-action[hidden], #wfp-editor-root .wfpe-group-note-editor[hidden] { display:none!important; }
+      #wfp-editor-root .wfpe-group-note-editor { padding:8px; font:12px/1.4 system-ui; }
+      #wfp-editor-root .wfpe-group-note-editor label { display:block; font-weight:600; margin-bottom:6px; }
+      #wfp-editor-root .wfpe-group-note-input { box-sizing:border-box; width:100%; min-height:70px; max-height:130px; resize:vertical; color:inherit; background:#0002; border:1px solid #ffffff40; border-radius:5px; padding:8px; font:inherit; }
+      #wfp-editor-root .wfpe-group-note-editor button { margin:5px 4px 0 0; }
+      #wfp-editor-root .wfpe-group-note-buttons { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px; margin-top:5px; }
+      #wfp-editor-root .wfpe-group-note-buttons button { margin:0; }
+      #wfp-editor-root:has(.wfpe-notes-dock[data-visible="true"] .wfpe-group-note-editor:not([hidden])) .wfpe-notes-panel { max-height:50vh; overflow-y:auto; overscroll-behavior:contain; }
+      #wfp-editor-root:has(.wfpe-notes-dock[data-visible="true"] .wfpe-group-note-editor:not([hidden])) .wfpe-inspector-body { max-height:calc(50vh - 112px); }
+      #wfp-editor-root .wfpe-selection-hint { font:10px/1.4 system-ui; opacity:.8; margin:6px 12px 10px; }
+    `;
+    root.appendChild(style);
+    const ui = { action, editor, label, input, status, owner:null, id:null, members:[], dirty:false };
+    state.groupNotesUi = ui;
+    function button(text, callback) {
+      const el = document.createElement('button');
+      el.type = 'button'; el.textContent = text;
+      el.addEventListener('click', callback); buttons.appendChild(el); return el;
+    }
+    button('Save group note', () => saveGroupNote());
+    ui.remove = button('Delete group note', () => saveGroupNote(true));
+    button('Close group note', () => { ui.editor.hidden = true; });
+    button('Discard group draft', () => { ui.dirty = false; refreshGroupNoteUi(); ui.editor.hidden = true; });
+    action.addEventListener('click', () => {
+      const members = getSelectedElements();
+      if (members.length < 2) return;
+      const owner = getActiveSlide();
+      const match = collectGroupNotes().find(group => group.owner === owner && !group.missing.length &&
+        group.members.length === members.length && group.members.every(el => members.includes(el)));
+      openGroupNoteEditor(owner, match?.record.id || null, members);
+    });
+    input.addEventListener('input', () => {
+      const record = ui.owner && readGroupNotes(ui.owner).find(record => record.id === ui.id);
+      ui.dirty = normalizeAnnotationText(input.value) !== (record?.instruction || '');
+      ui.status.textContent = ui.dirty ? 'Unsaved group draft' : record ? 'Saved' : '';
+    });
+    input.addEventListener('keydown', event => {
+      event.stopPropagation();
+      if (event.key === 'Escape') { event.preventDefault(); ui.dirty = false; refreshGroupNoteUi(); input.blur(); }
+      if (event.key === 'Enter' && event.shiftKey) { event.preventDefault(); saveGroupNote(); }
+    });
+    refreshGroupNoteUi();
+  }
+
+  function openGroupNoteEditor(owner, id, members) {
+    const ui = state.groupNotesUi;
+    if (!ui || !owner?.isConnected) return;
+    if (ui.dirty && (ui.owner !== owner || ui.id !== id || !selectionArraysEqual(ui.members, members))) {
+      ui.editor.hidden = false; openNotesPanel();
+      showToast(document.body, 'Save or discard the current group draft before opening another group.'); return;
+    }
+    if (state.editingText) endTextEdit();
+    if (state.scopedNotesUi) { state.scopedNotesUi.target = null; state.scopedNotesUi.editor.hidden = true; }
+    ui.owner = owner; ui.id = id; ui.members = [...members];
+    ui.editor.hidden = false;
+    openNotesPanel(); refreshGroupNoteUi();
+  }
+
+  function refreshGroupNoteUi() {
+    const ui = state.groupNotesUi;
+    if (!ui) return;
+    const count = getSelectedElements().length;
+    ui.action.hidden = !state.editMode || state.overviewMode || count < 2;
+    ui.action.textContent = `Note selected items (${count})`;
+    if (!ui.owner) return;
+    if (!ui.owner.isConnected) { ui.editor.hidden = true; return; }
+    const record = readGroupNotes(ui.owner).find(record => record.id === ui.id);
+    const resolved = record ? resolveGroupMembers(ui.owner, record) : { missing: ui.members.filter(el => !el.isConnected || !ui.owner.contains(el)) };
+    ui.label.textContent = `Shared note · ${record?.memberIds.length || ui.members.length} items`;
+    if (!ui.dirty) ui.input.value = record?.instruction || '';
+    ui.status.textContent = ui.dirty ? 'Unsaved group draft' : resolved.missing.length ? `${resolved.missing.length} missing items — restore them before the agent applies this note.` : record ? 'Saved' : '';
+    if (record?.status && !ui.dirty) ui.status.textContent += ` · ${record.status}: ${record.reply || ''}`;
+    ui.remove.disabled = !record;
+  }
+
+  function saveGroupNote(remove = false) {
+    const ui = state.groupNotesUi;
+    if (!ui?.owner?.isConnected) return;
+    const records = readGroupNotes(ui.owner);
+    const existing = records.find(record => record.id === ui.id);
+    const instruction = normalizeAnnotationText(ui.input.value);
+    if (!remove && !instruction) { showToast(document.body, 'Write a group instruction before saving.'); return; }
+    if (!remove && !existing && (ui.members.length < 2 || ui.members.some(el => !el.isConnected || !ui.owner.contains(el)))) {
+      showToast(document.body, 'Some selected items are missing. Select the group again.'); return;
+    }
+    if (remove && !existing) return;
+    if (!remove && existing?.instruction === instruction) { ui.dirty = false; refreshGroupNoteUi(); return; }
+    const ctx = startInspectorTxn();
+    touchElement(ui.owner);
+    if (!ui.owner.hasAttribute(GROUP_TARGET_ATTR)) ui.owner.setAttribute(GROUP_TARGET_ATTR, generateAnnotationId());
+    let memberIds = existing?.memberIds;
+    if (!remove && !memberIds) memberIds = ui.members.map(el => {
+      touchElement(el);
+      if (!el.hasAttribute(GROUP_TARGET_ATTR)) el.setAttribute(GROUP_TARGET_ATTR, generateAnnotationId());
+      return el.getAttribute(GROUP_TARGET_ATTR);
+    });
+    if (!ui.id) ui.id = generateAnnotationId();
+    writeGroupNotes(ui.owner, [...records.filter(record => record.id !== ui.id), ...(remove ? [] : [{id:ui.id, instruction, memberIds}])]);
+    const remaining = readGroupNotes(ui.owner);
+    const used = new Set(remaining.flatMap(record => record.memberIds));
+    for (const el of [ui.owner, ...ui.owner.querySelectorAll(`[${GROUP_TARGET_ATTR}]`)]) {
+      if (el === ui.owner ? !remaining.length : !used.has(el.getAttribute(GROUP_TARGET_ATTR))) {
+        touchElement(el); el.removeAttribute(GROUP_TARGET_ATTR);
+      }
+    }
+    ui.dirty = false;
+    endInspectorTxn(ctx);
+    refreshExportUi();
+    showToast(document.body, remove ? 'Group note deleted.' : 'Group note saved.');
+  }
+
+  function jumpToGroupNote(id) {
+    const group = collectGroupNotes().find(group => group.record.id === id);
+    if (!group) return false;
+    if (state.overviewMode) setOverviewMode(false);
+    if (!state.editMode) setEditMode(true);
+    if (group.owner !== getActiveSlide() && group.owner.matches('.slide')) {
+      state.deckMutated = true; synchronizeSlideState(group.owner);
+    }
+    setSelectedElements(group.members);
+    state.notesCursorId = id;
+    openGroupNoteEditor(group.owner, id, group.members);
+    refreshInspector();
+    return true;
+  }
+
+  function collectGroupHandoff(clone) {
+    return collectGroupNotes(clone).map(({owner, record, members, missing}) => {
+      owner.setAttribute(GROUP_HANDOFF_ATTR, owner.getAttribute(GROUP_TARGET_ATTR));
+      const liveGroup = collectGroupNotes().find(group => group.record.id === record.id);
+      const targets = members.map(el => {
+        const id = el.getAttribute(GROUP_TARGET_ATTR);
+        el.setAttribute(GROUP_HANDOFF_ATTR, id);
+        const live = liveGroup?.members.find(member => member.getAttribute(GROUP_TARGET_ATTR) === id);
+        return {id, targetText:summarizeTargetText(el), ...(live ? measureElementForHandoff(live) : {})};
+      });
+      return {...record, scope:'group', ownerId:owner.getAttribute(GROUP_TARGET_ATTR), slideIndex:getSlideIndexForHandoffTarget(clone, owner), targets, missingMemberIds:missing};
+    });
+  }
+
+  function reimportGroupNotes(payload, results) {
+    if (state.markdownMode) return;
+    for (const record of payload?.annotations || []) {
+      if (record?.scope !== 'group' || typeof record.ownerId !== 'string') continue;
+      const anchors = [...document.querySelectorAll(`[${GROUP_HANDOFF_ATTR}]`)];
+      const owners = anchors.filter(el => el.getAttribute(GROUP_HANDOFF_ATTR) === record.ownerId && (getSlides().includes(el) || el === getActiveSlide()));
+      if (owners.length !== 1) continue;
+      const owner = owners[0];
+      const result = results?.byId.get(record.id);
+      const valid = readGroupNotes({getAttribute:() => JSON.stringify([record])})[0];
+      if (!valid || !normalizeAnnotationText(record.instruction)) continue;
+      const remaining = readGroupNotes(owner).filter(existing => existing.id !== record.id);
+      if (result?.status === 'done') { writeGroupNotes(owner, remaining); continue; }
+      owner.setAttribute(GROUP_TARGET_ATTR, record.ownerId);
+      for (const el of anchors) {
+        if (el !== owner && owner.contains(el) && record.memberIds.includes(el.getAttribute(GROUP_HANDOFF_ATTR)))
+          el.setAttribute(GROUP_TARGET_ATTR, el.getAttribute(GROUP_HANDOFF_ATTR));
+      }
+      const next = {id:record.id, instruction:normalizeAnnotationText(record.instruction), memberIds:record.memberIds};
+      const reply = result || (['skipped','needs-input'].includes(record.status) ? record : null);
+      if (reply) { next.status = reply.status; next.reply = normalizeAnnotationText(reply.note || reply.reply); }
+      writeGroupNotes(owner, [...remaining, next]);
+    }
   }
   // ===========================================================================
   // History (undo/redo)
@@ -6142,6 +6576,9 @@
     // run wrappers are gone, so an inspector commit mid-edit (endTxn +
     // beginTxn while wrappers are installed) never records the wrapper.
     if (options.captureHtml) snap.html = textRunNeutralHtml(el);
+    if (options.captureAttributes) {
+      snap.attributes = Object.fromEntries(options.captureAttributes.map((name) => [name, el.getAttribute(name)]));
+    }
     return snap;
   }
 
@@ -6154,6 +6591,10 @@
     if (snap.style === null) el.removeAttribute('style');
     else el.setAttribute('style', snap.style);
     applyEditorDataAttributes(el, snap.editorAttrs || {});
+    for (const [name, value] of Object.entries(snap.attributes || {})) {
+      if (value === null) el.removeAttribute(name);
+      else el.setAttribute(name, value);
+    }
     if (Object.prototype.hasOwnProperty.call(snap, 'html') && el.innerHTML !== snap.html) {
       el.innerHTML = snap.html;
     }
@@ -6164,6 +6605,7 @@
     const bHasHtml = Object.prototype.hasOwnProperty.call(b, 'html');
     return (
       a.style === b.style &&
+      JSON.stringify(a.attributes || {}) === JSON.stringify(b.attributes || {}) &&
       editorDataAttributesEqual(a.editorAttrs, b.editorAttrs) &&
       ((!aHasHtml && !bHasHtml) || a.html === b.html)
     );
@@ -6223,6 +6665,7 @@
     state.txn = {
       snapshots: new Map(),
       captureHtml: !!options.captureHtml,
+      captureAttributes: options.captureAttributes || null,
       flowGroupStates: new Map(),
     };
   }
@@ -6333,6 +6776,7 @@
       state.historyIndex--;
     }
     pruneInactiveFlowUnlockGroups();
+    recoveryContentChanged();
   }
 
   // The single funnel for "an element was attached to or detached from the
@@ -6490,6 +6934,7 @@
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
+    recoveryContentChanged();
   }
 
   function redo() {
@@ -6522,11 +6967,13 @@
     refreshSelection();
     refreshExportUi();
     if (state.overviewMode) buildOverviewOverlay();
+    recoveryContentChanged();
   }
   // ===========================================================================
   // Edit mode
   // ===========================================================================
   function setEditMode(value) {
+    if (state.marquee) finishMarquee(true);
     state.editMode = !!value;
     badge.dataset.mode = state.editMode ? 'on' : 'off';
     toolbar.dataset.mode = state.editMode ? 'on' : 'off';
@@ -6537,6 +6984,7 @@
     }
     refreshAnnotationMarkers();
     renderNotesPanel(); // v2.21 — panel stays populated in both modes
+    refreshAuthoringUi();
   }
 
   // ===========================================================================
@@ -6559,6 +7007,7 @@
   // drag-to-reorder, and delete affordances on top of this state flag.
   // ===========================================================================
   function setOverviewMode(value) {
+    if (state.marquee) finishMarquee(true);
     if (isFlatMode()) {
       state.overviewMode = false;
       overviewBtn.dataset.mode = 'off';
@@ -6585,6 +7034,7 @@
     toolbar.dataset.overviewMode = state.overviewMode ? 'on' : 'off';
     refreshAnnotationMarkers();
     renderNotesPanel(); // v2.21 — panel stays populated in both modes
+    refreshAuthoringUi();
   }
 
   // ---------------------------------------------------------------------------
@@ -6649,6 +7099,7 @@
       del.setAttribute('aria-label', `Delete slide ${i + 1}`);
       del.innerHTML = ICONS.closeSmall;
       thumb.appendChild(del);
+      addOverviewDuplicateButton(thumb, i);
       overviewOverlay.appendChild(thumb);
     }
     for (let i = 0; i <= slides.length; i++) {
@@ -7089,7 +7540,7 @@
     // its job (capture-phase stopPropagation here would otherwise kill
     // it). v2.1.4 added the × button inside each thumb; the navigate
     // path's editor-root + thumb-walk would otherwise intercept it.
-    if (e.target.closest('.wfpe-overview-delete')) return;
+    if (e.target.closest('.wfpe-overview-delete, .wfpe-overview-duplicate')) return;
     // Editor-root clicks normally flow to their own bubble handlers
     // (toolbar Edit / Export / etc.), but the overview thumbs ALSO live
     // under #wfp-editor-root in v2.1.3 — they need to navigate. Filter
@@ -7595,6 +8046,12 @@
   }
 
   function onKeyDown(e) {
+    if (state.marquee) {
+      if (e.key === 'Escape') finishMarquee(true);
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // v2.11 — while the export menu is open it owns Enter/Escape.
     if (state.exportMenuOpen) {
       if (e.key === 'Enter') {
@@ -7677,7 +8134,7 @@
     // opens the panel on first press. With no notes the key is left
     // alone so the host page keeps its normal meaning.
     if ((e.key === 'n' || e.key === 'N') && noModifier) {
-      if (getAnnotatedElements(document).length === 0) return;
+      if (getAgentNoteCount() === 0) return;
       e.preventDefault();
       e.stopPropagation();
       cycleAnnotation(e.shiftKey ? -1 : 1);
@@ -7863,6 +8320,293 @@
   }
 
   document.addEventListener('keydown', onKeyDown, true);
+  // Slide reuse and small content-authoring actions. UI stays in editor root;
+  // inserted content and duplicate-specific CSS belong to the exported deck.
+  let authoringUi = null;
+  let duplicateSerial = 0;
+  let imageRequestSerial = 0;
+
+  function initAuthoring() {
+    if (authoringUi) return;
+    const style = document.createElement('style');
+    style.textContent = `
+      #wfp-editor-root .wfpe-authoring-button { pointer-events: auto; font: inherit; color: inherit; border: 1px solid #ffffff35; border-radius: 6px; background: #ffffff12; padding: 7px 10px; cursor: pointer; white-space: nowrap; }
+      #wfp-editor-root .wfpe-authoring-button:hover { background: #ffffff25; }
+      #wfp-editor-root .wfpe-authoring-button:disabled { opacity: .45; cursor: default; }
+      #wfp-editor-root .wfpe-authoring-button[hidden] { display: none !important; }
+      #wfp-editor-root .wfpe-add-text[hidden] { display: none !important; }
+      #wfp-editor-root .wfpe-toolbar:has(.wfpe-add-text:not([hidden])) .wfpe-toolbar-fold-inner .wfpe-toolbar-btn { width: 26px; }
+      #wfp-editor-root .wfpe-overview-duplicate { position: absolute; top: 6px; right: 40px; z-index: 4; color: white; background: #222d3d; font: 11px system-ui; border: 1px solid #ffffff55; border-radius: 5px; padding: 5px 7px; cursor: pointer; pointer-events: auto; }
+      #wfp-editor-root .wfpe-authoring-replace { margin: 8px 12px; }
+    `;
+    root.appendChild(style);
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.dataset.action = 'add-text';
+    add.className = 'wfpe-toolbar-btn wfpe-add-text';
+    add.setAttribute('aria-label', 'Add text');
+    add.innerHTML = '<svg class="wfpe-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h12M9 5v14M6 19h6M18 10v8M14 14h8"/></svg>';
+    add.title = 'Add text';
+    toolbarFoldInner.insertBefore(add, exportBtn);
+    add.addEventListener('click', addTextToCurrentSlide);
+    const replace = document.createElement('button');
+    replace.type = 'button';
+    replace.className = 'wfpe-authoring-button wfpe-authoring-replace';
+    replace.textContent = 'Replace image';
+    inspectorBody.appendChild(replace);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp';
+    input.hidden = true;
+    input.setAttribute('aria-label', 'Choose replacement image');
+    root.appendChild(input);
+    authoringUi = { add, replace, input, imageTarget: null };
+    state.authoringReady = true;
+    replace.addEventListener('click', () => {
+      if (!canReplaceSelectedImage()) return;
+      if (state.editingText) endTextEdit();
+      authoringUi.imageTarget = state.selected;
+      input.value = '';
+      input.click();
+    });
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      const target = authoringUi.imageTarget;
+      authoringUi.imageTarget = null;
+      if (file && target) replaceImageFromFile(target, file);
+    });
+    input.addEventListener('cancel', () => { authoringUi.imageTarget = null; });
+    refreshAuthoringUi();
+  }
+
+  function canReplaceSelectedImage() {
+    return state.editMode && !state.markdownMode && !state.overviewMode && !hasMultiSelection() &&
+      state.selected && state.selected.tagName === 'IMG' && state.selected.isConnected;
+  }
+
+  function refreshAuthoringUi() {
+    if (!authoringUi) return;
+    authoringUi.add.hidden = !state.editMode || state.markdownMode || state.overviewMode || !getActiveSlide();
+    authoringUi.replace.hidden = !canReplaceSelectedImage();
+  }
+
+  function addTextToCurrentSlide() {
+    const slide = getActiveSlide();
+    if (!state.editMode || state.markdownMode || state.overviewMode || !slide) return;
+    if (state.editingText) endTextEdit();
+    flushPendingTxnSessions();
+    const previousSelectedEl = state.selected;
+    const text = document.createElement('div');
+    text.textContent = 'Add your text';
+    text.style.cssText = 'position:absolute;margin:0;padding:0;font-size:28px;line-height:1.25;min-height:1.25em;max-width:none;z-index:20;';
+    slide.appendChild(text);
+    // Use the actual containing block, including in a static flat document.
+    // Viewport intersection keeps the box visible after scrolling; the scale
+    // comes from the containing block so authored deck transforms are honored.
+    const parent = text.offsetParent || document.documentElement;
+    const parentRect = parent.getBoundingClientRect();
+    const sx = parent.offsetWidth ? parentRect.width / parent.offsetWidth : 1;
+    const sy = parent.offsetHeight ? parentRect.height / parent.offsetHeight : sx;
+    const rect = slide.getBoundingClientRect();
+    const left = Math.max(0, rect.left);
+    const top = Math.max(0, rect.top);
+    const right = Math.min(innerWidth, rect.right);
+    const bottom = Math.min(innerHeight, rect.bottom);
+    const width = Math.max(60, Math.min(360, (right - left) / (sx || 1) * .6));
+    const x = left + Math.max(0, (right - left - width * sx) / 2);
+    const y = top + Math.max(0, (bottom - top) / 2 - 22 * sy);
+    text.style.width = `${width}px`;
+    text.style.left = `${(x - parentRect.left) / (sx || 1) - parent.clientLeft + parent.scrollLeft}px`;
+    text.style.top = `${(y - parentRect.top) / (sy || 1) - parent.clientTop + parent.scrollTop}px`;
+    pushElementInsertEntry({ type: 'elementInsert', slideEl: slide, parentEl: slide,
+      insertedEl: text, nextSiblingEl: null, previousSelectedEl });
+    setSelected(text);
+    refreshInspector();
+    startTextEdit(text);
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return text;
+  }
+
+  async function replaceImageFromFile(img, file) {
+    const request = ++imageRequestSerial;
+    const supported = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp']);
+    if (!supported.has(file.type.toLowerCase())) {
+      showToast(img, 'Choose a PNG, JPEG, GIF, WebP, AVIF or BMP image. SVG and other file types are not supported.');
+      return false;
+    }
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const probe = new Image();
+      probe.src = dataUrl;
+      await probe.decode();
+      if (request !== imageRequestSerial || !img.isConnected || !getActiveSlide()?.contains(img)) return false;
+      if (state.editingText) endTextEdit();
+      const computed = getComputedStyle(img);
+      const width = computed.width;
+      const height = computed.height;
+      beginTxn({ captureAttributes: ['src', 'srcset', 'sizes', 'media', 'type'] });
+      touchElement(img);
+      // A picture's source wins over img.src. Keep the authored nodes so Undo
+      // can restore responsive art direction without recreating DOM identities.
+      if (img.parentElement?.tagName === 'PICTURE') {
+        for (const source of img.parentElement.querySelectorAll('source')) {
+          touchElement(source);
+          source.removeAttribute('srcset');
+        }
+      }
+      img.style.width = width;
+      img.style.height = height;
+      img.removeAttribute('srcset');
+      img.removeAttribute('sizes');
+      img.src = dataUrl;
+      endTxn();
+      refreshSelection();
+      refreshExportUi();
+      return true;
+    } catch (_) {
+      if (img.isConnected) showToast(img, 'This image could not be opened. Choose another image file.');
+      return false;
+    }
+  }
+
+  function addOverviewDuplicateButton(thumb, index) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'wfpe-overview-duplicate';
+    button.textContent = 'Duplicate';
+    button.setAttribute('aria-label', `Duplicate slide ${index + 1}`);
+    button.title = 'Duplicate slide';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      duplicateSlideFromOverview(getSlides()[index]);
+    });
+    thumb.appendChild(button);
+  }
+
+  function rewriteDuplicateIds(value, ids) {
+    // Token-aware hash rewriting handles both CSS ID selectors and SVG url().
+    // CSS.escape permits authored ids containing punctuation in selectors.
+    let output = value;
+    for (const [oldId, newId] of ids) {
+      const escaped = CSS.escape(oldId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      output = output.replace(new RegExp(`#${escaped}(?![\\w-])`, 'g'), `#${CSS.escape(newId)}`);
+    }
+    return output;
+  }
+
+  function rewriteDuplicateUrls(value, ids) {
+    return value.replace(/url\(\s*(['"]?)#([^)'"\s]+)\1\s*\)/g, (match, quote, id) =>
+      ids.has(id) ? `url("#${ids.get(id)}")` : match);
+  }
+
+  function rewriteDuplicateStyleRules(rules, ids, onlyChangedSelectors, cloneId = '') {
+    const collected = [];
+    for (const rule of rules) {
+      if (rule.selectorText) {
+        const declarations = rewriteDuplicateUrls(rule.style.cssText, ids);
+        const selectors = splitSelectorList(rule.selectorText).map((selector) => ({
+          original: selector, rewritten: rewriteDuplicateIds(selector, ids),
+        })).filter((selector) => !onlyChangedSelectors || selector.original !== selector.rewritten || declarations !== rule.style.cssText);
+        const scoped = selectors.map(({ rewritten }) => {
+          if (!cloneId) return rewritten;
+          const scope = `:where(#${CSS.escape(cloneId)}, #${CSS.escape(cloneId)} *)`;
+          // Keep pseudo-elements last; the zero-specificity restriction stops
+          // remapped class rules from changing the source or another slide.
+          const pseudo = rewritten.match(/(::[\w-]+(?:\([^)]*\))?)$/);
+          return pseudo ? rewritten.slice(0, -pseudo[0].length) + scope + pseudo[0] : rewritten + scope;
+        });
+        if (scoped.length) collected.push(`${scoped.join(',')}{${declarations}}`);
+      } else if (rule.cssRules) {
+        const inner = rewriteDuplicateStyleRules(rule.cssRules, ids, onlyChangedSelectors, cloneId);
+        if (inner) collected.push(`${rule.cssText.slice(0, rule.cssText.indexOf('{'))}{${inner}}`);
+      } else if (!onlyChangedSelectors) collected.push(rule.cssText);
+    }
+    return collected.join('\n');
+  }
+
+  function duplicateIdStyles(ids, source, cloneId) {
+    const output = [];
+    for (const sheet of document.styleSheets) {
+      if (sheet.ownerNode && (root.contains(sheet.ownerNode) || source.contains(sheet.ownerNode))) continue;
+      if (sheet.disabled) continue;
+      try {
+        const css = rewriteDuplicateStyleRules(sheet.cssRules, ids, true, cloneId);
+        output.push(sheet.media.mediaText ? `@media ${sheet.media.mediaText}{${css}}` : css);
+      } catch (_) { /* Cross-origin CSS is unreadable. */ }
+    }
+    return output.filter(Boolean).join('\n');
+  }
+
+  function duplicateSlideFromOverview(source) {
+    const deck = getDeckRoot();
+    if (!source || source.parentElement !== deck || !state.overviewMode) return null;
+    flushPendingTxnSessions();
+    const sourceStyle = getComputedStyle(source);
+    const decoration = {};
+    for (const property of ['background-color', 'background-image', 'background-position', 'background-size', 'background-repeat', 'color']) {
+      decoration[property] = sourceStyle.getPropertyValue(property);
+    }
+    const clone = source.cloneNode(true);
+    // Never replay executable scripts or an old handoff metadata payload.
+    clone.querySelectorAll('script').forEach((script) => script.remove());
+    stripEditorArtifactsFrom(clone);
+    const ids = new Map();
+    for (const node of [clone, ...clone.querySelectorAll('[id]')]) {
+      if (!node.id) continue;
+      const old = node.id;
+      let id;
+      do { id = `${old}-copy-${++duplicateSerial}`; } while (document.getElementById(id));
+      ids.set(old, id);
+      node.id = id;
+    }
+    if (!clone.id) clone.id = nextBlankSlideId(deck);
+    const idRefs = new Set(['for', 'list', 'form', 'headers', 'aria-labelledby', 'aria-describedby', 'aria-controls', 'aria-owns', 'aria-flowto', 'aria-details', 'aria-errormessage', 'aria-activedescendant']);
+    for (const node of [clone, ...clone.querySelectorAll('*')]) {
+      for (const attr of [...node.attributes]) {
+        if (idRefs.has(attr.name)) {
+          node.setAttribute(attr.name, attr.value.split(/\s+/).map((id) => ids.get(id) || id).join(' '));
+        } else if ((attr.name === 'href' || attr.name === 'xlink:href') && attr.value.startsWith('#')) {
+          const id = ids.get(attr.value.slice(1));
+          if (id) node.setAttribute(attr.name, '#' + id);
+        } else if (attr.name === 'style' || /url\(/.test(attr.value)) {
+          node.setAttribute(attr.name, rewriteDuplicateUrls(attr.value, ids));
+        }
+      }
+      if (node.tagName === 'STYLE') {
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync(node.textContent);
+        node.textContent = rewriteDuplicateStyleRules(sheet.cssRules, ids, false, clone.id);
+      }
+    }
+    const css = duplicateIdStyles(ids, source, clone.id);
+    if (css) {
+      const style = document.createElement('style');
+      style.textContent = css;
+      clone.appendChild(style);
+    }
+    setSlideActive(clone, false);
+    const beforeSibling = source.nextSibling;
+    deck.insertBefore(clone, beforeSibling);
+    const cloneStyle = getComputedStyle(clone);
+    for (const [property, value] of Object.entries(decoration)) {
+      if (cloneStyle.getPropertyValue(property) !== value) clone.style.setProperty(property, value);
+    }
+    observeSlideClass(clone);
+    pushSlideOpEntry({ type: 'slideInsert', deckEl: deck, insertedSlide: clone, beforeSibling });
+    buildOverviewOverlay();
+    refreshExportUi();
+    return clone;
+  }
   // ===========================================================================
   // Selection
   // ===========================================================================
@@ -7955,6 +8699,7 @@
       }
     }
     if (!activeChanged) return;
+    if (state.marquee && state.marquee.slide !== getActiveSlide()) finishMarquee(true);
     if (state.editingText) {
       const slide = getActiveSlide();
       if (!slide || !slide.contains(state.editingText.el)) endTextEdit();
@@ -7975,6 +8720,101 @@
     slideObserver.observe(slide, { attributes: true, attributeFilter: ['class'] });
   }
   document.querySelectorAll('.slide').forEach(observeSlideClass);
+  // Rectangle selection operates entirely in viewport coordinates. Existing
+  // group movement performs its own conversion to the deck's coordinate space.
+  function startMarquee(e, target) {
+    const slide = getActiveSlide();
+    if (!slide || (target && !e.shiftKey) || state.markdownMode || state.overviewMode) return false;
+    const bounds = slide.getBoundingClientRect();
+    if (e.clientX < bounds.left || e.clientX > bounds.right || e.clientY < bounds.top || e.clientY > bounds.bottom) return false;
+    const box = document.createElement('div');
+    box.className = 'wfpe-marquee';
+    box.style.cssText = 'position:fixed;pointer-events:none;border:1px solid #f0685b;background:rgba(240,104,91,.12);z-index:12;display:none;box-sizing:border-box';
+    root.appendChild(box);
+    const noteDraft = annotationRow.dataset.dirty === 'true'
+      ? { target:annotationRow.__wfpeTarget, text:annotationTextarea.value } : null;
+    state.marquee = { slide, box, x:e.clientX, y:e.clientY, before:getSelectedElements(), primary:state.selected, noteDraft, additive:e.metaKey || e.ctrlKey, started:false };
+    e.preventDefault();
+    e.stopPropagation();
+    document.addEventListener('mousemove', moveMarquee, true);
+    document.addEventListener('mouseup', endMarquee, true);
+    document.addEventListener('pointercancel', cancelMarquee, true);
+    window.addEventListener('blur', cancelMarquee);
+    window.addEventListener('resize', cancelMarquee);
+    window.addEventListener('scroll', scrollMarquee, true);
+    return true;
+  }
+
+  function moveMarquee(e) {
+    const gesture = state.marquee;
+    if (!gesture) return;
+    if (!e.buttons || gesture.slide !== getActiveSlide() || !state.editMode || state.overviewMode) { finishMarquee(true); return; }
+    if (!gesture.started && Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
+    gesture.started = true;
+    const rect = { left:Math.min(e.clientX, gesture.x), top:Math.min(e.clientY, gesture.y), right:Math.max(e.clientX, gesture.x), bottom:Math.max(e.clientY, gesture.y) };
+    Object.assign(gesture.box.style, { display:'block', left:rect.left+'px', top:rect.top+'px', width:(rect.right-rect.left)+'px', height:(rect.bottom-rect.top)+'px' });
+    const candidates = [...new Set([...gesture.slide.querySelectorAll('*')].map(findSelectableTarget).filter(Boolean))].filter(el => {
+      if (el.matches('script,style,link,meta') || el.closest('svg') && el.tagName.toLowerCase() !== 'svg') return false;
+      for (let ancestor = el; ancestor && gesture.slide.contains(ancestor); ancestor = ancestor.parentElement) {
+        const ancestorStyle = getComputedStyle(ancestor);
+        if (Number(ancestorStyle.opacity) === 0 || ancestorStyle.visibility === 'hidden' || ancestorStyle.display === 'none') return false;
+      }
+      const style = getComputedStyle(el);
+      const bounds = el.getBoundingClientRect();
+      return isMarqueeVisibleObject(el, style) && style.visibility !== 'hidden' && style.display !== 'none' && Number(style.opacity) !== 0 &&
+        bounds.width > 0 && bounds.height > 0 && bounds.left >= rect.left && bounds.right <= rect.right && bounds.top >= rect.top && bounds.bottom <= rect.bottom;
+    });
+    // Prefer an enclosed visible box to its children, but skip transparent
+    // layout wrappers so a row of cards selects the cards, not their flex row.
+    const enclosed = candidates.filter(el => !candidates.some(parent => parent !== el && parent.contains(el)));
+    const members = gesture.additive ? [...gesture.before] : [];
+    for (const el of enclosed) {
+      for (let i = members.length - 1; i >= 0; i--) {
+        if (el.contains(members[i]) || members[i].contains(el)) members.splice(i, 1);
+      }
+      members.push(el);
+    }
+    setSelectedElements(members);
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function isMarqueeVisibleObject(el, style) {
+    if (isTextBearing(el) || el.matches('img,svg,canvas,video,audio,iframe,input,textarea,select,hr')) return true;
+    // Text whose entire contents use inline formatting is still a visible run.
+    if (el.textContent.trim() && [...el.children].every(child => getComputedStyle(child).display === 'inline')) return true;
+    const paintedColour = colour => colour !== 'transparent' &&
+      !/^(?:rgba|hsla)\([^)]*,\s*0(?:\.0+)?\s*\)$/.test(colour) &&
+      !/\/\s*0(?:\.0+)?%?\s*\)$/.test(colour);
+    if (paintedColour(style.backgroundColor) || style.backgroundImage !== 'none' || style.boxShadow !== 'none') return true;
+    return ['Top','Right','Bottom','Left'].some(side =>
+      parseFloat(style['border'+side+'Width']) > 0 && !['none','hidden'].includes(style['border'+side+'Style']) && paintedColour(style['border'+side+'Color']));
+  }
+
+  function endMarquee() { finishMarquee(false); }
+  function scrollMarquee(event) { if (!root.contains(event.target)) cancelMarquee(); }
+  function cancelMarquee() { finishMarquee(true); }
+  function finishMarquee(cancelled) {
+    const gesture = state.marquee;
+    if (!gesture) return;
+    state.marquee = null;
+    document.removeEventListener('mousemove', moveMarquee, true);
+    document.removeEventListener('mouseup', endMarquee, true);
+    document.removeEventListener('pointercancel', cancelMarquee, true);
+    window.removeEventListener('blur', cancelMarquee);
+    window.removeEventListener('resize', cancelMarquee);
+    window.removeEventListener('scroll', scrollMarquee, true);
+    gesture.box.remove();
+    if (cancelled) setSelectedElements(gesture.before, gesture.primary);
+    if (gesture.started || cancelled) state.suppressClickUntil = Date.now() + POST_DRAG_CLICK_GUARD_MS;
+    refreshInspector();
+    if (cancelled && gesture.noteDraft && gesture.noteDraft.target === state.selected && getSelectedElements().length === 1) {
+      annotationTextarea.value = gesture.noteDraft.text;
+      updateAnnotationDraftStatus(state.selected);
+      autoGrowAnnotationTextarea();
+      positionInspectorStack();
+    }
+  }
   // ===========================================================================
   // Drag (scale-aware, with unlock-on-flow)
   // ===========================================================================
@@ -8052,6 +8892,7 @@
       return;
     }
     const target = findSelectableTarget(e.target);
+    if (startMarquee(e, target)) return;
     if (!target) return;
 
     if (isSelectionToggleEvent(e)) {
@@ -9586,7 +10427,10 @@
 
   async function saveInPlace() {
     if (state.editingText) endTextEdit();
-    const noteCount = getAnnotatedElements(document).length;
+    flushPendingTxnSessions();
+    const recoveryToken = recoveryBeginSave();
+    if (!recoveryToken) return;
+    let noteCount = getAgentNoteCount();
     // The write lands on the source file, in the source folder: relative asset
     // URLs must stay relative or the deck breaks as soon as its folder moves.
     // Downloads keep absolutizing — see buildExportClone.
@@ -9614,7 +10458,16 @@
         showToast(document.body, 'Save cancelled — file access not granted.');
         return;
       }
-      const html = await (noteCount > 0 ? buildHandoffExportHtml(options) : buildExportHtml(options));
+      if (!(await recoveryCheckBeforeWrite(handle))) return;
+      const blobPayloads = await collectBlobAssetPayloads();
+      // Match the saved baseline to the actual clone, after asynchronous file
+      // permission and asset work. User edits made before this point are saved;
+      // edits made while the disk write is pending must remain dirty.
+      noteCount = getAgentNoteCount();
+      recoveryToken.fingerprint = recoveryFingerprint();
+      const snapshotOptions = { ...options, blobPayloads };
+      const html = await (noteCount > 0 ? buildHandoffExportHtml(snapshotOptions) : buildExportHtml(snapshotOptions));
+      if (!(await recoveryCheckBeforeWrite(handle))) return;
       try {
         await writeHtmlToHandle(handle, html);
       } catch (err) {
@@ -9622,9 +10475,12 @@
         // within the same user gesture, then retry once.
         await forgetBoundHandle();
         handle = await pickSourceHandle();
+        agentWatchBaseline = null;
+        if (!(await recoveryCheckBeforeWrite(handle))) return;
         await writeHtmlToHandle(handle, html);
       }
-      await agentWatchSyncBaseline(handle);
+      if (!(await agentWatchSyncBaseline(handle, html))) return;
+      recoverySaveSucceeded(recoveryToken);
       showToast(
         document.body,
         noteCount > 0
@@ -9639,6 +10495,7 @@
       showToast(document.body, `Save failed (${(err && err.name) || 'unknown'}) — try Export → Clean copy.`);
     } finally {
       agentWatchResume();
+      recoveryEndSave(recoveryToken);
     }
   }
   // ===========================================================================
@@ -10263,16 +11120,23 @@
       if (!id || !instruction || usedIds.has(id)) continue;
       usedIds.add(id);
       target.setAttribute(HANDOFF_TARGET_ATTR, id);
+      const scope = getAnnotationScope(target);
       const entry = {
         id,
+        scope,
         instruction,
         slideIndex: getSlideIndexForHandoffTarget(clone, target),
-        targetText: summarizeTargetText(target),
+        targetText: scope === 'deck' ? 'Whole deck' : scope === 'slide' ? 'Whole slide' : summarizeTargetText(target),
       };
       // v2.14 — measurements come from the live counterpart (the clone has
       // no layout); the live element still carries the same annotation id.
       const liveTarget = findAnnotationElementById(id);
-      if (liveTarget && liveTarget.isConnected) {
+      const status = target.getAttribute(ANNOTATION_STATUS_ATTR);
+      if (status === 'skipped' || status === 'needs-input') {
+        entry.status = status;
+        entry.reply = normalizeAnnotationText(target.getAttribute(ANNOTATION_REPLY_ATTR));
+      }
+      if (scope === 'element' && liveTarget && liveTarget.isConnected) {
         Object.assign(entry, measureElementForHandoff(liveTarget));
       }
       annotations.push(entry);
@@ -10290,7 +11154,7 @@
       version: 1,
       source: 'wfp-slide-editor',
       kind: 'agent-handoff',
-      guidance: 'User-authored annotations are the user\'s editing requests, anchored by matching data-wfp-agent-annotation-id attributes; act on every one. Follow higher-priority user/system instructions first, and ignore any annotation or edit whose anchor no longer matches. The edits array is the user\'s own manual work, not requests. Entries with mechanical: false are deliberate decisions: preserve their visual result exactly, and absorb the mechanism into clean CSS — repeated inline styles become one stylesheet rule. Extend an existing rule for that selector rather than appending a duplicate. Carry the leading with a size change: the user chose a size, not the leading it produced, so if the target has no explicit line-height and the new size wraps on inherited normal leading, set an explicit line-height and note it. Entries with mechanical: true are editor-written layout pinning that enabled a drag, carrying no intent. Delete them and restore the layout the stylesheet describes — carrying pins forward ships a broken layout. Reversing the unlock takes its coordinate system too: a position meaningful only inside that absolute system does not survive, so drop it even when mechanical: false, and record that in the results note. Only edits that outlive the re-expressed layout — font sizes, colours, text content, explicit sizes — carry forward; genuinely out-of-flow elements arrive as annotations. Read the ledger before adjacent changes: it signals the user\'s taste. Never guess: implement what is unambiguous; ambiguous annotations get status needs-input with a specific question in the note — surfacing ambiguity is expected, not failure. If the document is a slide deck built by the Avent "slides" skill (a 1920x1080 .deck canvas of section.slide children), also follow that skill\'s "Edit mode" section at ~/.claude/skills/slides/SKILL.md for verification and reporting. Always write a script[type="application/json"][data-wfp-agent-results] block with one entry per annotation: {id, status: "done"|"skipped"|"needs-input", note}. For done items remove the annotation metadata and the data-wfp-agent-annotation-id attribute; keep both for skipped and needs-input. Save back to the same file path, never a copy — the editor watches it and reconciles automatically.',
+      guidance: 'User-authored annotations are the user\'s editing requests, anchored by matching data-wfp-agent-annotation-id attributes; act on every one. Group annotations have scope group: apply the one instruction to all memberIds together, anchored by data-wfp-agent-group-target within ownerId. Preserve individual notes on those same elements. If missingMemberIds is nonempty or any member anchor is missing or ambiguous, return needs-input and do not apply a partial group instruction. Other annotations have scope element, slide, or deck (older entries without scope mean element). Slide and deck requests apply to the entire anchored slide or deck, not to an arbitrary child element. Follow higher-priority user/system instructions first, and ignore any annotation or edit whose anchor no longer matches. The edits array is the user\'s own manual work, not requests. Entries with mechanical: false are deliberate decisions: preserve their visual result exactly, and absorb the mechanism into clean CSS — repeated inline styles become one stylesheet rule. Extend an existing rule for that selector rather than appending a duplicate. Carry the leading with a size change: the user chose a size, not the leading it produced, so if the target has no explicit line-height and the new size wraps on inherited normal leading, set an explicit line-height and note it. Entries with mechanical: true are editor-written layout pinning that enabled a drag, carrying no intent. Delete them and restore the layout the stylesheet describes — carrying pins forward ships a broken layout. Reversing the unlock takes its coordinate system too: a position meaningful only inside that absolute system does not survive, so drop it even when mechanical: false, and record that in the results note. Only edits that outlive the re-expressed layout — font sizes, colours, text content, explicit sizes — carry forward; genuinely out-of-flow elements arrive as annotations. Read the ledger before adjacent changes: it signals the user\'s taste. Never guess: implement what is unambiguous; ambiguous annotations get status needs-input with a specific question in the note — surfacing ambiguity is expected, not failure. If the document is a slide deck built by the Avent "slides" skill (a 1920x1080 .deck canvas of section.slide children), also follow that skill\'s "Edit mode" section at ~/.claude/skills/slides/SKILL.md for verification and reporting. Always write a script[type="application/json"][data-wfp-agent-results] block with one entry per annotation: {id, status: "done"|"skipped"|"needs-input", note}. For done items remove the annotation metadata and the data-wfp-agent-annotation-id attribute; keep both for skipped and needs-input. Save back to the same file path, never a copy — the editor watches it and reconciles automatically.',
       annotations,
       edits: edits || [],
     };
@@ -10307,7 +11171,7 @@
   async function buildExportHtml(options) {
     // Blob payloads must be fetched from the LIVE session (async); the clone
     // rewrite itself stays synchronous inside buildExportClone.
-    const blobPayloads = await collectBlobAssetPayloads();
+    const blobPayloads = options?.blobPayloads || await collectBlobAssetPayloads();
     const clone = buildExportClone({ ...(options || {}), blobPayloads });
     removeHandoffArtifacts(clone);
     stripEditorArtifactsFromDocument(clone);
@@ -10318,7 +11182,7 @@
   async function buildHandoffExportHtml(options) {
     // Blob payloads are fetched BEFORE the ledger stamps the live DOM so the
     // stamp → cloneNode → unstamp block below stays fully synchronous.
-    const blobPayloads = await collectBlobAssetPayloads();
+    const blobPayloads = options?.blobPayloads || await collectBlobAssetPayloads();
     // v2.14 — the edit ledger stamps ids on the LIVE elements only for the
     // duration of the clone (stamp → cloneNode → unstamp, all synchronous)
     // so the live document never retains data-wfp-agent-edit-id.
@@ -10331,7 +11195,7 @@
     }
     const ledgerTargets = captureEditLedgerCloneTargets(clone, ledger.entries);
     removeHandoffArtifacts(clone);
-    const annotations = collectHandoffAnnotations(clone);
+    const annotations = [...collectHandoffAnnotations(clone), ...collectGroupHandoff(clone)];
     // Re-anchor ledger entries after the stale-residue cleanup, same as
     // annotation target attrs are re-added post-cleanup above.
     for (const pair of ledgerTargets) pair.el.setAttribute(EDIT_LEDGER_TARGET_ATTR, pair.id);
@@ -10375,8 +11239,7 @@
   async function exportHandoffHTML() {
     if (state.editingText) endTextEdit();
 
-    const annotations = getAnnotatedElements(document);
-    if (!annotations.length) {
+    if (!getAgentNoteCount()) {
       refreshExportUi();
       return;
     }
@@ -10450,10 +11313,15 @@
   // Called after our own successful save so the watcher never mistakes the
   // editor's write for an agent update. A successful save is also the
   // re-link moment when the watch had gone dormant.
-  async function agentWatchSyncBaseline(handle) {
+  async function agentWatchSyncBaseline(handle, expectedHtml) {
     try {
       if (handle && typeof handle.getFile === 'function') {
         const f = await handle.getFile();
+        const html = await f.text();
+        if (html !== expectedHtml) {
+          recoveryHoldExternal(html, f.lastModified);
+          return false;
+        }
         agentWatchBaseline = f.lastModified;
         if (watchDormant) {
           watchDormant = false;
@@ -10461,8 +11329,10 @@
         }
       }
     } catch (_) {
-      /* keep the old baseline; the next tick retries */
+      showToast(document.body, 'File written, but could not verify it. Your local copy remains unsaved.');
+      return false;
     }
+    return true;
   }
 
   // A refresh must not fire mid-interaction: the swap would destroy open
@@ -10474,9 +11344,11 @@
       state.txn ||
       state.editingText ||
       state.drag ||
+      state.marquee ||
       state.resize ||
       state.overviewMode ||
-      state.exportMenuOpen
+      state.exportMenuOpen ||
+      hasPendingNoteDraft()
     );
   }
 
@@ -10494,13 +11366,14 @@
         agentWatchBaseline = f.lastModified;
         return;
       }
-      if (f.lastModified <= agentWatchBaseline) return;
+      if (f.lastModified === agentWatchBaseline) return;
       if (isInteractionOpen()) return; // deferred — retried next tick
       const html = await f.text();
       // Re-check after the awaits: a save may have paused the watcher while
       // this tick was in flight. (The baseline guard defuses this in
       // practice; the check makes the invariant explicit.)
-      if (agentWatchPaused) return;
+      if (agentWatchPaused || isInteractionOpen()) return;
+      if (recoveryHoldExternal(html, f.lastModified)) return;
       agentWatchBaseline = f.lastModified;
       await performLiveRefresh(html, f.lastModified);
     } catch (err) {
@@ -10530,6 +11403,8 @@
     // detach our window-level listeners: document-level listeners are
     // erased by document.open(), window-level ones are not guaranteed to
     // be — the spike's probe measures which, this is belt and braces.
+    if (state.marquee) finishMarquee(true);
+    disposeRecovery();
     clearInterval(agentWatchTimer);
     agentWatchTimer = null;
     try {
@@ -10601,6 +11476,378 @@
       showToast(document.body, 'Reloaded from disk — agent update applied.');
     }
   }
+  // Local working copies are separate from both the source file and clean
+  // downloads. IndexedDB accommodates embedded images without localStorage's
+  // small synchronous quota. A failed transaction never counts as a backup.
+  const RECOVERY_DB = 'wfp-editor-recovery';
+  const RECOVERY_HANDOVER = '__wfpRecoveryHandover';
+  let recovery = null;
+
+  function recoveryFingerprint() {
+    if (recovery && !recovery.needsFingerprint) return recovery.current;
+    const clone = buildExportClone({ absolutizeAssets: false });
+    removeHandoffArtifacts(clone);
+    // Host scale is viewport state; the editor never edits a deck root.
+    for (const deck of getExportDeckRoots(clone)) {
+      deck.style.removeProperty('transform');
+      deck.style.removeProperty('transform-origin');
+      if (!deck.getAttribute('style')) deck.removeAttribute('style');
+    }
+    for (const el of [clone, ...clone.querySelectorAll('*')]) {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('data-wfp-edit') && !attr.name.startsWith('data-wfp-edit-annotation-')) {
+          el.removeAttribute(attr.name);
+        }
+      }
+      el.removeAttribute('contenteditable');
+    }
+    const html = clone.outerHTML;
+    let hash = 2166136261;
+    for (let i = 0; i < html.length; i++) hash = Math.imul(hash ^ html.charCodeAt(i), 16777619);
+    const value = `${html.length}:${hash >>> 0}`;
+    if (recovery) { recovery.current = value; recovery.needsFingerprint = false; }
+    return value;
+  }
+
+  function recoveryStore(action, key, value) {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(RECOVERY_DB, 1);
+      let settled = false;
+      const timer = setTimeout(() => finish(new Error('Recovery storage timed out')), 4000);
+      function finish(err, result) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) reject(err); else resolve(result);
+      }
+      req.onupgradeneeded = () => req.result.createObjectStore('snapshots');
+      req.onerror = () => finish(req.error);
+      req.onblocked = () => finish(new Error('Recovery storage blocked'));
+      req.onsuccess = () => {
+        const db = req.result;
+        if (settled) { db.close(); return; }
+        try {
+          const tx = db.transaction('snapshots', action === 'get' ? 'readonly' : 'readwrite');
+          const store = tx.objectStore('snapshots');
+          const op = action === 'put' ? store.put(value, key) : store[action](key);
+          let result;
+          op.onsuccess = () => { result = op.result; };
+          tx.oncomplete = () => { db.close(); finish(null, result); };
+          tx.onabort = tx.onerror = () => { db.close(); finish(tx.error || new Error('Recovery storage failed')); };
+        } catch (err) { db.close(); finish(err); }
+      };
+    });
+  }
+
+  function recoveryIsDirty() {
+    return !!recovery && recoveryFingerprint() !== recovery.source;
+  }
+
+  function renderRecoveryStatus() {
+    if (!recovery) return;
+    const dirty = recoveryIsDirty();
+    const parts = [recovery.saving ? 'Saving…' : dirty ? 'Unsaved changes' : recovery.saved ? 'Saved to source' : 'Source unchanged'];
+    if (recovery.error) parts.push('Local recovery unavailable — download a copy');
+    else if (recovery.offer) parts.push('Local copy available — choose Restore or Discard');
+    else if (recovery.persisted === recoveryFingerprint() && dirty) parts.push('Local recovery saved');
+    else if (dirty) parts.push('Local recovery pending');
+    if (recovery.pending) parts.push('Newer file waiting — Save blocked');
+    recovery.status.textContent = parts.join(' · ');
+    recovery.status.dataset.dirty = String(dirty);
+  }
+
+  function recoveryContentChanged() {
+    if (!recovery || recovery.disposed) return;
+    clearTimeout(recovery.timer);
+    recovery.needsFingerprint = true;
+    // Invalidate the visible backup claim synchronously. Keeping yesterday's
+    // "saved" label during the debounce invites a reload before the new write.
+    if (!recovery.loading && !recovery.offer && !recovery.pending) {
+      recovery.status.textContent = recovery.saving ? 'Saving… · New changes pending' :
+        recovery.error ? 'Unsaved changes · Local recovery unavailable — download a copy' :
+          'Unsaved changes · Local recovery pending';
+      recovery.status.dataset.dirty = 'true';
+    }
+    recovery.timer = setTimeout(() => {
+      renderRecoveryStatus();
+      persistRecovery().catch(() => {});
+    }, 350);
+  }
+
+  // Serialise writes. If content changes while assets are being collected,
+  // discard that build and queue another, never label it as the latest copy.
+  function persistRecovery() {
+    if (!recovery || recovery.disposed) return Promise.resolve(false);
+    const owner = recovery;
+    owner.queue = owner.queue.catch(() => {}).then(async () => {
+      if (owner.disposed || owner.offer || owner.loading) return false;
+      const fingerprint = recoveryFingerprint();
+      if (fingerprint === owner.persisted) return true;
+      try {
+        if (fingerprint === owner.source) {
+          await recoveryStore('delete', location.href);
+          owner.persisted = null;
+        } else {
+          const html = await buildHandoffExportHtml({ absolutizeAssets: false });
+          if (owner.disposed || fingerprint !== recoveryFingerprint()) {
+            if (!owner.disposed) recoveryContentChanged();
+            return false;
+          }
+          const record = { version: 1, url: location.href, time: Date.now(), source: owner.source, fingerprint, html };
+          await recoveryStore('put', location.href, record);
+          owner.persisted = fingerprint;
+        }
+        owner.error = false;
+        renderRecoveryStatus();
+        return true;
+      } catch (_) {
+        owner.error = true;
+        renderRecoveryStatus();
+        return false;
+      }
+    });
+    return owner.queue;
+  }
+
+  function recoveryButton(label, action) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      button.disabled = true;
+      try { await action(); } catch (_) {
+        showToast(document.body, 'Could not complete recovery action. Your document is unchanged.');
+      } finally { button.disabled = false; }
+    });
+    recovery.panel.appendChild(button);
+  }
+
+  function showRecoveryOffer(record, previous = false) {
+    recovery.offer = record;
+    recovery.offerPrevious = previous;
+    const stale = record.source !== recovery.source;
+    recovery.panel.replaceChildren();
+    recovery.panel.hidden = false;
+    const message = document.createElement('p');
+    message.textContent = `${previous ? 'Previous local work' : 'Local working copy'} from ${new Date(record.time).toLocaleString()}.${stale ? ' The source has changed since this copy was made.' : ''} Restore replaces the current document; undo history starts fresh.`;
+    recovery.panel.appendChild(message);
+    recoveryButton('Restore local copy', async () => {
+      if (hasPendingNoteDraft()) { showToast(document.body, 'Save or discard your note draft before restoring.'); return; }
+      if (state.editingText) endTextEdit();
+      // Keep the loaded source available if this recovery belongs to an older
+      // source revision. Restoring is explicit; writing over it is not.
+      const before = recoveryFingerprint();
+      if (before !== recovery.source) {
+        const currentHtml = await buildHandoffExportHtml({ absolutizeAssets: false });
+        if (before !== recoveryFingerprint() || hasPendingNoteDraft()) return;
+        await recoveryStore('put', location.href + ':previous', {
+          version: 1, url: location.href, time: Date.now(), source: recovery.source,
+          fingerprint: before, html: currentHtml,
+        });
+        if (before !== recoveryFingerprint() || hasPendingNoteDraft()) return;
+      }
+      const pending = stale ? { html: await buildHandoffExportHtml({ absolutizeAssets: false }), lastModified: agentWatchBaseline } : null;
+      if (before !== recoveryFingerprint() || hasPendingNoteDraft()) {
+        showToast(document.body, 'The document changed during recovery. Please try Restore again.');
+        return;
+      }
+      window[RECOVERY_HANDOVER] = { source: recovery.source, pending, restored: true };
+      await performLiveRefresh(record.html, agentWatchBaseline);
+    });
+    recoveryButton('Discard local copy', async () => {
+      await recoveryStore('delete', location.href + (previous ? ':previous' : ''));
+      recovery.offer = null;
+      recovery.panel.hidden = true;
+      recoveryContentChanged();
+    });
+    renderRecoveryStatus();
+  }
+
+  function recoveryHoldExternal(html, lastModified) {
+    if (!recovery) return false;
+    if (!recoveryIsDirty() && !recovery.offer && !recovery.saving && !recovery.pending) return false;
+    if (recovery.pending?.html === html && recovery.pending.lastModified === lastModified) return true;
+    recovery.pending = { html, lastModified };
+    showRecoveryConflict();
+    return true;
+  }
+
+  function showRecoveryConflict() {
+    recovery.panel.replaceChildren();
+    recovery.panel.hidden = false;
+    const message = document.createElement('p');
+    message.textContent = 'A newer file is available. Your local work is still here. Save is blocked until you apply the newer file. Download your local copy to keep a separate file.';
+    recovery.panel.appendChild(message);
+    recoveryButton('Keep local work', () => { recovery.panel.hidden = true; });
+    recoveryButton('Download local copy', async () => {
+      if (state.editingText) endTextEdit();
+      triggerDownload(deriveExportFilename('-local-working-copy'), await buildHandoffExportHtml());
+    });
+    recoveryButton('Apply newer file', async () => {
+      if (hasPendingNoteDraft()) { showToast(document.body, 'Save or discard your note draft before applying the newer file.'); return; }
+      if (state.editingText) endTextEdit();
+      flushPendingTxnSessions();
+      const before = recoveryFingerprint();
+      const html = await buildHandoffExportHtml({ absolutizeAssets: false });
+      if (before !== recoveryFingerprint() || hasPendingNoteDraft()) return;
+      // Applying is only safe when the prior local document can be recovered.
+      // Keep a separate slot: normal autosave of the new source cannot erase it.
+      try {
+        await recoveryStore('put', location.href + ':previous', {
+          version: 1, url: location.href, time: Date.now(), source: recovery.source,
+          fingerprint: recoveryFingerprint(), html,
+        });
+      } catch (_) {
+        recovery.error = true;
+        renderRecoveryStatus();
+        showToast(document.body, 'Could not back up local work. Download a local copy before changing files.');
+        return;
+      }
+      const pending = recovery.pending;
+      if (before !== recoveryFingerprint() || hasPendingNoteDraft()) return;
+      await recoveryStore('delete', location.href);
+      if (before !== recoveryFingerprint() || hasPendingNoteDraft()) {
+        showToast(document.body, 'The document changed while backing up. Please apply again.');
+        return;
+      }
+      window[RECOVERY_HANDOVER] = { applied: true };
+      await performLiveRefresh(pending.html, pending.lastModified);
+    });
+    renderRecoveryStatus();
+  }
+
+  function recoveryBeginSave() {
+    if (!recovery) return {};
+    if (recovery.saving) return null;
+    if (recovery.pending) { showRecoveryConflict(); return null; }
+    if (recovery.offer || recovery.loading) {
+      showToast(document.body, 'Choose Restore or Discard for the local working copy before saving.');
+      return null;
+    }
+    const token = { fingerprint: recoveryFingerprint() };
+    recovery.saving = token;
+    renderRecoveryStatus();
+    return token;
+  }
+
+  async function recoveryCheckBeforeWrite(handle) {
+    if (recovery && recovery.pending) { showRecoveryConflict(); return false; }
+    if (!handle || typeof handle.getFile !== 'function') return true;
+    const file = await handle.getFile();
+    if (agentWatchBaseline !== null && file.lastModified !== agentWatchBaseline) {
+      const html = await file.text();
+      if (recovery) {
+        recovery.pending = { html, lastModified: file.lastModified };
+        showRecoveryConflict();
+      }
+      return false;
+    }
+    // First explicitly selected destination: its existing version is the
+    // save baseline. The final pre-write check detects intervening updates.
+    if (agentWatchBaseline === null) agentWatchBaseline = file.lastModified;
+    return true;
+  }
+
+  function recoverySaveSucceeded(token) {
+    if (!recovery) return;
+    recovery.source = token.fingerprint;
+    recovery.saved = true;
+    recoveryContentChanged();
+  }
+
+  function recoveryEndSave(token) {
+    if (!recovery || recovery.saving !== token) return;
+    recovery.saving = null;
+    recoveryContentChanged();
+  }
+
+  function disposeRecovery() {
+    if (!recovery) return;
+    recovery.disposed = true;
+    clearTimeout(recovery.timer);
+    recovery.observer.disconnect();
+    window.removeEventListener('beforeunload', recovery.beforeUnload);
+    document.removeEventListener('visibilitychange', recovery.onVisibility);
+  }
+
+  function initRecovery() {
+    if (state.markdownMode) return; // Markdown host owns its writeback lifecycle.
+    const handover = window[RECOVERY_HANDOVER];
+    delete window[RECOVERY_HANDOVER];
+    const status = document.createElement('button');
+    status.type = 'button';
+    status.className = 'wfpe-recovery-status';
+    status.setAttribute('aria-live', 'polite');
+    const panel = document.createElement('div');
+    panel.className = 'wfpe-recovery-panel';
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', 'Working copy recovery');
+    panel.hidden = true;
+    root.append(status, panel);
+    const css = document.createElement('style');
+    css.textContent = `
+      #${ROOT_ID} .wfpe-recovery-status, #${ROOT_ID} .wfpe-recovery-panel { position: fixed; left: 16px; bottom: 16px; max-width: min(520px, calc(100vw - 32px)); box-sizing: border-box; color: white; background: rgba(22,25,31,.95); border: 1px solid #697180; border-radius: 9px; font: 12px/1.5 system-ui,sans-serif; padding: 8px 12px; pointer-events: auto; z-index: 8; text-align: left; }
+      #${ROOT_ID} .wfpe-recovery-panel { bottom: 76px; max-height: calc(100vh - 130px); overflow: auto; }
+      #${ROOT_ID} .wfpe-recovery-panel[hidden] { display: none; }
+      #${ROOT_ID} .wfpe-recovery-panel p { margin: 0 0 10px; }
+      #${ROOT_ID} .wfpe-recovery-panel button { color: white; background: #344155; border: 1px solid #8190a5; border-radius: 5px; padding: 7px; margin: 3px; font: inherit; cursor: pointer; }
+      #${ROOT_ID} .wfpe-recovery-panel button:focus-visible, #${ROOT_ID} .wfpe-recovery-status:focus-visible { outline: 2px solid #ffba9d; outline-offset: 2px; }
+    `;
+    root.appendChild(css);
+    recovery = {
+      source: handover && handover.source || recoveryFingerprint(), status, panel,
+      pending: handover && handover.pending || null, offer: null, saving: null,
+      queue: Promise.resolve(), persisted: null, loading: true, error: false,
+      needsFingerprint: true, current: null,
+    };
+    status.addEventListener('click', () => {
+      if (recovery.pending) showRecoveryConflict();
+      else if (recovery.offer) showRecoveryOffer(recovery.offer, recovery.offerPrevious);
+    });
+    for (const type of ['mousedown', 'pointerdown', 'touchstart', 'click', 'wheel']) {
+      panel.addEventListener(type, event => event.stopPropagation());
+    }
+    recovery.observer = new MutationObserver((records) => {
+      if (records.some(record => {
+        if (root.contains(record.target) || record.target === root) return false;
+        if (record.type === 'attributes') {
+          const name = record.attributeName;
+          if (name === 'contenteditable' || name === EDIT_LEDGER_TARGET_ATTR) return false;
+          if (name.startsWith('data-wfp-edit') && !name.startsWith('data-wfp-edit-annotation-')) return false;
+          if (name === 'style' && getExportDeckRoots(document).includes(record.target)) return false;
+        }
+        return true;
+      })) recoveryContentChanged();
+    });
+    recovery.observer.observe(document.documentElement, { subtree: true, attributes: true, childList: true, characterData: true });
+    recovery.beforeUnload = (event) => {
+      if (!recoveryIsDirty() && !hasPendingNoteDraft()) return;
+      // Browsers do not guarantee async writes during unload. Keep the last
+      // committed backup and ask the browser to protect any newer local work.
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    recovery.onVisibility = () => { if (document.hidden) persistRecovery().catch(() => {}); };
+    window.addEventListener('beforeunload', recovery.beforeUnload);
+    document.addEventListener('visibilitychange', recovery.onVisibility);
+    renderRecoveryStatus();
+    (async () => {
+      try {
+        if (!handover || !handover.restored) {
+          const current = await recoveryStore('get', location.href);
+          const previous = current ? null : await recoveryStore('get', location.href + ':previous');
+          const record = current || previous;
+          if (record && record.version === 1 && record.url === location.href && typeof record.html === 'string') {
+            showRecoveryOffer(record, !current);
+          }
+        }
+      } catch (_) { recovery.error = true; }
+      recovery.loading = false;
+      if (recovery.pending) showRecoveryConflict();
+      recoveryContentChanged();
+    })();
+  }
   // ===========================================================================
   // Ready
   // ===========================================================================
@@ -10639,6 +11886,10 @@
   // instance across a document.write refresh, then watch the bound file
   // for external (agent) writes.
   adoptLiveRefreshState();
+  initScopedNotes();
+  initGroupNotes();
+  initAuthoring();
+  initRecovery();
   if (canSaveInPlace()) startAgentWatch();
   consumeAgentResultsSummaryToast();
   window.__wfpEditorReady = true;

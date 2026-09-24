@@ -59,10 +59,15 @@
   // Called after our own successful save so the watcher never mistakes the
   // editor's write for an agent update. A successful save is also the
   // re-link moment when the watch had gone dormant.
-  async function agentWatchSyncBaseline(handle) {
+  async function agentWatchSyncBaseline(handle, expectedHtml) {
     try {
       if (handle && typeof handle.getFile === 'function') {
         const f = await handle.getFile();
+        const html = await f.text();
+        if (html !== expectedHtml) {
+          recoveryHoldExternal(html, f.lastModified);
+          return false;
+        }
         agentWatchBaseline = f.lastModified;
         if (watchDormant) {
           watchDormant = false;
@@ -70,8 +75,10 @@
         }
       }
     } catch (_) {
-      /* keep the old baseline; the next tick retries */
+      showToast(document.body, 'File written, but could not verify it. Your local copy remains unsaved.');
+      return false;
     }
+    return true;
   }
 
   // A refresh must not fire mid-interaction: the swap would destroy open
@@ -83,9 +90,11 @@
       state.txn ||
       state.editingText ||
       state.drag ||
+      state.marquee ||
       state.resize ||
       state.overviewMode ||
-      state.exportMenuOpen
+      state.exportMenuOpen ||
+      hasPendingNoteDraft()
     );
   }
 
@@ -103,13 +112,14 @@
         agentWatchBaseline = f.lastModified;
         return;
       }
-      if (f.lastModified <= agentWatchBaseline) return;
+      if (f.lastModified === agentWatchBaseline) return;
       if (isInteractionOpen()) return; // deferred — retried next tick
       const html = await f.text();
       // Re-check after the awaits: a save may have paused the watcher while
       // this tick was in flight. (The baseline guard defuses this in
       // practice; the check makes the invariant explicit.)
-      if (agentWatchPaused) return;
+      if (agentWatchPaused || isInteractionOpen()) return;
+      if (recoveryHoldExternal(html, f.lastModified)) return;
       agentWatchBaseline = f.lastModified;
       await performLiveRefresh(html, f.lastModified);
     } catch (err) {
@@ -139,6 +149,8 @@
     // detach our window-level listeners: document-level listeners are
     // erased by document.open(), window-level ones are not guaranteed to
     // be — the spike's probe measures which, this is belt and braces.
+    if (state.marquee) finishMarquee(true);
+    disposeRecovery();
     clearInterval(agentWatchTimer);
     agentWatchTimer = null;
     try {

@@ -76,6 +76,9 @@
   // inline height on the clone. Shared between the unlock engine and the
   // export scrubber.
   const FLAT_ROOT_HEIGHT_ATTR = 'data-wfp-edit-flat-root-height';
+  const GROUP_NOTES_ATTR = 'data-wfp-edit-annotation-groups';
+  const GROUP_TARGET_ATTR = 'data-wfp-edit-annotation-target-id';
+  const GROUP_HANDOFF_ATTR = 'data-wfp-agent-group-target';
   const ANNOTATION_ID_ATTR = 'data-wfp-edit-annotation-id';
   const ANNOTATION_TEXT_ATTR = 'data-wfp-edit-annotation-text';
   const HANDOFF_TARGET_ATTR = 'data-wfp-agent-annotation-id';

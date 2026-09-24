@@ -135,6 +135,7 @@ test.describe('v2 copy/paste/duplicate', () => {
         slide.classList.toggle('active', i === 2);
       });
     });
+    const beforeCount = await page.locator(target).count();
     await pasteClipboard(page);
 
     const dest = await page.evaluate((sel) => {
@@ -148,7 +149,7 @@ test.describe('v2 copy/paste/duplicate', () => {
       return { index, count: badges.length, left: Math.round(r.left), top: Math.round(r.top) };
     }, target);
     expect(dest.index).toBe(2);
-    expect(dest.count).toBe(1);
+    expect(dest.count).toBe(beforeCount + 1);
     expect(dest.left).toBeCloseTo(source.left + 20, 0);
     expect(dest.top).toBeCloseTo(source.top + 20, 0);
   });

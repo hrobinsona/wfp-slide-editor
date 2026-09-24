@@ -22,14 +22,18 @@ const PARTS = [
   '30-ui-inspector-controls.js',
   '40-helpers-selection-inspector.js',
   '45-notes-panel.js',
+  '47-group-notes.js',
   '50-history.js',
   '60-modes-overview-keyboard.js',
+  '65-authoring.js',
   '70-selection-events.js',
+  '75-marquee-selection.js',
   '80-drag-resize-unlock.js',
   '85-adaptive-fade.js',
   '90-text-edit.js',
   '95-export.js',
   '96-live-refresh.js',
+  '97-recovery.js',
   '99-ready.js',
 ];
 

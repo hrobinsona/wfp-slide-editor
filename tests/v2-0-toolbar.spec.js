@@ -38,7 +38,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
     });
 
     expect(buttons.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'add-text', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
     for (const b of buttons) {
       expect(b.hasIcon).toBe(true);
@@ -126,7 +126,8 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
         .map((b) => ({ action: b.dataset.action, display: getComputedStyle(b).display }));
     });
 
-    expect(visibilityOff.every((b) => b.display !== 'none')).toBe(true);
+    expect(visibilityOff.filter((b) => b.action !== 'add-text').every((b) => b.display !== 'none')).toBe(true);
+    expect(visibilityOff.find((b) => b.action === 'add-text').display).toBe('none');
 
     await page.keyboard.press('e');
 
@@ -137,7 +138,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
 
     expect(visibilityOn.every((b) => b.display !== 'none')).toBe(true);
     expect(visibilityOn.map((b) => b.action)).toEqual([
-      'edit', 'overview', 'notes', 'export', 'undo', 'redo', 'toolbar-collapse',
+      'edit', 'overview', 'notes', 'add-text', 'export', 'undo', 'redo', 'toolbar-collapse',
     ]);
   });
 
@@ -153,7 +154,7 @@ test.describe('v2.0/v2.10 — ink-glass toolbar', () => {
       });
     });
 
-    expect(iconStats).toHaveLength(6); // Edit + Overview + Notes + Export + Undo + Redo
+    expect(iconStats).toHaveLength(7); // Edit + Overview + Notes + Add text + Export + Undo + Redo
     for (const s of iconStats) {
       expect(s.width).toBe('15px');
       expect(s.height).toBe('15px');

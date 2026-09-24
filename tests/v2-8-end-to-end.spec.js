@@ -90,7 +90,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       // v2.11 merges the former Handoff button into Export (badge + menu).
       // Asserted as a prefix, not an exact list: later phases append chrome
       // (v2.10's toolbar-collapse) that this end-to-end gate does not own.
-      expect(out.buttons.slice(0, 6)).toEqual(['edit', 'overview', 'notes', 'export', 'undo', 'redo']);
+      expect(out.buttons.slice(0, 7)).toEqual(['edit', 'overview', 'notes', 'add-text', 'export', 'undo', 'redo']);
       // Ink-glass surface (v2.10). The exact recipe is owned by
       // tests/v2-0-toolbar.spec.js and tests/v2-1-inspector.spec.js; this gate
       // only asserts the toolbar still carries the shared translucent surface.
@@ -149,6 +149,7 @@ for (const fixture of FIXTURES_TO_RUN) {
       const sel = await findTextSelector(page);
       test.skip(!sel, 'no text-bearing element');
       await selectByMouse(page, sel);
+      const originalStyle = await page.locator(sel).getAttribute('style');
 
       // Apply a colour, verify it lands.
       const hex = page.locator('#wfp-editor-root input[data-wfpe-prop="textColorHex"]');
@@ -160,12 +161,12 @@ for (const fixture of FIXTURES_TO_RUN) {
       );
       expect(c).toBe('rgb(26, 115, 232)');
 
-      // Reset wipes the inline style attribute entirely.
+      // Reset restores the authored inline style, including layout declarations.
       await page.locator('#wfp-editor-root .wfpe-reset-btn').click();
       const styleAttr = await page.evaluate(
         (s) => document.querySelector(s).getAttribute('style'), sel
       );
-      expect(styleAttr === null || styleAttr === '').toBe(true);
+      expect(styleAttr).toBe(originalStyle);
     });
 
     test('export strips the entire editor + preserves an inspector edit', async ({ page }) => {
